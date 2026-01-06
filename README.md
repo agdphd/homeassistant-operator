@@ -56,7 +56,7 @@ The `HomeAssistant` CRD defines a Home Assistant instance with the following con
 
 - Kubernetes cluster (v1.24+)
 - kubectl configured to access your cluster
-- For development: Go 1.22+, Docker
+- For development: Go 1.24+, Docker
 
 ### Installation
 
