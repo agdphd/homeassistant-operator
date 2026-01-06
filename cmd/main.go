@@ -39,6 +39,7 @@ import (
 
 	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
 	"github.com/przemekhys/homeassistant-operator/internal/controller"
+	"github.com/przemekhys/homeassistant-operator/internal/version"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -88,6 +89,11 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	setupLog.Info("starting homeassistant-operator",
+		"version", version.Version,
+		"commit", version.GitCommit,
+	)
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will

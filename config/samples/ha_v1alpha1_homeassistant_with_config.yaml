@@ -1,0 +1,28 @@
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: homeassistant-with-config
+spec:
+  version: "stable"
+  timezone: "Europe/Warsaw"
+  storage:
+    size: "5Gi"
+  service:
+    type: ClusterIP
+    port: 8123
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+  # Reference to ConfigMap with configuration.yaml
+  configurationFrom:
+    name: homeassistant-config
+  # Reference to Secret with secrets.yaml
+  secretsFrom:
+    name: homeassistant-secrets
