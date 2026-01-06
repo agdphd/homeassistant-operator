@@ -54,6 +54,28 @@ type HomeAssistantSpec struct {
 	// +kubebuilder:default="UTC"
 	// +optional
 	Timezone string `json:"timezone,omitempty"`
+
+	// ConfigurationFrom references a ConfigMap containing configuration.yaml
+	// The ConfigMap should have a key "configuration.yaml" with the HA configuration
+	// +optional
+	ConfigurationFrom *ConfigMapReference `json:"configurationFrom,omitempty"`
+
+	// SecretsFrom references a Secret containing secrets.yaml
+	// The Secret should have a key "secrets.yaml" with the HA secrets
+	// +optional
+	SecretsFrom *SecretReference `json:"secretsFrom,omitempty"`
+}
+
+// ConfigMapReference references a ConfigMap for configuration
+type ConfigMapReference struct {
+	// Name of the ConfigMap
+	Name string `json:"name"`
+}
+
+// SecretReference references a Secret for sensitive data
+type SecretReference struct {
+	// Name of the Secret
+	Name string `json:"name"`
 }
 
 // StorageSpec defines storage configuration for Home Assistant.

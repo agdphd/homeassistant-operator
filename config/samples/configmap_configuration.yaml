@@ -1,0 +1,49 @@
+# Example ConfigMap with Home Assistant configuration.yaml
+# This is an optional ConfigMap that can be referenced by HomeAssistant CR
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homeassistant-config
+data:
+  configuration.yaml: |
+    # Home Assistant Configuration
+    # https://www.home-assistant.io/docs/configuration/
+
+    homeassistant:
+      name: Home
+      unit_system: metric
+      currency: PLN
+      country: PL
+
+    # Enables the default set of integrations
+    default_config:
+
+    # HTTP configuration for reverse proxy / ingress
+    http:
+      use_x_forwarded_for: true
+      trusted_proxies:
+        - 10.42.0.0/16   # k3s pod network
+        - 10.43.0.0/16   # k3s service network
+
+    # Logging configuration
+    logger:
+      default: info
+      logs:
+        homeassistant.components.mqtt: warning
+
+    # Example: Recorder configuration (if using external database)
+    # recorder:
+    #   db_url: !secret db_url
+    #   purge_keep_days: 10
+
+    # Example: MQTT configuration
+    # mqtt:
+    #   broker: mosquitto.default.svc.cluster.local
+    #   port: 1883
+    #   username: !secret mqtt_user
+    #   password: !secret mqtt_password
+
+    # Automation files (optional - can be edited in UI)
+    automation: !include automations.yaml
+    script: !include scripts.yaml
+    scene: !include scenes.yaml
