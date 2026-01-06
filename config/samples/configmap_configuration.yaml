@@ -1,5 +1,13 @@
 # Example ConfigMap with Home Assistant configuration.yaml
 # This is an optional ConfigMap that can be referenced by HomeAssistant CR
+#
+# NOTE: The trusted_proxies values below are k3s-specific (10.42.0.0/16 and 10.43.0.0/16).
+# For other Kubernetes distributions, adjust these values:
+#   - EKS: typically 10.0.0.0/16 for pod network
+#   - GKE: typically 10.4.0.0/14 for pods, 10.0.0.0/14 for services
+#   - AKS: typically 10.224.0.0/12 for pod network
+#   - Kind: typically 172.18.0.0/16 for pod network
+#
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -19,11 +27,14 @@ data:
     default_config:
 
     # HTTP configuration for reverse proxy / ingress
+    # NOTE: The trusted_proxies below are k3s-specific.
+    # Verify the pod network CIDR for your Kubernetes cluster.
+    # You can find it with: kubectl get nodes -o jsonpath='{.items[0].spec.podCIDR}'
     http:
       use_x_forwarded_for: true
       trusted_proxies:
-        - 10.42.0.0/16   # k3s pod network
-        - 10.43.0.0/16   # k3s service network
+        - 10.42.0.0/16   # k3s pod network (default)
+        - 10.43.0.0/16   # k3s service network (default)
 
     # Logging configuration
     logger:

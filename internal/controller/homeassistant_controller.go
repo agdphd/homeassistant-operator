@@ -383,7 +383,7 @@ func (r *HomeAssistantReconciler) reconcileService(ctx context.Context, ha *hav1
 
 	// Update Service if needed
 	desired := r.buildService(ha)
-	if svc.Spec.Type != desired.Spec.Type || svc.Spec.Ports[0].Port != desired.Spec.Ports[0].Port {
+	if svc.Spec.Type != desired.Spec.Type || len(svc.Spec.Ports) == 0 || len(desired.Spec.Ports) == 0 || svc.Spec.Ports[0].Port != desired.Spec.Ports[0].Port {
 		svc.Spec.Type = desired.Spec.Type
 		svc.Spec.Ports = desired.Spec.Ports
 		log.Info("Updating Service", "Service.Name", svc.Name)
@@ -520,11 +520,17 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(ctx context.Contex
 
 // needsUpdate checks if the StatefulSet needs to be updated
 func needsUpdate(current, desired *appsv1.StatefulSet) bool {
+	// Ensure containers exist
+	if len(current.Spec.Template.Spec.Containers) == 0 || len(desired.Spec.Template.Spec.Containers) == 0 {
+		return len(current.Spec.Template.Spec.Containers) != len(desired.Spec.Template.Spec.Containers)
+	}
+
+	currentContainer := current.Spec.Template.Spec.Containers[0]
+	desiredContainer := desired.Spec.Template.Spec.Containers[0]
+
 	// Check image
-	if len(current.Spec.Template.Spec.Containers) > 0 && len(desired.Spec.Template.Spec.Containers) > 0 {
-		if current.Spec.Template.Spec.Containers[0].Image != desired.Spec.Template.Spec.Containers[0].Image {
-			return true
-		}
+	if currentContainer.Image != desiredContainer.Image {
+		return true
 	}
 
 	// Check volumes count (ConfigMap/Secret added or removed)
@@ -533,13 +539,90 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 	}
 
 	// Check volume mounts count
-	if len(current.Spec.Template.Spec.Containers) > 0 && len(desired.Spec.Template.Spec.Containers) > 0 {
-		if len(current.Spec.Template.Spec.Containers[0].VolumeMounts) != len(desired.Spec.Template.Spec.Containers[0].VolumeMounts) {
+	if len(currentContainer.VolumeMounts) != len(desiredContainer.VolumeMounts) {
+		return true
+	}
+
+	// Check environment variables
+	if len(currentContainer.Env) != len(desiredContainer.Env) {
+		return true
+	}
+	for i, env := range currentContainer.Env {
+		if i >= len(desiredContainer.Env) {
+			return true
+		}
+		if env.Name != desiredContainer.Env[i].Name || env.Value != desiredContainer.Env[i].Value {
 			return true
 		}
 	}
 
+	// Check resource limits and requests
+	if !resourcesEqual(currentContainer.Resources, desiredContainer.Resources) {
+		return true
+	}
+
+	// Check liveness probe
+	if !probesEqual(currentContainer.LivenessProbe, desiredContainer.LivenessProbe) {
+		return true
+	}
+
+	// Check readiness probe
+	if !probesEqual(currentContainer.ReadinessProbe, desiredContainer.ReadinessProbe) {
+		return true
+	}
+
 	return false
+}
+
+// resourcesEqual compares two ResourceRequirements
+func resourcesEqual(current, desired corev1.ResourceRequirements) bool {
+	return limitsEqual(current.Limits, desired.Limits) && limitsEqual(current.Requests, desired.Requests)
+}
+
+// limitsEqual compares two ResourceLists
+func limitsEqual(current, desired corev1.ResourceList) bool {
+	if len(current) != len(desired) {
+		return false
+	}
+	for key, val := range current {
+		if desiredVal, ok := desired[key]; !ok || val.Cmp(desiredVal) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// probesEqual compares two Probe pointers
+func probesEqual(current, desired *corev1.Probe) bool {
+	if (current == nil) != (desired == nil) {
+		return false
+	}
+	if current == nil {
+		return true
+	}
+
+	// Compare probe settings
+	if current.InitialDelaySeconds != desired.InitialDelaySeconds ||
+		current.TimeoutSeconds != desired.TimeoutSeconds ||
+		current.PeriodSeconds != desired.PeriodSeconds ||
+		current.SuccessThreshold != desired.SuccessThreshold ||
+		current.FailureThreshold != desired.FailureThreshold {
+		return false
+	}
+
+	// Compare HTTPGet handler
+	if (current.HTTPGet == nil) != (desired.HTTPGet == nil) {
+		return false
+	}
+	if current.HTTPGet != nil && desired.HTTPGet != nil {
+		if current.HTTPGet.Path != desired.HTTPGet.Path ||
+			current.HTTPGet.Port != desired.HTTPGet.Port ||
+			current.HTTPGet.Scheme != desired.HTTPGet.Scheme {
+			return false
+		}
+	}
+
+	return true
 }
 
 // SetupWithManager sets up the controller with the Manager.
