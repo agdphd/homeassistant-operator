@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -512,7 +513,7 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(ctx context.Contex
 
 	// Requeue if not ready yet
 	if !ha.Status.Ready {
-		return ctrl.Result{RequeueAfter: 10 * 1000000000}, nil // 10 seconds
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
 	return ctrl.Result{}, nil
