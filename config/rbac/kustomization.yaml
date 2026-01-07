@@ -28,4 +28,3 @@ resources:
 - homeassistant_admin_role.yaml
 - homeassistant_editor_role.yaml
 - homeassistant_viewer_role.yaml
-
