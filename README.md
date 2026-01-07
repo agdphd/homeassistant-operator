@@ -127,6 +127,118 @@ kubectl delete -f https://raw.githubusercontent.com/przemekhys/homeassistant-ope
 kubectl delete -f https://raw.githubusercontent.com/przemekhys/homeassistant-operator/main/dist/install.yaml
 ```
 
+## Advanced Configuration
+
+### Managing Secrets with HomeAssistantSecrets
+
+The operator provides a `HomeAssistantSecrets` CRD for declarative secret management. Instead of manually creating ConfigMaps or Secrets for `secrets.yaml`, you can reference existing Kubernetes Secrets and the operator will automatically generate and mount the `secrets.yaml` file.
+
+#### Benefits
+
+- **Declarative**: Define secrets in Kubernetes-native way
+- **Automatic Updates**: Secrets are automatically regenerated when source Secrets change
+- **Integration Ready**: Works seamlessly with Sealed Secrets, External Secrets Operator, or Vault
+- **No Manual Mounting**: The operator handles all the volume mounting automatically
+
+#### Example Usage
+
+1. **Create Kubernetes Secrets with your sensitive data:**
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mqtt-credentials
+type: Opaque
+stringData:
+  mqtt_user: "homeassistant"
+  mqtt_password: "changeme"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: database-credentials
+type: Opaque
+stringData:
+  db_url: "postgresql://ha:password@postgres:5432/homeassistant"
+```
+
+2. **Create HomeAssistant instance:**
+
+```yaml
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: my-home
+spec:
+  version: "2024.1"
+  storage:
+    size: 10Gi
+```
+
+3. **Create HomeAssistantSecrets to auto-generate secrets.yaml:**
+
+```yaml
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantSecrets
+metadata:
+  name: my-home-secrets
+spec:
+  homeAssistantRef:
+    name: my-home  # Must match HomeAssistant name
+
+  secretRefs:
+    # Include specific keys from a Secret
+    - name: mqtt-credentials
+      keys:
+        - mqtt_user
+        - mqtt_password
+
+    # Include all keys from a Secret (omit keys field)
+    - name: database-credentials
+```
+
+The operator will:
+1. Collect secrets from referenced Kubernetes Secrets
+2. Generate a `secrets.yaml` file with these entries
+3. Create a Secret named `my-home-generated-secrets`
+4. Mount it into the Home Assistant pod at `/config/secrets.yaml`
+5. Automatically restart the pod when secrets change
+
+#### Using Secrets in Home Assistant Configuration
+
+Once configured, you can reference secrets in your `configuration.yaml`:
+
+```yaml
+http:
+  api_password: !secret http_password
+
+mqtt:
+  broker: mqtt.example.com
+  username: !secret mqtt_user
+  password: !secret mqtt_password
+
+recorder:
+  db_url: !secret db_url
+```
+
+#### kubectl Commands
+
+```sh
+# List HomeAssistantSecrets
+kubectl get homeassistantsecrets
+# or use short name:
+kubectl get hasecrets
+
+# View details
+kubectl describe homeassistantsecrets my-home-secrets
+
+# Check status
+kubectl get hasecrets my-home-secrets -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+```
+
+For complete examples, see [config/samples/complete_example_with_secrets.yaml](config/samples/complete_example_with_secrets.yaml).
+
 ## Development
 
 ### Building from Source
