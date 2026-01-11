@@ -226,13 +226,17 @@ func (r *HomeAssistantSecretsReconciler) generateSecretsYaml(secretsData map[str
 	}
 	sort.Strings(keys)
 
-	// Create ordered map for YAML serialization
-	orderedData := make(map[string]string, len(secretsData))
+	// Build ordered YAML using yaml.Node to preserve key order
+	mapNode := &yaml.Node{
+		Kind: yaml.MappingNode,
+	}
 	for _, key := range keys {
-		orderedData[key] = secretsData[key]
+		keyNode := &yaml.Node{Kind: yaml.ScalarNode, Value: key}
+		valueNode := &yaml.Node{Kind: yaml.ScalarNode, Value: secretsData[key]}
+		mapNode.Content = append(mapNode.Content, keyNode, valueNode)
 	}
 
-	yamlBytes, err := yaml.Marshal(orderedData)
+	yamlBytes, err := yaml.Marshal(mapNode)
 	if err != nil {
 		// Fallback to empty if marshal fails (shouldn't happen with string map)
 		return "# Error generating secrets\n"

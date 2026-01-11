@@ -251,9 +251,13 @@ func (r *HomeAssistantReconciler) updateBootstrapStatus(ctx context.Context, ha 
 	}
 
 	// Update main status condition
+	conditionStatus := metav1.ConditionFalse
+	if completed {
+		conditionStatus = metav1.ConditionTrue
+	}
 	meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
 		Type:               "BootstrapReady",
-		Status:             metav1.ConditionTrue,
+		Status:             conditionStatus,
 		ObservedGeneration: ha.Generation,
 		Reason:             reason,
 		Message:            message,
