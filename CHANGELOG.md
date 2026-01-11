@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-01-11
+
+### Added
+
+- **Zero-Touch Bootstrap**: Automatic Home Assistant onboarding without manual UI interaction
+  - Creates admin user with credentials from Kubernetes Secret
+  - Configures location, timezone, units, and currency (`spec.bootstrap.location`)
+  - Sets analytics preferences (`spec.bootstrap.analytics`)
+  - Generates long-lived API token via WebSocket API
+  - Stores API token in Kubernetes Secret for programmatic access
+- **HomeAssistantSecrets CRD**: Declarative secrets management for Home Assistant
+  - References existing Kubernetes Secrets
+  - Auto-generates `secrets.yaml` file
+  - Automatic pod restart on secret changes (configurable via `spec.autoRestart`)
+- **New haclient package**: Native Go HTTP/WebSocket client for Home Assistant API
+
+### Changed
+
+- Service naming simplified: now uses `<name>` instead of `<name>-homeassistant`
+
+
 ## [0.1.0] - 2026-01-06
 
 ### Added
@@ -35,4 +56,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Primary: k3s on Raspberry Pi 4/5 (ARM64)
 - Also supported: Any Kubernetes cluster (AMD64/ARM64)
 
+[0.2.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.2.0
 [0.1.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.1.0

@@ -27,13 +27,24 @@ Every submission is valuable and helps us develop the project in the right direc
 
 ## Development Setup
 
+### Prerequisites
+
 ```bash
 # Requirements
-# - Go 1.22+
+# - Go 1.24+
 # - Docker
 # - kubectl
-# - k3d (optional, for local testing)
+# - k3d (for local testing)
+# - pre-commit (for commit hooks)
 
+# Install pre-commit hooks
+pre-commit install
+pre-commit install --hook-type commit-msg
+```
+
+### Building and Testing
+
+```bash
 # Build
 make build
 
@@ -48,14 +59,30 @@ make k3d-create
 make test-k3d
 ```
 
+### Pre-commit Hooks
+
+This project uses [pre-commit](https://pre-commit.com/) to automatically check and fix code before commits.
+
+**Automatic checks on every commit:**
+- Code formatting (gofumpt, goimports)
+- Linting (golangci-lint)
+- YAML validation
+- Commit message validation (conventional commits)
+- Secrets scanning
+
+**Manual checks:**
+
+```bash
+# Run all pre-commit hooks manually
+pre-commit run --all-files
+
+# Run specific hook
+pre-commit run golangci-lint --all-files
+
+# Update hook versions
+pre-commit autoupdate
+```
+
 ## Code of Conduct
 
 Be nice and respect others. This is a simple project and we want to keep a friendly atmosphere.
-
-## Questions?
-
-Open an Issue or reach out via GitHub Discussions.
-
----
-
-Thank you for every contribution!

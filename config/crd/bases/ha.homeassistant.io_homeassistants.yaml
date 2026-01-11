@@ -39,6 +39,108 @@ spec:
           spec:
             description: HomeAssistantSpec defines the desired state of HomeAssistant.
             properties:
+              bootstrap:
+                description: |-
+                  Bootstrap configures automatic onboarding and API token creation
+                  When enabled, the operator will automatically complete the Home Assistant
+                  onboarding process and create a long-lived access token for API access
+                properties:
+                  analytics:
+                    default: false
+                    description: |-
+                      Analytics controls whether to enable analytics during onboarding
+                      If not specified, analytics is disabled by default
+                    type: boolean
+                  apiTokenSecretName:
+                    default: homeassistant-api-token
+                    description: |-
+                      ApiTokenSecretName is the name of the Secret where the API token will be stored
+                      The Secret will have a "token" key containing the long-lived access token
+                    type: string
+                  createApiToken:
+                    default: true
+                    description: |-
+                      CreateApiToken controls whether a long-lived access token is created after onboarding
+                      The token is valid for 10 years and stored in a Secret
+                    type: boolean
+                  credentials:
+                    description: |-
+                      Credentials references a Secret containing username and password for the admin user
+                      The Secret must have "username" and "password" keys
+                    properties:
+                      secretRef:
+                        description: SecretRef references a Secret containing username
+                          and password
+                        properties:
+                          name:
+                            description: Name of the Secret
+                            type: string
+                          passwordKey:
+                            default: password
+                            description: PasswordKey is the key in the Secret containing
+                              the password
+                            type: string
+                          usernameKey:
+                            default: username
+                            description: UsernameKey is the key in the Secret containing
+                              the username
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    type: object
+                  enabled:
+                    default: false
+                    description: Enabled controls whether automatic bootstrap is performed
+                    type: boolean
+                  language:
+                    default: en
+                    description: Language is the language code for Home Assistant
+                      (e.g., "en", "pl")
+                    type: string
+                  location:
+                    description: |-
+                      Location configures the location settings during onboarding
+                      If not specified, location configuration step is skipped
+                    properties:
+                      currency:
+                        description: Currency is the ISO 4217 currency code (e.g.,
+                          "USD", "EUR", "PLN")
+                        type: string
+                      elevation:
+                        description: Elevation in meters
+                        type: integer
+                      latitude:
+                        description: Latitude in decimal degrees (e.g., "52.2297")
+                        pattern: ^-?([0-8]?[0-9](\.[0-9]+)?|90(\.0+)?)$
+                        type: string
+                      longitude:
+                        description: Longitude in decimal degrees (e.g., "21.0122")
+                        pattern: ^-?(1[0-7][0-9](\.[0-9]+)?|[0-9]{1,2}(\.[0-9]+)?|180(\.0+)?)$
+                        type: string
+                      name:
+                        description: Name is the location name (e.g., "Home", "Warsaw")
+                        type: string
+                      timeZone:
+                        description: |-
+                          TimeZone is the IANA timezone (e.g., "Europe/Warsaw", "America/New_York")
+                          If not specified, uses spec.timezone
+                        type: string
+                      unitSystem:
+                        default: metric
+                        description: UnitSystem defines the unit system ("metric"
+                          or "us_customary")
+                        enum:
+                        - metric
+                        - us_customary
+                        type: string
+                    type: object
+                  ownerName:
+                    default: Admin
+                    description: OwnerName is the display name for the owner user
+                      created during onboarding
+                    type: string
+                type: object
               configurationFrom:
                 description: |-
                   ConfigurationFrom references a ConfigMap containing configuration.yaml
@@ -212,6 +314,32 @@ spec:
           status:
             description: HomeAssistantStatus defines the observed state of HomeAssistant.
             properties:
+              bootstrap:
+                description: BootstrapStatus contains the status of the automatic
+                  bootstrap process
+                properties:
+                  apiTokenReady:
+                    description: ApiTokenReady indicates whether the API token has
+                      been created and stored
+                    type: boolean
+                  apiTokenSecretName:
+                    description: ApiTokenSecretName is the name of the Secret containing
+                      the API token
+                    type: string
+                  completed:
+                    description: Completed indicates whether the bootstrap process
+                      has finished successfully
+                    type: boolean
+                  lastAttempt:
+                    description: LastAttempt is the timestamp of the last bootstrap
+                      attempt
+                    format: date-time
+                    type: string
+                  message:
+                    description: Message provides additional information about the
+                      bootstrap status
+                    type: string
+                type: object
               conditions:
                 description: Conditions represent the latest available observations
                   of the HomeAssistant state

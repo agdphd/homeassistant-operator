@@ -9,7 +9,6 @@ rules:
   resources:
   - configmaps
   - pods
-  - secrets
   verbs:
   - get
   - list
@@ -18,6 +17,7 @@ rules:
   - ""
   resources:
   - persistentvolumeclaims
+  - secrets
   - services
   verbs:
   - create
@@ -43,6 +43,7 @@ rules:
   - ha.homeassistant.io
   resources:
   - homeassistants
+  - homeassistantsecrets
   verbs:
   - create
   - delete
@@ -55,12 +56,14 @@ rules:
   - ha.homeassistant.io
   resources:
   - homeassistants/finalizers
+  - homeassistantsecrets/finalizers
   verbs:
   - update
 - apiGroups:
   - ha.homeassistant.io
   resources:
   - homeassistants/status
+  - homeassistantsecrets/status
   verbs:
   - get
   - patch

@@ -64,6 +64,115 @@ type HomeAssistantSpec struct {
 	// The Secret should have a key "secrets.yaml" with the HA secrets
 	// +optional
 	SecretsFrom *SecretReference `json:"secretsFrom,omitempty"`
+
+	// Bootstrap configures automatic onboarding and API token creation
+	// When enabled, the operator will automatically complete the Home Assistant
+	// onboarding process and create a long-lived access token for API access
+	// +optional
+	Bootstrap *BootstrapSpec `json:"bootstrap,omitempty"`
+}
+
+// BootstrapSpec configures automatic Home Assistant onboarding and API token creation
+type BootstrapSpec struct {
+	// Enabled controls whether automatic bootstrap is performed
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Credentials references a Secret containing username and password for the admin user
+	// The Secret must have "username" and "password" keys
+	Credentials *BootstrapCredentials `json:"credentials,omitempty"`
+
+	// CreateApiToken controls whether a long-lived access token is created after onboarding
+	// The token is valid for 10 years and stored in a Secret
+	// +kubebuilder:default=true
+	// +optional
+	CreateApiToken bool `json:"createApiToken,omitempty"`
+
+	// ApiTokenSecretName is the name of the Secret where the API token will be stored
+	// The Secret will have a "token" key containing the long-lived access token
+	// +kubebuilder:default="homeassistant-api-token"
+	// +optional
+	ApiTokenSecretName string `json:"apiTokenSecretName,omitempty"`
+
+	// OwnerName is the display name for the owner user created during onboarding
+	// +kubebuilder:default="Admin"
+	// +optional
+	OwnerName string `json:"ownerName,omitempty"`
+
+	// Language is the language code for Home Assistant (e.g., "en", "pl")
+	// +kubebuilder:default="en"
+	// +optional
+	Language string `json:"language,omitempty"`
+
+	// Location configures the location settings during onboarding
+	// If not specified, location configuration step is skipped
+	// +optional
+	Location *LocationConfig `json:"location,omitempty"`
+
+	// Analytics controls whether to enable analytics during onboarding
+	// If not specified, analytics is disabled by default
+	// +kubebuilder:default=false
+	// +optional
+	Analytics bool `json:"analytics,omitempty"`
+}
+
+// LocationConfig defines location settings for Home Assistant onboarding
+type LocationConfig struct {
+	// Name is the location name (e.g., "Home", "Warsaw")
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	// Latitude in decimal degrees (e.g., "52.2297")
+	// +optional
+	// +kubebuilder:validation:Pattern=`^-?([0-8]?[0-9](\.[0-9]+)?|90(\.0+)?)$`
+	Latitude string `json:"latitude,omitempty"`
+
+	// Longitude in decimal degrees (e.g., "21.0122")
+	// +optional
+	// +kubebuilder:validation:Pattern=`^-?(1[0-7][0-9](\.[0-9]+)?|[0-9]{1,2}(\.[0-9]+)?|180(\.0+)?)$`
+	Longitude string `json:"longitude,omitempty"`
+
+	// Elevation in meters
+	// +optional
+	Elevation *int `json:"elevation,omitempty"`
+
+	// UnitSystem defines the unit system ("metric" or "us_customary")
+	// +kubebuilder:default="metric"
+	// +kubebuilder:validation:Enum=metric;us_customary
+	// +optional
+	UnitSystem string `json:"unitSystem,omitempty"`
+
+	// Currency is the ISO 4217 currency code (e.g., "USD", "EUR", "PLN")
+	// +optional
+	Currency string `json:"currency,omitempty"`
+
+	// TimeZone is the IANA timezone (e.g., "Europe/Warsaw", "America/New_York")
+	// If not specified, uses spec.timezone
+	// +optional
+	TimeZone string `json:"timeZone,omitempty"`
+}
+
+// BootstrapCredentials references a Secret containing admin credentials
+type BootstrapCredentials struct {
+	// SecretRef references a Secret containing username and password
+	SecretRef *CredentialsSecretRef `json:"secretRef,omitempty"`
+}
+
+// CredentialsSecretRef references a Secret containing username and password credentials
+type CredentialsSecretRef struct {
+	// Name of the Secret
+	Name string `json:"name"`
+
+	// UsernameKey is the key in the Secret containing the username
+	// +kubebuilder:default="username"
+	// +optional
+	UsernameKey string `json:"usernameKey,omitempty"`
+
+	// PasswordKey is the key in the Secret containing the password
+	// +kubebuilder:default="password"
+	// +optional
+	PasswordKey string `json:"passwordKey,omitempty"`
 }
 
 // ConfigMapReference references a ConfigMap for configuration
@@ -170,6 +279,33 @@ type HomeAssistantStatus struct {
 	// Ready indicates if the Home Assistant instance is ready to serve traffic
 	// +optional
 	Ready bool `json:"ready,omitempty"`
+
+	// BootstrapStatus contains the status of the automatic bootstrap process
+	// +optional
+	Bootstrap *BootstrapStatus `json:"bootstrap,omitempty"`
+}
+
+// BootstrapStatus contains the status of the automatic bootstrap process
+type BootstrapStatus struct {
+	// Completed indicates whether the bootstrap process has finished successfully
+	// +optional
+	Completed bool `json:"completed,omitempty"`
+
+	// ApiTokenReady indicates whether the API token has been created and stored
+	// +optional
+	ApiTokenReady bool `json:"apiTokenReady,omitempty"`
+
+	// ApiTokenSecretName is the name of the Secret containing the API token
+	// +optional
+	ApiTokenSecretName string `json:"apiTokenSecretName,omitempty"`
+
+	// LastAttempt is the timestamp of the last bootstrap attempt
+	// +optional
+	LastAttempt *metav1.Time `json:"lastAttempt,omitempty"`
+
+	// Message provides additional information about the bootstrap status
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // HomeAssistantPhase represents the current phase of the HomeAssistant instance.

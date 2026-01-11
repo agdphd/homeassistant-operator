@@ -20,4 +20,13 @@ resources:
   kind: HomeAssistant
   path: github.com/przemekhys/homeassistant-operator/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: homeassistant.io
+  group: ha
+  kind: HomeAssistantSecrets
+  path: github.com/przemekhys/homeassistant-operator/api/v1alpha1
+  version: v1alpha1
 version: "3"
