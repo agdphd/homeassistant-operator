@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -129,11 +130,15 @@ func (r *HomeAssistantReconciler) buildCoreConfigRequest(ha *hav1alpha1.HomeAssi
 		UnitSystem:   getOrDefault(loc.UnitSystem, "metric"),
 	}
 
-	if loc.Latitude != nil {
-		req.Latitude = *loc.Latitude
+	if loc.Latitude != "" {
+		if lat, err := strconv.ParseFloat(loc.Latitude, 64); err == nil {
+			req.Latitude = lat
+		}
 	}
-	if loc.Longitude != nil {
-		req.Longitude = *loc.Longitude
+	if loc.Longitude != "" {
+		if lon, err := strconv.ParseFloat(loc.Longitude, 64); err == nil {
+			req.Longitude = lon
+		}
 	}
 	if loc.Elevation != nil {
 		req.Elevation = *loc.Elevation

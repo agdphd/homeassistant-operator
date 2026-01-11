@@ -35,7 +35,11 @@ func handleWebsocketForToken(t *testing.T, w http.ResponseWriter, r *http.Reques
 		t.Errorf("failed to upgrade websocket: %v", err)
 		return
 	}
-	defer conn.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Logf("failed to close websocket connection: %v", err)
+		}
+	}()
 
 	// Send auth_required
 	if err := conn.WriteJSON(map[string]interface{}{"type": "auth_required", "ha_version": "2024.1.0"}); err != nil {
@@ -276,7 +280,11 @@ func TestCreateLongLivedToken(t *testing.T) {
 			t.Errorf("failed to upgrade websocket: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer func() {
+			if err := conn.Close(); err != nil {
+				t.Logf("failed to close websocket connection: %v", err)
+			}
+		}()
 
 		// Send auth_required
 		if err := conn.WriteJSON(map[string]interface{}{"type": "auth_required", "ha_version": "2024.1.0"}); err != nil {

@@ -81,7 +81,7 @@ type HomeAssistantSecretsStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=hasecrets;hasec
 // +kubebuilder:printcolumn:name="HomeAssistant",type=string,JSONPath=`.spec.homeAssistantRef.name`
-// +kubebuilder:printcolumn:name="Secrets",type=integer,JSONPath=`.spec.secretRefs[*].name`,description="Number of referenced secrets"
+// +kubebuilder:printcolumn:name="Secrets",type=string,JSONPath=`.spec.secretRefs[*].name`,description="Referenced secrets"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

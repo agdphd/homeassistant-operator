@@ -123,17 +123,15 @@ type LocationConfig struct {
 	// +optional
 	Name string `json:"name,omitempty"`
 
-	// Latitude in decimal degrees
+	// Latitude in decimal degrees (e.g., "52.2297")
 	// +optional
-	// +kubebuilder:validation:Minimum=-90
-	// +kubebuilder:validation:Maximum=90
-	Latitude *float64 `json:"latitude,omitempty"`
+	// +kubebuilder:validation:Pattern=`^-?([0-8]?[0-9](\.[0-9]+)?|90(\.0+)?)$`
+	Latitude string `json:"latitude,omitempty"`
 
-	// Longitude in decimal degrees
+	// Longitude in decimal degrees (e.g., "21.0122")
 	// +optional
-	// +kubebuilder:validation:Minimum=-180
-	// +kubebuilder:validation:Maximum=180
-	Longitude *float64 `json:"longitude,omitempty"`
+	// +kubebuilder:validation:Pattern=`^-?(1[0-7][0-9](\.[0-9]+)?|[0-9]{1,2}(\.[0-9]+)?|180(\.0+)?)$`
+	Longitude string `json:"longitude,omitempty"`
 
 	// Elevation in meters
 	// +optional
