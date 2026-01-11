@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -17,8 +19,61 @@ const (
 	testOnboardingAnalyticsPath  = "/api/onboarding/analytics"
 	testAuthTokenPath            = "/auth/token"
 	testLongLivedTokenPath       = "/api/auth/long_lived_access_token"
+	testWebsocketPath            = "/api/websocket"
 	testMethodPOST               = "POST"
 )
+
+// websocketUpgrader is used for WebSocket tests
+var websocketUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// handleWebsocketForToken handles WebSocket connection for long-lived token creation in tests
+func handleWebsocketForToken(t *testing.T, w http.ResponseWriter, r *http.Request, token string) {
+	conn, err := websocketUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		t.Errorf("failed to upgrade websocket: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	// Send auth_required
+	if err := conn.WriteJSON(map[string]interface{}{"type": "auth_required", "ha_version": "2024.1.0"}); err != nil {
+		t.Errorf("failed to write auth_required: %v", err)
+		return
+	}
+
+	// Read auth message
+	var authMsg map[string]interface{}
+	if err := conn.ReadJSON(&authMsg); err != nil {
+		t.Errorf("failed to read auth message: %v", err)
+		return
+	}
+
+	// Send auth_ok
+	if err := conn.WriteJSON(map[string]interface{}{"type": "auth_ok", "ha_version": "2024.1.0"}); err != nil {
+		t.Errorf("failed to write auth_ok: %v", err)
+		return
+	}
+
+	// Read token request
+	var tokenReq map[string]interface{}
+	if err := conn.ReadJSON(&tokenReq); err != nil {
+		t.Errorf("failed to read token request: %v", err)
+		return
+	}
+
+	// Send token response
+	if err := conn.WriteJSON(map[string]interface{}{
+		"id":      tokenReq["id"],
+		"type":    "result",
+		"success": true,
+		"result":  token,
+	}); err != nil {
+		t.Errorf("failed to write token response: %v", err)
+		return
+	}
+}
 
 func TestCheckHealth(t *testing.T) {
 	tests := []struct {
@@ -205,21 +260,75 @@ func TestExchangeAuthCode(t *testing.T) {
 }
 
 func TestCreateLongLivedToken(t *testing.T) {
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != testMethodPOST {
-			t.Errorf("unexpected method: %s", r.Method)
-		}
-		if r.URL.Path != testLongLivedTokenPath {
+		if r.URL.Path != "/api/websocket" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		if r.Header.Get("Authorization") != "Bearer test-access-token" {
-			t.Errorf("unexpected authorization: %s", r.Header.Get("Authorization"))
+			w.WriteHeader(http.StatusNotFound)
+			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		// Response is plain string
-		_, _ = w.Write([]byte(`"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9"`))
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("failed to upgrade websocket: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		// Send auth_required
+		if err := conn.WriteJSON(map[string]interface{}{"type": "auth_required", "ha_version": "2024.1.0"}); err != nil {
+			t.Errorf("failed to write auth_required: %v", err)
+			return
+		}
+
+		// Read auth message
+		var authMsg map[string]interface{}
+		if err := conn.ReadJSON(&authMsg); err != nil {
+			t.Errorf("failed to read auth message: %v", err)
+			return
+		}
+		if authMsg["type"] != "auth" {
+			t.Errorf("unexpected auth message type: %v", authMsg["type"])
+			return
+		}
+		if authMsg["access_token"] != "test-access-token" {
+			t.Errorf("unexpected access token: %v", authMsg["access_token"])
+			return
+		}
+
+		// Send auth_ok
+		if err := conn.WriteJSON(map[string]interface{}{"type": "auth_ok", "ha_version": "2024.1.0"}); err != nil {
+			t.Errorf("failed to write auth_ok: %v", err)
+			return
+		}
+
+		// Read token request
+		var tokenReq map[string]interface{}
+		if err := conn.ReadJSON(&tokenReq); err != nil {
+			t.Errorf("failed to read token request: %v", err)
+			return
+		}
+		if tokenReq["type"] != "auth/long_lived_access_token" {
+			t.Errorf("unexpected token request type: %v", tokenReq["type"])
+			return
+		}
+		if tokenReq["client_name"] != "kubernetes-operator" {
+			t.Errorf("unexpected client_name: %v", tokenReq["client_name"])
+		}
+
+		// Send token response
+		if err := conn.WriteJSON(map[string]interface{}{
+			"id":      tokenReq["id"],
+			"type":    "result",
+			"success": true,
+			"result":  "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9",
+		}); err != nil {
+			t.Errorf("failed to write token response: %v", err)
+			return
+		}
 	}))
 	defer server.Close()
 
@@ -279,9 +388,9 @@ func TestPerformBootstrap(t *testing.T) {
 		case testOnboardingAnalyticsPath:
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{}`))
-		case testLongLivedTokenPath:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`"test-long-lived-token"`))
+		case testWebsocketPath:
+			handleWebsocketForToken(t, w, r, "test-long-lived-token")
+			return
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -389,7 +498,7 @@ func TestSetCoreConfig(t *testing.T) {
 		TimeZone:     "Europe/Warsaw",
 	}
 
-	err := client.SetCoreConfig(ctx, req)
+	err := client.SetCoreConfig(ctx, "test-access-token", req)
 	if err != nil {
 		t.Fatalf("SetCoreConfig() error = %v", err)
 	}
@@ -446,7 +555,7 @@ func TestSetAnalytics(t *testing.T) {
 			client := NewClient(server.URL)
 			ctx := context.Background()
 
-			err := client.SetAnalytics(ctx, tt.enabled)
+			err := client.SetAnalytics(ctx, "test-access-token", tt.enabled)
 			if err != nil {
 				t.Fatalf("SetAnalytics() error = %v", err)
 			}
@@ -487,9 +596,9 @@ func TestPerformBootstrap_WithLocationAndAnalytics(t *testing.T) {
 		case testAuthTokenPath:
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"access_token":"test-token","token_type":"Bearer","expires_in":1800}`))
-		case testLongLivedTokenPath:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`"test-long-lived-token"`))
+		case testWebsocketPath:
+			handleWebsocketForToken(t, w, r, "test-long-lived-token")
+			return
 		default:
 			t.Errorf("unexpected path: %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
