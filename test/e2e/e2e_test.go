@@ -268,5 +268,79 @@ spec:
 		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
 		//    strings.ToLower(<Kind>),
 		// ))
+
+		It("should support bootstrap in HomeAssistant spec", func() {
+			const (
+				testNamespace   = "bootstrap-test"
+				haName          = "bootstrap-ha"
+				credentialsName = "bootstrap-credentials"
+			)
+
+			By("creating test namespace")
+			cmd := exec.Command("kubectl", "create", "ns", testNamespace)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating bootstrap credentials secret")
+			credentialsYAML := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+stringData:
+  username: admin
+  password: testpass123
+`, credentialsName, testNamespace)
+
+			credFile := "/tmp/bootstrap-credentials.yaml"
+			err = os.WriteFile(credFile, []byte(credentialsYAML), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			cmd = exec.Command("kubectl", "apply", "-f", credFile)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating HomeAssistant with bootstrap enabled")
+			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  version: "stable"
+  storage:
+    size: "1Gi"
+  bootstrap:
+    enabled: true
+    credentials:
+      secretRef:
+        name: %s
+    createApiToken: true
+    apiTokenSecretName: %s-token
+    ownerName: "Test Admin"
+    language: "en"
+`, haName, testNamespace, credentialsName, haName)
+
+			haFile := "/tmp/bootstrap-ha.yaml"
+			err = os.WriteFile(haFile, []byte(haYAML), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			cmd = exec.Command("kubectl", "apply", "-f", haFile)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying HomeAssistant resource was created successfully")
+			verifyHACreated := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "homeassistant", haName, "-n", testNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}
+			Eventually(verifyHACreated, 30*time.Second).Should(Succeed())
+
+			By("cleaning up test namespace")
+			cmd = exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
+		})
 	})
 })

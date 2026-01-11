@@ -1,0 +1,97 @@
+# Example HomeAssistant with automatic bootstrap
+#
+# This example demonstrates zero-touch deployment where:
+# 1. Home Assistant is deployed
+# 2. Onboarding is completed automatically
+# 3. A long-lived API token (valid for 10 years) is created and stored in a Secret
+#
+# Prerequisites:
+# - Create the bootstrap credentials Secret first (see below)
+#
+# Usage:
+#   # 1. Create the credentials secret
+#   kubectl create secret generic ha-bootstrap-credentials \
+#     --from-literal=username=admin \
+#     --from-literal=password=your-secure-password
+#
+#   # 2. Apply this manifest
+#   kubectl apply -f ha_v1alpha1_homeassistant_with_bootstrap.yaml
+#
+#   # 3. Wait for bootstrap to complete
+#   kubectl get ha my-home -o jsonpath='{.status.bootstrap}'
+#
+#   # 4. Access Home Assistant (login with admin/your-secure-password)
+#   kubectl port-forward svc/my-home 8123:8123
+#
+#   # 5. The API token is available in:
+#   kubectl get secret my-home-api-token -o jsonpath='{.data.token}' | base64 -d
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ha-bootstrap-credentials
+type: Opaque
+stringData:
+  username: admin
+  password: changeme123  # Change this to a secure password!
+---
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: my-home
+spec:
+  version: "stable"
+  timezone: "Europe/Warsaw"
+
+  storage:
+    size: "10Gi"
+
+  service:
+    type: ClusterIP
+    port: 8123
+
+  # Automatic bootstrap configuration
+  bootstrap:
+    enabled: true
+
+    # Reference to Secret containing admin credentials
+    credentials:
+      secretRef:
+        name: ha-bootstrap-credentials
+        usernameKey: username  # optional, defaults to "username"
+        passwordKey: password  # optional, defaults to "password"
+
+    # Create long-lived API token (valid for 10 years)
+    createApiToken: true
+
+    # Name of the Secret where the API token will be stored
+    apiTokenSecretName: my-home-api-token
+
+    # Display name for the admin user
+    ownerName: "Home Admin"
+
+    # Language code for Home Assistant UI
+    language: "en"
+
+    # Location configuration (optional)
+    # If specified, will configure location settings during onboarding
+    location:
+      name: "Home"
+      latitude: 52.2297   # Warsaw, Poland
+      longitude: 21.0122
+      elevation: 100      # meters
+      unitSystem: "metric"  # "metric" or "us_customary"
+      currency: "PLN"
+      timeZone: "Europe/Warsaw"  # If not specified, uses spec.timezone
+
+    # Analytics (optional, defaults to false)
+    # Set to true to enable Home Assistant analytics
+    analytics: false
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"

@@ -34,6 +34,7 @@ The Home Assistant Operator automates the deployment and lifecycle management of
 | CRD | Status | Description |
 |-----|--------|-------------|
 | `HomeAssistant` | Alpha | Core Home Assistant deployment |
+| `HomeAssistantSecrets` | Alpha | Declarative secrets management |
 
 ## Custom Resource Definitions
 
@@ -111,7 +112,7 @@ kubectl apply -f homeassistant.yaml
 kubectl get svc -l app.kubernetes.io/instance=my-home
 
 # For port-forward
-kubectl port-forward svc/my-home-homeassistant 8123:8123
+kubectl port-forward svc/my-home 8123:8123
 ```
 
 ### Uninstallation
@@ -128,6 +129,148 @@ kubectl delete -f https://raw.githubusercontent.com/przemekhys/homeassistant-ope
 ```
 
 ## Advanced Configuration
+
+### Zero-Touch Deployment with Bootstrap
+
+The operator supports automatic bootstrap of Home Assistant, enabling a completely hands-off deployment experience. When enabled, the operator will:
+
+1. Deploy Home Assistant
+2. Wait for it to be ready
+3. Automatically complete the onboarding process
+4. Create an admin user with credentials you provide
+5. Configure location and core settings (optional)
+6. Set analytics preferences (optional)
+7. Generate a long-lived API token for programmatic access
+8. Store the token in a Kubernetes Secret
+
+#### Benefits
+
+- **Zero Manual Setup**: No need to manually access Home Assistant UI to complete onboarding
+- **Automated Credentials**: Create admin user programmatically
+- **API Token Ready**: Get immediate API access for automation and integrations
+- **Perfect for GitOps**: Fully declarative, works with CI/CD pipelines
+- **Idempotent**: Safe to re-apply manifests, bootstrap runs only once
+
+#### Quick Start
+
+1. **Create a Secret with admin credentials:**
+
+```bash
+kubectl create secret generic ha-bootstrap-credentials \
+  --from-literal=username=admin \
+  --from-literal=password=your-secure-password
+```
+
+2. **Deploy Home Assistant with bootstrap enabled:**
+
+```yaml
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: my-home
+spec:
+  version: "stable"
+  timezone: "Europe/Warsaw"
+
+  storage:
+    size: "10Gi"
+
+  # Enable automatic bootstrap
+  bootstrap:
+    enabled: true
+
+    # Reference to Secret with admin credentials
+    credentials:
+      secretRef:
+        name: ha-bootstrap-credentials
+        usernameKey: username        # optional, defaults to "username"
+        passwordKey: password        # optional, defaults to "password"
+
+    # Create and store a long-lived API token
+    createApiToken: true
+    apiTokenSecretName: my-home-api-token
+
+    # Display name for the admin user
+    ownerName: "Home Admin"
+
+    # Language for Home Assistant UI
+    language: "en"
+
+    # Location configuration (optional)
+    # Configures location, timezone, units, and currency during onboarding
+    location:
+      name: "Home"
+      latitude: 52.2297      # Warsaw, Poland
+      longitude: 21.0122
+      elevation: 100         # meters
+      unitSystem: "metric"   # "metric" or "us_customary"
+      currency: "PLN"
+      timeZone: "Europe/Warsaw"
+
+    # Analytics (optional, defaults to false)
+    # Enable Home Assistant analytics to help improve the platform
+    analytics: false
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+```
+
+3. **Apply the manifest:**
+
+```bash
+kubectl apply -f homeassistant-with-bootstrap.yaml
+```
+
+4. **Wait for bootstrap to complete:**
+
+```bash
+kubectl get ha my-home -o jsonpath='{.status.bootstrap.completed}'
+```
+
+5. **Retrieve the API token:**
+
+```bash
+kubectl get secret my-home-api-token -o jsonpath='{.data.token}' | base64 -d
+```
+
+#### Bootstrap Status
+
+Monitor bootstrap progress via status conditions:
+
+```bash
+# Check if bootstrap is completed
+kubectl get ha my-home -o jsonpath='{.status.bootstrap.completed}'
+
+# View bootstrap status message
+kubectl get ha my-home -o jsonpath='{.status.bootstrap.message}'
+
+# See full bootstrap status
+kubectl get ha my-home -o jsonpath='{.status.bootstrap}' | jq .
+```
+
+#### Custom Credential Keys
+
+If your Secret uses different key names, specify them in the bootstrap config:
+
+```yaml
+bootstrap:
+  enabled: true
+  credentials:
+    secretRef:
+      name: my-custom-secret
+      usernameKey: user            # Custom username key
+      passwordKey: pwd             # Custom password key
+  createApiToken: true
+```
+
+#### Complete Example
+
+See [config/samples/ha_v1alpha1_homeassistant_with_bootstrap.yaml](config/samples/ha_v1alpha1_homeassistant_with_bootstrap.yaml) for a complete working example.
 
 ### Managing Secrets with HomeAssistantSecrets
 

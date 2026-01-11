@@ -83,40 +83,6 @@ pre-commit run golangci-lint --all-files
 pre-commit autoupdate
 ```
 
-**Bypass hooks (not recommended):**
-
-```bash
-git commit --no-verify
-```
-
-**Commit Message Format:**
-
-Use conventional commits format:
-```
-type(scope): subject
-
-body (optional)
-
-footer (optional)
-```
-
-Examples:
-- `feat(controller): add support for custom volumes`
-- `fix(secrets): handle unicode characters in secret values`
-- `docs: update installation guide`
-- `test: add integration tests for HomeAssistantSecrets`
-- `chore(deps): update Go dependencies`
-
-Types: `feat`, `fix`, `docs`, `test`, `chore`, `refactor`, `perf`, `ci`
-
 ## Code of Conduct
 
 Be nice and respect others. This is a simple project and we want to keep a friendly atmosphere.
-
-## Questions?
-
-Open an Issue or reach out via GitHub Discussions.
-
----
-
-Thank you for every contribution!

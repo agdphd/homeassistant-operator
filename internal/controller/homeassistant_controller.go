@@ -71,7 +71,7 @@ type HomeAssistantReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
-// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -114,6 +114,20 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.reconcileService(ctx, ha); err != nil {
 		log.Error(err, "Failed to reconcile Service")
 		return r.updateStatusFailed(ctx, ha, err)
+	}
+
+	// Reconcile Bootstrap (only if HA is ready and bootstrap is enabled)
+	if ha.Status.Ready || (ha.Status.Phase == hav1alpha1.PhaseRunning) {
+		result, err := r.reconcileBootstrap(ctx, ha)
+		if err != nil {
+			log.Error(err, "Failed to reconcile Bootstrap")
+			// Return result - may include RequeueAfter
+			return result, err
+		}
+		// If bootstrap needs requeue, honor it
+		if result.RequeueAfter > 0 {
+			return result, nil
+		}
 	}
 
 	// Update status based on StatefulSet status
