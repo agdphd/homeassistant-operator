@@ -3,663 +3,741 @@ package haclient
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
+
+func TestHAClient(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "HAClient Suite")
+}
 
 const (
-	testAPIPath                  = "/api/"
-	testOnboardingPath           = "/api/onboarding"
-	testOnboardingUsersPath      = "/api/onboarding/users"
-	testOnboardingCoreConfigPath = "/api/onboarding/core_config"
-	testOnboardingAnalyticsPath  = "/api/onboarding/analytics"
-	testAuthTokenPath            = "/auth/token"
-	testLongLivedTokenPath       = "/api/auth/long_lived_access_token"
-	testWebsocketPath            = "/api/websocket"
-	testMethodPOST               = "POST"
+	testAPIPath         = "/api/"
+	testOnboardingPath  = "/api/onboarding"
+	testOnboardingUsers = "/api/onboarding/users"
+	testAuthToken       = "/auth/token"
+	testCoreConfig      = "/api/onboarding/core_config"
+	testAnalytics       = "/api/onboarding/analytics"
+	testWebsocket       = "/api/websocket"
 )
 
-// websocketUpgrader is used for WebSocket tests
-var websocketUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
+var _ = Describe("HAClient", func() {
+	var (
+		server *httptest.Server
+		client *Client
+		ctx    context.Context
+	)
 
-// handleWebsocketForToken handles WebSocket connection for long-lived token creation in tests
-func handleWebsocketForToken(t *testing.T, w http.ResponseWriter, r *http.Request, token string) {
-	conn, err := websocketUpgrader.Upgrade(w, r, nil)
-	if err != nil {
-		t.Errorf("failed to upgrade websocket: %v", err)
-		return
-	}
-	defer func() {
-		if err := conn.Close(); err != nil {
-			t.Logf("failed to close websocket connection: %v", err)
+	BeforeEach(func() {
+		ctx = context.Background()
+	})
+
+	AfterEach(func() {
+		if server != nil {
+			server.Close()
 		}
-	}()
+	})
 
-	// Send auth_required
-	if err := conn.WriteJSON(map[string]interface{}{"type": "auth_required", "ha_version": "2024.1.0"}); err != nil {
-		t.Errorf("failed to write auth_required: %v", err)
-		return
-	}
-
-	// Read auth message
-	var authMsg map[string]interface{}
-	if err := conn.ReadJSON(&authMsg); err != nil {
-		t.Errorf("failed to read auth message: %v", err)
-		return
-	}
-
-	// Send auth_ok
-	if err := conn.WriteJSON(map[string]interface{}{"type": "auth_ok", "ha_version": "2024.1.0"}); err != nil {
-		t.Errorf("failed to write auth_ok: %v", err)
-		return
-	}
-
-	// Read token request
-	var tokenReq map[string]interface{}
-	if err := conn.ReadJSON(&tokenReq); err != nil {
-		t.Errorf("failed to read token request: %v", err)
-		return
-	}
-
-	// Send token response
-	if err := conn.WriteJSON(map[string]interface{}{
-		"id":      tokenReq["id"],
-		"type":    "result",
-		"success": true,
-		"result":  token,
-	}); err != nil {
-		t.Errorf("failed to write token response: %v", err)
-		return
-	}
-}
-
-func TestCheckHealth(t *testing.T) {
-	tests := []struct {
-		name       string
-		statusCode int
-		wantErr    bool
-		errType    ErrorType
-	}{
-		{
-			name:       "healthy",
-			statusCode: http.StatusOK,
-			wantErr:    false,
-		},
-		{
-			name:       "not ready - 503",
-			statusCode: http.StatusServiceUnavailable,
-			wantErr:    true,
-			errType:    ErrorTypeNotReady,
-		},
-		{
-			name:       "not ready - 404",
-			statusCode: http.StatusNotFound,
-			wantErr:    true,
-			errType:    ErrorTypeNotReady,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != testAPIPath {
-					t.Errorf("unexpected path: %s", r.URL.Path)
-				}
-				w.WriteHeader(tt.statusCode)
-			}))
-			defer server.Close()
-
-			client := NewClient(server.URL)
-			ctx := context.Background()
-
-			err := client.CheckHealth(ctx)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("CheckHealth() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if tt.wantErr {
-				if haErr, ok := err.(*Error); ok {
-					if haErr.Type != tt.errType {
-						t.Errorf("CheckHealth() errorType = %v, want %v", haErr.Type, tt.errType)
-					}
-				} else {
-					t.Errorf("CheckHealth() error is not *haclient.Error")
-				}
-			}
-		})
-	}
-}
-
-func TestCheckOnboardingStatus(t *testing.T) {
-	tests := []struct {
-		name     string
-		response string
-		wantErr  bool
-		errType  ErrorType
-	}{
-		{
-			name:     "onboarding needed - array response",
-			response: `[{"step":"user","done":false}]`,
-			wantErr:  false,
-		},
-		{
-			name:     "onboarding done",
-			response: `{"user":{"step":"user","done":true}}`,
-			wantErr:  true,
-			errType:  ErrorTypeOnboardingDone,
-		},
-		{
-			name:     "onboarding in progress",
-			response: `{"user":{"step":"user","done":false}}`,
-			wantErr:  false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != testOnboardingPath {
-					t.Errorf("unexpected path: %s", r.URL.Path)
-				}
-				w.Header().Set("Content-Type", "application/json")
+	Describe("CheckHealth", func() {
+		It("Should return nil for 200 OK response", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal(testAPIPath))
+				Expect(r.Method).To(Equal("GET"))
+				Expect(r.Header.Get("User-Agent")).To(Equal(userAgent))
 				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(tt.response))
+				_, _ = w.Write([]byte(`{"message": "API running."}`))
 			}))
-			defer server.Close()
 
-			client := NewClient(server.URL)
-			ctx := context.Background()
-
-			err := client.CheckOnboardingStatus(ctx)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("CheckOnboardingStatus() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if tt.wantErr && tt.errType != "" {
-				if haErr, ok := err.(*Error); ok {
-					if haErr.Type != tt.errType {
-						t.Errorf("CheckOnboardingStatus() errorType = %v, want %v", haErr.Type, tt.errType)
-					}
-				}
-			}
+			client = NewClient(server.URL)
+			err := client.CheckHealth(ctx)
+			Expect(err).NotTo(HaveOccurred())
 		})
-	}
-}
 
-func TestCreateUser(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != testMethodPOST {
-			t.Errorf("unexpected method: %s", r.Method)
-		}
-		if r.URL.Path != testOnboardingUsersPath {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		if r.Header.Get("Content-Type") != "application/json" {
-			t.Errorf("unexpected content-type: %s", r.Header.Get("Content-Type"))
-		}
+		It("Should return nil for 401 Unauthorized (HA ready but needs onboarding)", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+			}))
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"auth_code":"test-auth-code-123"}`))
-	}))
-	defer server.Close()
+			client = NewClient(server.URL)
+			err := client.CheckHealth(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
 
-	client := NewClient(server.URL)
-	ctx := context.Background()
+		It("Should return NotReady error for other status codes", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
 
-	resp, err := client.CreateUser(ctx, &CreateUserRequest{
-		ClientID: server.URL + "/",
-		Name:     "Admin",
-		Username: "admin",
-		Password: "secret",
-		Language: "en",
+			client = NewClient(server.URL)
+			err := client.CheckHealth(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(IsNotReady(err)).To(BeTrue())
+		})
+
+		It("Should return NotReady error for network failure", func() {
+			client = NewClient("http://localhost:1") // Invalid address
+			client = client.WithTimeout(100 * time.Millisecond)
+			err := client.CheckHealth(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(IsNotReady(err)).To(BeTrue())
+		})
 	})
 
-	if err != nil {
-		t.Fatalf("CreateUser() error = %v", err)
-	}
+	Describe("CheckOnboardingStatus", func() {
+		It("Should return nil when onboarding is needed (array response)", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal(testOnboardingPath))
+				Expect(r.Method).To(Equal("GET"))
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`["user", "core_config", "analytics"]`))
+			}))
 
-	if resp.AuthCode != "test-auth-code-123" {
-		t.Errorf("CreateUser() authCode = %v, want %v", resp.AuthCode, "test-auth-code-123")
-	}
-}
+			client = NewClient(server.URL)
+			err := client.CheckOnboardingStatus(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
 
-func TestExchangeAuthCode(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != testMethodPOST {
-			t.Errorf("unexpected method: %s", r.Method)
-		}
-		if r.URL.Path != testAuthTokenPath {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-		}
-		if r.Header.Get("Content-Type") != "application/x-www-form-urlencoded" {
-			t.Errorf("unexpected content-type: %s", r.Header.Get("Content-Type"))
-		}
+		It("Should return OnboardingDone error when user step is done", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"user": {"step": "user", "done": true}}`))
+			}))
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"access_token":"test-access-token","token_type":"Bearer","expires_in":1800}`))
-	}))
-	defer server.Close()
+			client = NewClient(server.URL)
+			err := client.CheckOnboardingStatus(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(IsOnboardingDone(err)).To(BeTrue())
+		})
 
-	client := NewClient(server.URL)
-	ctx := context.Background()
+		It("Should return nil when user step is not done", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"user": {"step": "user", "done": false}}`))
+			}))
 
-	resp, err := client.ExchangeAuthCode(ctx, "test-auth-code", server.URL+"/")
-	if err != nil {
-		t.Fatalf("ExchangeAuthCode() error = %v", err)
-	}
+			client = NewClient(server.URL)
+			err := client.CheckOnboardingStatus(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
 
-	if resp.AccessToken != "test-access-token" {
-		t.Errorf("ExchangeAuthCode() accessToken = %v, want %v", resp.AccessToken, "test-access-token")
-	}
-}
+		It("Should return HTTP error for non-200 status", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
 
-func TestCreateLongLivedToken(t *testing.T) {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
-	}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/websocket" {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			t.Errorf("failed to upgrade websocket: %v", err)
-			return
-		}
-		defer func() {
-			if err := conn.Close(); err != nil {
-				t.Logf("failed to close websocket connection: %v", err)
-			}
-		}()
-
-		// Send auth_required
-		if err := conn.WriteJSON(map[string]interface{}{"type": "auth_required", "ha_version": "2024.1.0"}); err != nil {
-			t.Errorf("failed to write auth_required: %v", err)
-			return
-		}
-
-		// Read auth message
-		var authMsg map[string]interface{}
-		if err := conn.ReadJSON(&authMsg); err != nil {
-			t.Errorf("failed to read auth message: %v", err)
-			return
-		}
-		if authMsg["type"] != "auth" {
-			t.Errorf("unexpected auth message type: %v", authMsg["type"])
-			return
-		}
-		if authMsg["access_token"] != "test-access-token" {
-			t.Errorf("unexpected access token: %v", authMsg["access_token"])
-			return
-		}
-
-		// Send auth_ok
-		if err := conn.WriteJSON(map[string]interface{}{"type": "auth_ok", "ha_version": "2024.1.0"}); err != nil {
-			t.Errorf("failed to write auth_ok: %v", err)
-			return
-		}
-
-		// Read token request
-		var tokenReq map[string]interface{}
-		if err := conn.ReadJSON(&tokenReq); err != nil {
-			t.Errorf("failed to read token request: %v", err)
-			return
-		}
-		if tokenReq["type"] != "auth/long_lived_access_token" {
-			t.Errorf("unexpected token request type: %v", tokenReq["type"])
-			return
-		}
-		if tokenReq["client_name"] != "kubernetes-operator" {
-			t.Errorf("unexpected client_name: %v", tokenReq["client_name"])
-		}
-
-		// Send token response
-		if err := conn.WriteJSON(map[string]interface{}{
-			"id":      tokenReq["id"],
-			"type":    "result",
-			"success": true,
-			"result":  "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9",
-		}); err != nil {
-			t.Errorf("failed to write token response: %v", err)
-			return
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-
-	resp, err := client.CreateLongLivedToken(ctx, "test-access-token", &LongLivedTokenRequest{
-		ClientName: "kubernetes-operator",
-		Lifespan:   3650,
+			client = NewClient(server.URL)
+			err := client.CheckOnboardingStatus(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeHTTP))
+		})
 	})
 
-	if err != nil {
-		t.Fatalf("CreateLongLivedToken() error = %v", err)
-	}
+	Describe("CreateUser", func() {
+		It("Should create user successfully and return auth_code", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal(testOnboardingUsers))
+				Expect(r.Method).To(Equal("POST"))
+				Expect(r.Header.Get("Content-Type")).To(Equal("application/json"))
 
-	if resp.Token != "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9" {
-		t.Errorf("CreateLongLivedToken() token = %v, want %v", resp.Token, "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9")
-	}
-}
+				var req CreateUserRequest
+				err := json.NewDecoder(r.Body).Decode(&req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Username).To(Equal("admin"))
+				Expect(req.Password).To(Equal("password123"))
+				Expect(req.Name).To(Equal("Admin"))
+				Expect(req.Language).To(Equal("en"))
 
-func TestClientTimeout(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(2 * time.Second)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"auth_code": "test-auth-code-123"}`))
+			}))
 
-	client := NewClient(server.URL).WithTimeout(100 * time.Millisecond)
-	ctx := context.Background()
+			client = NewClient(server.URL)
+			resp, err := client.CreateUser(ctx, &CreateUserRequest{
+				ClientID: "test-client",
+				Name:     "Admin",
+				Username: "admin",
+				Password: "password123",
+				Language: "en",
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+			Expect(resp.AuthCode).To(Equal("test-auth-code-123"))
+		})
 
-	err := client.CheckHealth(ctx)
-	if err == nil {
-		t.Errorf("CheckHealth() expected timeout error, got nil")
-	}
-}
-
-func TestPerformBootstrap(t *testing.T) {
-	// Test successful flow
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		switch r.URL.Path {
-		case testAPIPath:
-			w.WriteHeader(http.StatusOK)
-		case testOnboardingPath:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`[{"step":"user","done":false}]`))
-		case testOnboardingUsersPath:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"auth_code":"test-auth-code"}`))
-		case testAuthTokenPath:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"access_token":"test-token","token_type":"Bearer","expires_in":1800}`))
-		case testOnboardingCoreConfigPath:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
-		case testOnboardingAnalyticsPath:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
-		case testWebsocketPath:
-			handleWebsocketForToken(t, w, r, "test-long-lived-token")
-			return
-		default:
-			t.Errorf("unexpected path: %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-
-	opts := &BootstrapOptions{
-		CreateLongLivedToken: true,
-		EnableAnalytics:      false,
-	}
-
-	token, err := client.PerformBootstrap(ctx, "admin", "password", "Admin", "en", opts)
-	if err != nil {
-		t.Fatalf("PerformBootstrap() error = %v", err)
-	}
-
-	if token != "test-long-lived-token" {
-		t.Errorf("PerformBootstrap() token = %v, want %v", token, "test-long-lived-token")
-	}
-}
-
-func TestPerformBootstrap_OnboardingDone(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		switch r.URL.Path {
-		case testAPIPath:
-			w.WriteHeader(http.StatusOK)
-		case testOnboardingPath:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"user":{"step":"user","done":true}}`))
-		default:
-			t.Errorf("unexpected path: %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-
-	opts := &BootstrapOptions{
-		CreateLongLivedToken: true,
-	}
-
-	_, err := client.PerformBootstrap(ctx, "admin", "password", "Admin", "en", opts)
-	if err == nil {
-		t.Fatalf("PerformBootstrap() expected error, got nil")
-	}
-
-	if !IsOnboardingDone(err) {
-		t.Errorf("PerformBootstrap() expected OnboardingDone error, got %v", err)
-	}
-}
-
-func TestSetCoreConfig(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != testOnboardingCoreConfigPath {
-			t.Errorf("unexpected path: %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-
-		if r.Method != http.MethodPost {
-			t.Errorf("expected POST, got %s", r.Method)
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-
-		// Verify request body
-		var req CoreConfigRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("failed to decode request: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		// Verify fields
-		if req.LocationName != "Home" {
-			t.Errorf("expected location_name 'Home', got '%s'", req.LocationName)
-		}
-		if req.UnitSystem != "metric" {
-			t.Errorf("expected unit_system 'metric', got '%s'", req.UnitSystem)
-		}
-
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{}`))
-	}))
-	defer server.Close()
-
-	client := NewClient(server.URL)
-	ctx := context.Background()
-
-	req := &CoreConfigRequest{
-		LocationName: "Home",
-		Latitude:     52.2297,
-		Longitude:    21.0122,
-		Elevation:    100,
-		UnitSystem:   "metric",
-		Currency:     "PLN",
-		TimeZone:     "Europe/Warsaw",
-	}
-
-	err := client.SetCoreConfig(ctx, "test-access-token", req)
-	if err != nil {
-		t.Fatalf("SetCoreConfig() error = %v", err)
-	}
-}
-
-func TestSetAnalytics(t *testing.T) {
-	tests := []struct {
-		name    string
-		enabled bool
-	}{
-		{"analytics enabled", true},
-		{"analytics disabled", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != testOnboardingAnalyticsPath {
-					t.Errorf("unexpected path: %s", r.URL.Path)
-					w.WriteHeader(http.StatusNotFound)
-					return
-				}
-
-				if r.Method != http.MethodPost {
-					t.Errorf("expected POST, got %s", r.Method)
-					w.WriteHeader(http.StatusMethodNotAllowed)
-					return
-				}
-
-				// Verify request body
-				var req AnalyticsRequest
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					t.Errorf("failed to decode request: %v", err)
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
-
-				// Verify preferences based on enabled flag
-				if tt.enabled {
-					if req.Preferences == nil {
-						t.Error("expected preferences to be set when analytics enabled")
-					} else {
-						if !req.Preferences.Base || !req.Preferences.Diagnostics || !req.Preferences.Usage || !req.Preferences.Statistics {
-							t.Error("expected all preferences to be true when analytics enabled")
-						}
-					}
-				}
-
+		It("Should return error for invalid response (no auth_code)", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte(`{}`))
 			}))
-			defer server.Close()
 
-			client := NewClient(server.URL)
-			ctx := context.Background()
+			client = NewClient(server.URL)
+			resp, err := client.CreateUser(ctx, &CreateUserRequest{
+				Username: "admin",
+				Password: "password123",
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(resp).To(BeNil())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeInvalidResponse))
+		})
 
-			err := client.SetAnalytics(ctx, "test-access-token", tt.enabled)
-			if err != nil {
-				t.Fatalf("SetAnalytics() error = %v", err)
+		It("Should return error for HTTP error status", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error": "invalid username"}`))
+			}))
+
+			client = NewClient(server.URL)
+			resp, err := client.CreateUser(ctx, &CreateUserRequest{
+				Username: "admin",
+				Password: "password123",
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(resp).To(BeNil())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeHTTP))
+			Expect(err.(*Error).StatusCode).To(Equal(http.StatusBadRequest))
+		})
+	})
+
+	Describe("ExchangeAuthCode", func() {
+		It("Should exchange auth code for access token", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal(testAuthToken))
+				Expect(r.Method).To(Equal("POST"))
+				Expect(r.Header.Get("Content-Type")).To(Equal("application/x-www-form-urlencoded"))
+
+				err := r.ParseForm()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(r.Form.Get("grant_type")).To(Equal("authorization_code"))
+				Expect(r.Form.Get("code")).To(Equal("test-auth-code"))
+				Expect(r.Form.Get("client_id")).To(Equal("test-client-id"))
+
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{
+					"access_token": "test-access-token",
+					"token_type": "Bearer",
+					"expires_in": 1800
+				}`))
+			}))
+
+			client = NewClient(server.URL)
+			resp, err := client.ExchangeAuthCode(ctx, "test-auth-code", "test-client-id")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+			Expect(resp.AccessToken).To(Equal("test-access-token"))
+			Expect(resp.TokenType).To(Equal("Bearer"))
+			Expect(resp.ExpiresIn).To(Equal(1800))
+		})
+
+		It("Should return error for invalid response (no access_token)", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{}`))
+			}))
+
+			client = NewClient(server.URL)
+			resp, err := client.ExchangeAuthCode(ctx, "test-auth-code", "test-client-id")
+			Expect(err).To(HaveOccurred())
+			Expect(resp).To(BeNil())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeInvalidResponse))
+		})
+
+		It("Should return auth error for authentication failure", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error": "invalid_grant"}`))
+			}))
+
+			client = NewClient(server.URL)
+			resp, err := client.ExchangeAuthCode(ctx, "invalid-code", "test-client-id")
+			Expect(err).To(HaveOccurred())
+			Expect(resp).To(BeNil())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeAuth))
+			Expect(err.(*Error).StatusCode).To(Equal(http.StatusUnauthorized))
+		})
+	})
+
+	Describe("SetCoreConfig", func() {
+		It("Should set core config successfully", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal(testCoreConfig))
+				Expect(r.Method).To(Equal("POST"))
+				Expect(r.Header.Get("Content-Type")).To(Equal("application/json"))
+				Expect(r.Header.Get("Authorization")).To(Equal("Bearer test-token"))
+
+				var req CoreConfigRequest
+				err := json.NewDecoder(r.Body).Decode(&req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.LocationName).To(Equal("Home"))
+				Expect(req.Latitude).To(Equal(52.2297))
+				Expect(req.Longitude).To(Equal(21.0122))
+				Expect(req.UnitSystem).To(Equal("metric"))
+
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			client = NewClient(server.URL)
+			err := client.SetCoreConfig(ctx, "test-token", &CoreConfigRequest{
+				LocationName: "Home",
+				Latitude:     52.2297,
+				Longitude:    21.0122,
+				UnitSystem:   "metric",
+			})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should return error for HTTP error status", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error": "invalid coordinates"}`))
+			}))
+
+			client = NewClient(server.URL)
+			err := client.SetCoreConfig(ctx, "test-token", &CoreConfigRequest{
+				LocationName: "Home",
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeHTTP))
+			Expect(err.(*Error).StatusCode).To(Equal(http.StatusBadRequest))
+		})
+	})
+
+	Describe("SetAnalytics", func() {
+		It("Should enable analytics successfully", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal(testAnalytics))
+				Expect(r.Method).To(Equal("POST"))
+				Expect(r.Header.Get("Content-Type")).To(Equal("application/json"))
+				Expect(r.Header.Get("Authorization")).To(Equal("Bearer test-token"))
+
+				var req AnalyticsRequest
+				err := json.NewDecoder(r.Body).Decode(&req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Preferences).NotTo(BeNil())
+				Expect(req.Preferences.Base).To(BeTrue())
+				Expect(req.Preferences.Diagnostics).To(BeTrue())
+
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			client = NewClient(server.URL)
+			err := client.SetAnalytics(ctx, "test-token", true)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should disable analytics successfully", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal(testAnalytics))
+
+				var req AnalyticsRequest
+				err := json.NewDecoder(r.Body).Decode(&req)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(req.Preferences).To(BeNil())
+
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			client = NewClient(server.URL)
+			err := client.SetAnalytics(ctx, "test-token", false)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should return error for HTTP error status", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+			}))
+
+			client = NewClient(server.URL)
+			err := client.SetAnalytics(ctx, "test-token", true)
+			Expect(err).To(HaveOccurred())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeHTTP))
+		})
+	})
+
+	Describe("CreateLongLivedToken", func() {
+		var (
+			wsServer *httptest.Server
+			upgrader = websocket.Upgrader{}
+		)
+
+		It("Should create long-lived token via WebSocket", func() {
+			// Create WebSocket server
+			wsServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer func() { _ = conn.Close() }()
+
+				// Send auth_required
+				err = conn.WriteJSON(map[string]interface{}{
+					"type": "auth_required",
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Read auth message
+				var authMsg map[string]interface{}
+				err = conn.ReadJSON(&authMsg)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(authMsg["type"]).To(Equal("auth"))
+				Expect(authMsg["access_token"]).To(Equal("test-access-token"))
+
+				// Send auth_ok
+				err = conn.WriteJSON(map[string]interface{}{
+					"type": "auth_ok",
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				// Read token request
+				var tokenReq map[string]interface{}
+				err = conn.ReadJSON(&tokenReq)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(tokenReq["type"]).To(Equal("auth/long_lived_access_token"))
+				Expect(tokenReq["client_name"]).To(Equal("test-client"))
+				Expect(tokenReq["lifespan"]).To(BeNumerically("==", 3650))
+
+				// Send success response
+				err = conn.WriteJSON(map[string]interface{}{
+					"id":      tokenReq["id"],
+					"type":    "result",
+					"success": true,
+					"result":  "test-long-lived-token-123",
+				})
+				Expect(err).NotTo(HaveOccurred())
+			}))
+
+			// Convert http URL to ws URL
+			wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http")
+			client = NewClient(wsURL)
+
+			resp, err := client.CreateLongLivedToken(ctx, "test-access-token", &LongLivedTokenRequest{
+				ClientName: "test-client",
+				Lifespan:   3650,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp).NotTo(BeNil())
+			Expect(resp.Token).To(Equal("test-long-lived-token-123"))
+		})
+
+		It("Should return error for auth failure", func() {
+			wsServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer func() { _ = conn.Close() }()
+
+				// Send auth_required
+				_ = conn.WriteJSON(map[string]interface{}{
+					"type": "auth_required",
+				})
+
+				// Read auth message
+				var authMsg map[string]interface{}
+				_ = conn.ReadJSON(&authMsg)
+
+				// Send auth_invalid
+				_ = conn.WriteJSON(map[string]interface{}{
+					"type":    "auth_invalid",
+					"message": "Invalid access token",
+				})
+			}))
+
+			wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http")
+			client = NewClient(wsURL)
+
+			resp, err := client.CreateLongLivedToken(ctx, "invalid-token", &LongLivedTokenRequest{
+				ClientName: "test-client",
+				Lifespan:   3650,
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(resp).To(BeNil())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeAuth))
+		})
+
+		It("Should return error when token creation fails", func() {
+			wsServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer func() { _ = conn.Close() }()
+
+				// Auth flow
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_required"})
+				var authMsg map[string]interface{}
+				_ = conn.ReadJSON(&authMsg)
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_ok"})
+
+				// Read token request
+				var tokenReq map[string]interface{}
+				_ = conn.ReadJSON(&tokenReq)
+
+				// Send error response
+				_ = conn.WriteJSON(map[string]interface{}{
+					"id":      tokenReq["id"],
+					"type":    "result",
+					"success": false,
+					"error": map[string]interface{}{
+						"message": "Failed to create token",
+					},
+				})
+			}))
+
+			wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http")
+			client = NewClient(wsURL)
+
+			resp, err := client.CreateLongLivedToken(ctx, "test-token", &LongLivedTokenRequest{
+				ClientName: "test-client",
+				Lifespan:   3650,
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(resp).To(BeNil())
+		})
+
+		AfterEach(func() {
+			if wsServer != nil {
+				wsServer.Close()
 			}
 		})
-	}
-}
+	})
 
-func TestPerformBootstrap_WithLocationAndAnalytics(t *testing.T) {
-	var receivedCoreConfig *CoreConfigRequest
-	var receivedAnalytics *AnalyticsRequest
+	Describe("PerformBootstrap", func() {
+		var (
+			wsServer        *httptest.Server
+			upgrader        = websocket.Upgrader{}
+			msgID           atomic.Int64
+			healthCalled    bool
+			onboardCalled   bool
+			userCalled      bool
+			configCalled    bool
+			analyticsCalled bool
+		)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		BeforeEach(func() {
+			healthCalled = false
+			onboardCalled = false
+			userCalled = false
+			configCalled = false
+			analyticsCalled = false
+			msgID.Store(0)
+		})
 
-		switch r.URL.Path {
-		case testAPIPath:
-			w.WriteHeader(http.StatusOK)
-		case testOnboardingPath:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`[{"step":"user","done":false}]`))
-		case testOnboardingUsersPath:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"auth_code":"test-auth-code"}`))
-		case testOnboardingCoreConfigPath:
-			// Capture the request
-			if err := json.NewDecoder(r.Body).Decode(&receivedCoreConfig); err != nil {
-				t.Errorf("failed to decode core_config: %v", err)
+		It("Should perform complete bootstrap flow successfully", func() {
+			// Create combined HTTP + WebSocket server
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case testAPIPath:
+					healthCalled = true
+					w.WriteHeader(http.StatusUnauthorized)
+				case testOnboardingPath:
+					onboardCalled = true
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`["user", "core_config", "analytics"]`))
+				case testOnboardingUsers:
+					userCalled = true
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"auth_code": "test-auth-code"}`))
+				case testAuthToken:
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"access_token": "test-access-token", "token_type": "Bearer", "expires_in": 1800}`))
+				case testCoreConfig:
+					configCalled = true
+					w.WriteHeader(http.StatusOK)
+				case testAnalytics:
+					analyticsCalled = true
+					w.WriteHeader(http.StatusOK)
+				case testWebsocket:
+					// WebSocket upgrade
+					conn, err := upgrader.Upgrade(w, r, nil)
+					if err != nil {
+						return
+					}
+					defer func() { _ = conn.Close() }()
+
+					// WebSocket flow
+					_ = conn.WriteJSON(map[string]interface{}{"type": "auth_required"})
+					var authMsg map[string]interface{}
+					_ = conn.ReadJSON(&authMsg)
+					_ = conn.WriteJSON(map[string]interface{}{"type": "auth_ok"})
+
+					var tokenReq map[string]interface{}
+					_ = conn.ReadJSON(&tokenReq)
+					_ = conn.WriteJSON(map[string]interface{}{
+						"id":      tokenReq["id"],
+						"type":    "result",
+						"success": true,
+						"result":  "test-long-lived-token",
+					})
+				}
+			}))
+
+			client = NewClient(server.URL)
+			token, err := client.PerformBootstrap(ctx, "admin", "password123", "Admin", "en", &BootstrapOptions{
+				CreateLongLivedToken: true,
+				CoreConfig: &CoreConfigRequest{
+					LocationName: "Home",
+					Latitude:     52.2297,
+					Longitude:    21.0122,
+					UnitSystem:   "metric",
+				},
+				EnableAnalytics: true,
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(token).To(Equal("test-long-lived-token"))
+			Expect(healthCalled).To(BeTrue())
+			Expect(onboardCalled).To(BeTrue())
+			Expect(userCalled).To(BeTrue())
+			Expect(configCalled).To(BeTrue())
+			Expect(analyticsCalled).To(BeTrue())
+		})
+
+		It("Should skip long-lived token creation when not requested", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case testAPIPath:
+					w.WriteHeader(http.StatusOK)
+				case testOnboardingPath:
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`["user"]`))
+				case testOnboardingUsers:
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"auth_code": "test-auth-code"}`))
+				case testAuthToken:
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"access_token": "test-access-token", "token_type": "Bearer", "expires_in": 1800}`))
+				case testAnalytics:
+					w.WriteHeader(http.StatusOK)
+				}
+			}))
+
+			client = NewClient(server.URL)
+			token, err := client.PerformBootstrap(ctx, "admin", "password123", "Admin", "en", &BootstrapOptions{
+				CreateLongLivedToken: false,
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(token).To(Equal(""))
+		})
+
+		It("Should return OnboardingDone error when already completed", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case testAPIPath:
+					w.WriteHeader(http.StatusOK)
+				case testOnboardingPath:
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"user": {"step": "user", "done": true}}`))
+				}
+			}))
+
+			client = NewClient(server.URL)
+			token, err := client.PerformBootstrap(ctx, "admin", "password123", "Admin", "en", nil)
+
+			Expect(err).To(HaveOccurred())
+			Expect(IsOnboardingDone(err)).To(BeTrue())
+			Expect(token).To(Equal(""))
+		})
+
+		It("Should return NotReady error when HA not responding", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+
+			client = NewClient(server.URL)
+			token, err := client.PerformBootstrap(ctx, "admin", "password123", "Admin", "en", nil)
+
+			Expect(err).To(HaveOccurred())
+			Expect(IsNotReady(err)).To(BeTrue())
+			Expect(token).To(Equal(""))
+		})
+
+		It("Should fail when user creation fails", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case testAPIPath:
+					w.WriteHeader(http.StatusOK)
+				case testOnboardingPath:
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`["user"]`))
+				case testOnboardingUsers:
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error": "invalid username"}`))
+				}
+			}))
+
+			client = NewClient(server.URL)
+			token, err := client.PerformBootstrap(ctx, "admin", "pass", "Admin", "en", nil)
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeHTTP))
+			Expect(token).To(Equal(""))
+		})
+
+		AfterEach(func() {
+			if wsServer != nil {
+				wsServer.Close()
 			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
-		case testOnboardingAnalyticsPath:
-			// Capture the request
-			if err := json.NewDecoder(r.Body).Decode(&receivedAnalytics); err != nil {
-				t.Errorf("failed to decode analytics: %v", err)
-			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{}`))
-		case testAuthTokenPath:
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"access_token":"test-token","token_type":"Bearer","expires_in":1800}`))
-		case testWebsocketPath:
-			handleWebsocketForToken(t, w, r, "test-long-lived-token")
-			return
-		default:
-			t.Errorf("unexpected path: %s", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer server.Close()
+		})
+	})
 
-	client := NewClient(server.URL)
-	ctx := context.Background()
+	Describe("Error Helpers", func() {
+		It("IsNotReady should return true for NotReady error", func() {
+			err := &Error{Type: ErrorTypeNotReady, Message: "not ready"}
+			Expect(IsNotReady(err)).To(BeTrue())
+		})
 
-	opts := &BootstrapOptions{
-		CreateLongLivedToken: true,
-		EnableAnalytics:      true,
-		CoreConfig: &CoreConfigRequest{
-			LocationName: "Home",
-			Latitude:     52.2297,
-			Longitude:    21.0122,
-			Elevation:    100,
-			UnitSystem:   "metric",
-			Currency:     "PLN",
-			TimeZone:     "Europe/Warsaw",
-		},
-	}
+		It("IsNotReady should return false for other error types", func() {
+			err := &Error{Type: ErrorTypeHTTP, Message: "http error"}
+			Expect(IsNotReady(err)).To(BeFalse())
+		})
 
-	token, err := client.PerformBootstrap(ctx, "admin", "password", "Admin", "en", opts)
-	if err != nil {
-		t.Fatalf("PerformBootstrap() error = %v", err)
-	}
+		It("IsNotReady should return false for non-Error type", func() {
+			err := fmt.Errorf("generic error")
+			Expect(IsNotReady(err)).To(BeFalse())
+		})
 
-	if token != "test-long-lived-token" {
-		t.Errorf("PerformBootstrap() token = %v, want %v", token, "test-long-lived-token")
-	}
+		It("IsOnboardingDone should return true for OnboardingDone error", func() {
+			err := &Error{Type: ErrorTypeOnboardingDone, Message: "already done"}
+			Expect(IsOnboardingDone(err)).To(BeTrue())
+		})
 
-	// Verify core config was sent
-	if receivedCoreConfig == nil {
-		t.Error("core_config request was not received")
-	} else {
-		if receivedCoreConfig.LocationName != "Home" {
-			t.Errorf("core_config location_name = %v, want 'Home'", receivedCoreConfig.LocationName)
-		}
-		if receivedCoreConfig.UnitSystem != "metric" {
-			t.Errorf("core_config unit_system = %v, want 'metric'", receivedCoreConfig.UnitSystem)
-		}
-	}
+		It("IsOnboardingDone should return false for other error types", func() {
+			err := &Error{Type: ErrorTypeAuth, Message: "auth error"}
+			Expect(IsOnboardingDone(err)).To(BeFalse())
+		})
 
-	// Verify analytics was sent
-	if receivedAnalytics == nil {
-		t.Error("analytics request was not received")
-	} else if receivedAnalytics.Preferences == nil {
-		t.Error("analytics preferences should be set when enabled")
-	} else {
-		if !receivedAnalytics.Preferences.Base {
-			t.Error("analytics base preference should be true")
-		}
-	}
-}
+		It("IsOnboardingDone should return false for non-Error type", func() {
+			err := fmt.Errorf("generic error")
+			Expect(IsOnboardingDone(err)).To(BeFalse())
+		})
+	})
+
+	Describe("Client Configuration", func() {
+		It("Should trim trailing slash from base URL", func() {
+			client := NewClient("http://example.com/")
+			Expect(client.baseURL).To(Equal("http://example.com"))
+		})
+
+		It("Should set custom timeout", func() {
+			client := NewClient("http://example.com")
+			client = client.WithTimeout(5 * time.Second)
+			Expect(client.httpClient.Timeout).To(Equal(5 * time.Second))
+		})
+
+		It("Should have default timeout", func() {
+			client := NewClient("http://example.com")
+			Expect(client.httpClient.Timeout).To(Equal(defaultTimeout))
+		})
+	})
+})

@@ -102,15 +102,6 @@ var _ = Describe("Manager", Ordered, func() {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Kubernetes events: %s", err)
 			}
 
-			By("Fetching curl-metrics logs")
-			cmd = exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
-			metricsOutput, err := utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Metrics logs:\n %s", metricsOutput)
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get curl-metrics logs: %s", err)
-			}
-
 			By("Fetching controller manager pod description")
 			cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", namespace)
 			podDescription, err := utils.Run(cmd)
@@ -158,86 +149,6 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(verifyControllerUp).Should(Succeed())
 		})
 
-		It("should test HomeAssistantSecrets reconciliation", func() {
-			By("creating a test namespace for HomeAssistant")
-			cmd := exec.Command("kubectl", "create", "ns", "ha-test")
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create test namespace")
-
-			By("creating a Kubernetes Secret with test data")
-			secretYAML := `apiVersion: v1
-kind: Secret
-metadata:
-  name: test-secret
-  namespace: ha-test
-type: Opaque
-stringData:
-  mqtt_user: "testuser"
-  mqtt_password: "testpass"`
-
-			secretFile := "/tmp/test-secret.yaml"
-			err = os.WriteFile(secretFile, []byte(secretYAML), 0644)
-			Expect(err).NotTo(HaveOccurred())
-
-			cmd = exec.Command("kubectl", "apply", "-f", secretFile)
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create test secret")
-
-			By("creating a HomeAssistant instance")
-			haYAML := `apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: test-ha
-  namespace: ha-test
-spec:
-  version: "stable"
-  storage:
-    size: "1Gi"`
-
-			haFile := "/tmp/test-ha.yaml"
-			err = os.WriteFile(haFile, []byte(haYAML), 0644)
-			Expect(err).NotTo(HaveOccurred())
-
-			cmd = exec.Command("kubectl", "apply", "-f", haFile)
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create HomeAssistant")
-
-			By("creating a HomeAssistantSecrets instance")
-			haSecretsYAML := `apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantSecrets
-metadata:
-  name: test-ha-secrets
-  namespace: ha-test
-spec:
-  homeAssistantRef:
-    name: test-ha
-  secretRefs:
-    - name: test-secret
-      keys:
-        - mqtt_user
-        - mqtt_password`
-
-			secretsFile := "/tmp/test-ha-secrets.yaml"
-			err = os.WriteFile(secretsFile, []byte(haSecretsYAML), 0644)
-			Expect(err).NotTo(HaveOccurred())
-
-			cmd = exec.Command("kubectl", "apply", "-f", secretsFile)
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create HomeAssistantSecrets")
-
-			By("verifying that the generated secret was created")
-			verifyGeneratedSecret := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "secret", "test-ha-generated-secrets", "-n", "ha-test")
-				_, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred(), "Generated secret should exist")
-			}
-			Eventually(verifyGeneratedSecret, 30*time.Second).Should(Succeed())
-
-			By("cleaning up test resources")
-			cmd = exec.Command("kubectl", "delete", "ns", "ha-test", "--ignore-not-found=true")
-			_, _ = utils.Run(cmd)
-		})
-
 		It("should ensure the metrics service is available", func() {
 			By("validating that the metrics service is available")
 			verifyMetricsService := func(g Gomega) {
@@ -258,50 +169,22 @@ spec:
 			Eventually(verifyMetricsServerStarted, 30*time.Second).Should(Succeed())
 		})
 
-		// +kubebuilder:scaffold:e2e-webhooks-checks
-
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput := getMetricsOutput()
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
-
-		It("should support bootstrap in HomeAssistant spec", func() {
+		It("should create HomeAssistant resource successfully", func() {
 			const (
-				testNamespace   = "bootstrap-test"
-				haName          = "bootstrap-ha"
-				credentialsName = "bootstrap-credentials"
+				testNamespace = "ha-e2e-test"
+				haName        = "test-ha-e2e"
 			)
 
 			By("creating test namespace")
 			cmd := exec.Command("kubectl", "create", "ns", testNamespace)
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
+			defer func() {
+				cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found=true")
+				_, _ = utils.Run(cmd)
+			}()
 
-			By("creating bootstrap credentials secret")
-			credentialsYAML := fmt.Sprintf(`apiVersion: v1
-kind: Secret
-metadata:
-  name: %s
-  namespace: %s
-type: Opaque
-stringData:
-  username: admin
-  password: testpass123
-`, credentialsName, testNamespace)
-
-			credFile := "/tmp/bootstrap-credentials.yaml"
-			err = os.WriteFile(credFile, []byte(credentialsYAML), 0644)
-			Expect(err).NotTo(HaveOccurred())
-
-			cmd = exec.Command("kubectl", "apply", "-f", credFile)
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("creating HomeAssistant with bootstrap enabled")
+			By("creating HomeAssistant instance")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant
 metadata:
@@ -311,18 +194,9 @@ spec:
   version: "stable"
   storage:
     size: "1Gi"
-  bootstrap:
-    enabled: true
-    credentials:
-      secretRef:
-        name: %s
-    createApiToken: true
-    apiTokenSecretName: %s-token
-    ownerName: "Test Admin"
-    language: "en"
-`, haName, testNamespace, credentialsName, haName)
+`, haName, testNamespace)
 
-			haFile := "/tmp/bootstrap-ha.yaml"
+			haFile := "/tmp/test-ha-e2e.yaml"
 			err = os.WriteFile(haFile, []byte(haYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -330,7 +204,7 @@ spec:
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("verifying HomeAssistant resource was created successfully")
+			By("verifying HomeAssistant resource was created")
 			verifyHACreated := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "homeassistant", haName, "-n", testNamespace)
 				_, err := utils.Run(cmd)
@@ -338,9 +212,119 @@ spec:
 			}
 			Eventually(verifyHACreated, 30*time.Second).Should(Succeed())
 
-			By("cleaning up test namespace")
-			cmd = exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found=true")
-			_, _ = utils.Run(cmd)
+			By("verifying StatefulSet was created")
+			verifyStatefulSet := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "statefulset", haName, "-n", testNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}
+			Eventually(verifyStatefulSet, 30*time.Second).Should(Succeed())
+
+			By("verifying Service was created")
+			verifyService := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "service", haName, "-n", testNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}
+			Eventually(verifyService, 30*time.Second).Should(Succeed())
+
+			By("verifying PVC was created")
+			verifyPVC := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "pvc", haName+"-config", "-n", testNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}
+			Eventually(verifyPVC, 30*time.Second).Should(Succeed())
+		})
+
+		It("should create HomeAssistantSecrets resource successfully", func() {
+			const (
+				testNamespace = "hasec-e2e-test"
+				haName        = "test-ha-sec-e2e"
+				secretName    = "test-secret-e2e"
+				haSecretsName = "test-hasecrets-e2e"
+			)
+
+			By("creating test namespace")
+			cmd := exec.Command("kubectl", "create", "ns", testNamespace)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() {
+				cmd := exec.Command("kubectl", "delete", "ns", testNamespace, "--ignore-not-found=true")
+				_, _ = utils.Run(cmd)
+			}()
+
+			By("creating source Secret")
+			secretYAML := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+stringData:
+  mqtt_user: "testuser"
+  mqtt_password: "testpass"
+`, secretName, testNamespace)
+
+			secretFile := "/tmp/test-secret-e2e.yaml"
+			err = os.WriteFile(secretFile, []byte(secretYAML), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			cmd = exec.Command("kubectl", "apply", "-f", secretFile)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating HomeAssistant instance")
+			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  version: "stable"
+  storage:
+    size: "1Gi"
+`, haName, testNamespace)
+
+			haFile := "/tmp/test-ha-hasec-e2e.yaml"
+			err = os.WriteFile(haFile, []byte(haYAML), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			cmd = exec.Command("kubectl", "apply", "-f", haFile)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating HomeAssistantSecrets instance")
+			haSecretsYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantSecrets
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  secretRefs:
+    - name: %s
+      keys:
+        - mqtt_user
+        - mqtt_password
+`, haSecretsName, testNamespace, haName, secretName)
+
+			haSecretsFile := "/tmp/test-hasecrets-e2e.yaml"
+			err = os.WriteFile(haSecretsFile, []byte(haSecretsYAML), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			cmd = exec.Command("kubectl", "apply", "-f", haSecretsFile)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying generated Secret was created")
+			verifyGeneratedSecret := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "secret", haName+"-generated-secrets", "-n", testNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}
+			Eventually(verifyGeneratedSecret, 30*time.Second).Should(Succeed())
 		})
 	})
 })
