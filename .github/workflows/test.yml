@@ -21,25 +21,3 @@ jobs:
         run: |
           go mod tidy
           make test
-
-      - name: Generate coverage report
-        run: |
-          go tool cover -html=cover.out -o coverage.html
-
-
-      #
-      #temporarily disabled, in the next PR the number of tests will be improved
-      #
-      #- name: Go Test Coverage
-      #  uses: vladopajic/go-test-coverage@v2
-      #  with:
-      #    # The relative path to the test coverage file.
-      #    profile: cover.out
-      #    # The relative path to the html output file (optional)
-      #    local-prefix: github.com/przemekhys/homeassistant-operator
-      #    # Minimum code coverage percentage to pass the check
-      #    threshold-file: 70
-      #    # If the coverage is less than threshold, workflow will fail
-      #    threshold-package: 70
-      #    # Exclude files from coverage report
-      #    # exclude-files: vendor
