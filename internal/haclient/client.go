@@ -452,3 +452,77 @@ func (c *Client) PerformBootstrap(ctx context.Context, username, password, owner
 
 	return longLivedResp.Token, nil
 }
+
+// CheckConfig validates the current Home Assistant configuration
+// Returns nil if config is valid, error if invalid
+// Requires authenticated API call with long-lived token
+func (c *Client) CheckConfig(ctx context.Context, token string) error {
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/services/homeassistant/check_config", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to check config", Err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return &Error{
+			Type:       ErrorTypeHTTP,
+			Message:    fmt.Sprintf("config check failed: %s", string(bodyBytes)),
+			StatusCode: resp.StatusCode,
+		}
+	}
+
+	// Parse response to check for errors
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return &Error{Type: ErrorTypeInvalidResponse, Message: "failed to decode response", Err: err}
+	}
+
+	// Check if there are any errors in the response
+	if errors, ok := result["errors"].([]interface{}); ok && len(errors) > 0 {
+		return &Error{
+			Type:    ErrorTypeHTTP,
+			Message: fmt.Sprintf("config validation errors: %v", errors),
+		}
+	}
+
+	return nil
+}
+
+// ReloadCoreConfig triggers a hot-reload of Home Assistant core configuration
+// Returns nil if reload successful, error if failed
+// Requires authenticated API call with long-lived token
+func (c *Client) ReloadCoreConfig(ctx context.Context, token string) error {
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/services/homeassistant/reload_core_config", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to reload config", Err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return &Error{
+			Type:       ErrorTypeHTTP,
+			Message:    fmt.Sprintf("reload failed: %s", string(bodyBytes)),
+			StatusCode: resp.StatusCode,
+		}
+	}
+
+	return nil
+}

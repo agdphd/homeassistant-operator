@@ -44,11 +44,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 		)
 
 		AfterEach(func() {
+			// Cleanup HomeAssistantConfiguration resources
+			configList := &hav1alpha1.HomeAssistantConfigurationList{}
+			_ = k8sClient.List(ctx, configList, &client.ListOptions{Namespace: namespace})
+			for _, config := range configList.Items {
+				_ = k8sClient.Delete(ctx, &config)
+			}
+
 			// Cleanup all HomeAssistant resources
 			haList := &hav1alpha1.HomeAssistantList{}
 			_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
 			for _, ha := range haList.Items {
 				_ = k8sClient.Delete(ctx, &ha)
+			}
+
+			// Cleanup all ConfigMaps
+			cmList := &corev1.ConfigMapList{}
+			_ = k8sClient.List(ctx, cmList, &client.ListOptions{Namespace: namespace})
+			for _, cm := range cmList.Items {
+				_ = k8sClient.Delete(ctx, &cm)
 			}
 
 			// Wait for resources to be deleted
@@ -846,6 +860,215 @@ var _ = Describe("HomeAssistant Controller", func() {
 					Namespace: namespace,
 				}, sts)).To(Succeed())
 				g.Expect(sts.Spec.Replicas).To(Equal(ptr.To(int32(1))))
+			}, timeout, interval).Should(Succeed())
+		})
+
+		It("should automatically mount generated ConfigMap from HomeAssistantConfiguration", func() {
+			By("Creating HomeAssistant resource")
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantSpec{
+					Version: "stable",
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration that references the HomeAssistant")
+			config := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "config-auto",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, config)).To(Succeed())
+
+			By("Reconciling the HomeAssistant (should auto-detect generated ConfigMap)")
+			reconciler := &HomeAssistantReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying StatefulSet mounts the generated ConfigMap")
+			Eventually(func(g Gomega) {
+				sts := &appsv1.StatefulSet{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      resourceName,
+					Namespace: namespace,
+				}, sts)).To(Succeed())
+
+				// Check volumes
+				var hasConfigVolume bool
+				for _, vol := range sts.Spec.Template.Spec.Volumes {
+					if vol.Name == "ha-configuration" && vol.ConfigMap != nil {
+						hasConfigVolume = vol.ConfigMap.Name == resourceName+"-configuration"
+						break
+					}
+				}
+				g.Expect(hasConfigVolume).To(BeTrue(), "StatefulSet should mount ConfigMap volume with name <ha-name>-configuration")
+
+				// Check volume mounts
+				container := sts.Spec.Template.Spec.Containers[0]
+				var hasConfigMount bool
+				for _, mount := range container.VolumeMounts {
+					if mount.Name == "ha-configuration" && mount.MountPath == "/config/configuration.yaml" {
+						hasConfigMount = true
+						break
+					}
+				}
+				g.Expect(hasConfigMount).To(BeTrue(), "Container should mount configuration.yaml at /config/configuration.yaml")
+			}, timeout, interval).Should(Succeed())
+		})
+
+		It("should fallback to spec.configurationFrom when no HomeAssistantConfiguration exists", func() {
+			By("Creating ConfigMap for manual configuration")
+			configMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "manual-config",
+					Namespace: namespace,
+				},
+				Data: map[string]string{
+					"configuration.yaml": "homeassistant:\n  name: Manual Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			By("Creating HomeAssistant with spec.configurationFrom")
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantSpec{
+					Version: "stable",
+					ConfigurationFrom: &hav1alpha1.ConfigMapReference{
+						Name: "manual-config",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			By("Reconciling the HomeAssistant")
+			reconciler := &HomeAssistantReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying StatefulSet mounts the manual ConfigMap")
+			Eventually(func(g Gomega) {
+				sts := &appsv1.StatefulSet{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      resourceName,
+					Namespace: namespace,
+				}, sts)).To(Succeed())
+
+				// Check volumes
+				var hasConfigVolume bool
+				for _, vol := range sts.Spec.Template.Spec.Volumes {
+					if vol.Name == "ha-configuration" && vol.ConfigMap != nil {
+						hasConfigVolume = vol.ConfigMap.Name == "manual-config"
+						break
+					}
+				}
+				g.Expect(hasConfigVolume).To(BeTrue(), "StatefulSet should mount manual ConfigMap volume")
+			}, timeout, interval).Should(Succeed())
+		})
+
+		It("should prefer HomeAssistantConfiguration over spec.configurationFrom", func() {
+			By("Creating manual ConfigMap")
+			configMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "manual-config-priority",
+					Namespace: namespace,
+				},
+				Data: map[string]string{
+					"configuration.yaml": "homeassistant:\n  name: Manual Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			By("Creating HomeAssistant with both spec.configurationFrom and later HomeAssistantConfiguration will exist")
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantSpec{
+					Version: "stable",
+					ConfigurationFrom: &hav1alpha1.ConfigMapReference{
+						Name: "manual-config-priority",
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration that references the HomeAssistant")
+			config := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "config-priority",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Auto Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, config)).To(Succeed())
+
+			By("Reconciling the HomeAssistant")
+			reconciler := &HomeAssistantReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying StatefulSet mounts the generated ConfigMap (not manual)")
+			Eventually(func(g Gomega) {
+				sts := &appsv1.StatefulSet{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      resourceName,
+					Namespace: namespace,
+				}, sts)).To(Succeed())
+
+				// Check volumes - should use generated ConfigMap, not manual
+				var hasGeneratedConfigVolume bool
+				for _, vol := range sts.Spec.Template.Spec.Volumes {
+					if vol.Name == "ha-configuration" && vol.ConfigMap != nil {
+						hasGeneratedConfigVolume = vol.ConfigMap.Name == resourceName+"-configuration"
+						break
+					}
+				}
+				g.Expect(hasGeneratedConfigVolume).To(BeTrue(), "Should prefer HomeAssistantConfiguration generated ConfigMap over spec.configurationFrom")
 			}, timeout, interval).Should(Succeed())
 		})
 	})

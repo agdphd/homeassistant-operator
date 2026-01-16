@@ -222,6 +222,13 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantSecrets")
 		os.Exit(1)
 	}
+	if err := (&controller.HomeAssistantConfigurationReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantConfiguration")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {

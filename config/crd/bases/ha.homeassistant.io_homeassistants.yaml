@@ -11,10 +11,23 @@ spec:
     kind: HomeAssistant
     listKind: HomeAssistantList
     plural: homeassistants
+    shortNames:
+    - ha
+    - has
     singular: homeassistant
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.version
+      name: Version
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: HomeAssistant is the Schema for the homeassistants API.
