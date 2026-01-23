@@ -20,9 +20,62 @@ spec:
     limits:
       cpu: "1000m"
       memory: "1Gi"
-  # Reference to ConfigMap with configuration.yaml
-  configurationFrom:
-    name: homeassistant-config
   # Reference to Secret with secrets.yaml
   secretsFrom:
     name: homeassistant-secrets
+---
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: homeassistant-with-config-configuration
+spec:
+  homeAssistantRef:
+    name: homeassistant-with-config
+  configuration: |
+    # Home Assistant Configuration
+    # https://www.home-assistant.io/docs/configuration/
+
+    homeassistant:
+      name: Home
+      unit_system: metric
+      currency: PLN
+      country: PL
+
+    # Enables the default set of integrations
+    default_config:
+
+    # HTTP configuration for reverse proxy / ingress
+    # NOTE: The trusted_proxies below are k3s-specific.
+    # Verify the pod network CIDR for your Kubernetes cluster.
+    # You can find it with: kubectl get nodes -o jsonpath='{.items[0].spec.podCIDR}'
+    http:
+      use_x_forwarded_for: true
+      trusted_proxies:
+        - 10.42.0.0/16   # k3s pod network (default)
+        - 10.43.0.0/16   # k3s service network (default)
+
+    # Logging configuration
+    logger:
+      default: info
+      logs:
+        homeassistant.components.mqtt: warning
+
+    # Example: Recorder configuration (if using external database)
+    # recorder:
+    #   db_url: !secret db_url
+    #   purge_keep_days: 10
+
+    # Example: MQTT configuration
+    # mqtt:
+    #   broker: mosquitto.default.svc.cluster.local
+    #   port: 1883
+    #   username: !secret mqtt_user
+    #   password: !secret mqtt_password
+
+    # Automation files (optional - can be edited in UI)
+    automation: !include automations.yaml
+    script: !include scripts.yaml
+    scene: !include scenes.yaml

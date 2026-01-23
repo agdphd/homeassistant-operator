@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -33,7 +32,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
@@ -42,7 +43,7 @@ import (
 const (
 	configurationYamlKey     = "configuration.yaml"
 	generatedConfigmapSuffix = "-configuration"
-	configHashAnnotationKey  = "ha.homeassistant.io/config-hash"
+	// configHashAnnotationKey moved to constants.go (shared with homeassistant_controller.go)
 
 	// Condition reasons for HomeAssistantConfiguration
 	reasonConfigurationGenerated = "ConfigurationGenerated"
@@ -173,6 +174,12 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	// Calculate hash of the configuration
 	configHash := calculateConfigHash(config.Spec.Configuration)
 
+	// Sync ConfigMap back to CRD state if it was modified externally (operator exclusivity)
+	if err := r.syncConfigMapFromCRD(ctx, config, configHash); err != nil {
+		log.Error(err, "Failed to sync ConfigMap from CRD")
+		// Continue - we'll try to update it in reconcileGeneratedConfigMap
+	}
+
 	// Create or update the ConfigMap
 	if err := r.reconcileGeneratedConfigMap(ctx, config, configHash); err != nil {
 		log.Error(err, "Failed to reconcile generated ConfigMap")
@@ -222,36 +229,36 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(ctx c
 	log := logf.FromContext(ctx)
 
 	configMapName := config.Spec.HomeAssistantRef.Name + generatedConfigmapSuffix
-	configMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      configMapName,
-			Namespace: config.Namespace,
-			Labels: map[string]string{
-				labelAppName:      "homeassistant",
-				labelAppInstance:  config.Spec.HomeAssistantRef.Name,
-				labelAppManagedBy: "homeassistant-operator",
-			},
-			Annotations: map[string]string{
-				configHashAnnotationKey: hash,
-			},
-		},
-		Data: map[string]string{
-			configurationYamlKey: config.Spec.Configuration,
-		},
-	}
-
-	// Set HomeAssistantConfiguration as the owner
-	if err := controllerutil.SetControllerReference(config, configMap, r.Scheme); err != nil {
-		return err
-	}
 
 	// Check if ConfigMap already exists
 	existingConfigMap := &corev1.ConfigMap{}
 	err := r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: config.Namespace}, existingConfigMap)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// Create new ConfigMap
-			log.Info("Creating new generated ConfigMap", "name", configMapName)
+			// Create new ConfigMap WITHOUT hash annotation
+			// The hash annotation is ONLY set by performConfigReload() when restart is needed
+			configMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: config.Namespace,
+					Labels: map[string]string{
+						labelAppName:      "homeassistant",
+						labelAppInstance:  config.Spec.HomeAssistantRef.Name,
+						labelAppManagedBy: "homeassistant-operator",
+					},
+					// NO hash annotation on initial creation
+				},
+				Data: map[string]string{
+					configurationYamlKey: config.Spec.Configuration,
+				},
+			}
+
+			// Set HomeAssistantConfiguration as the owner
+			if err := controllerutil.SetControllerReference(config, configMap, r.Scheme); err != nil {
+				return err
+			}
+
+			log.Info("Creating new generated ConfigMap (no hash annotation initially)", "name", configMapName)
 			if err := r.Create(ctx, configMap); err != nil {
 				return err
 			}
@@ -260,13 +267,14 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(ctx c
 		return err
 	}
 
-	// Update existing ConfigMap if hash changed
-	if existingConfigMap.Annotations[configHashAnnotationKey] != hash {
-		log.Info("Updating generated ConfigMap (hash changed)", "name", configMapName,
-			"oldHash", existingConfigMap.Annotations[configHashAnnotationKey],
-			"newHash", hash)
-		existingConfigMap.Data = configMap.Data
-		existingConfigMap.Annotations[configHashAnnotationKey] = hash
+	// Update existing ConfigMap content if changed
+	// IMPORTANT: We do NOT update the hash annotation here.
+	// The hash annotation is ONLY updated by performConfigReload() when restart strategy is used.
+	// For hot-reload, we update content but preserve the old annotation to avoid triggering pod restart.
+	existingData := existingConfigMap.Data[configurationYamlKey]
+	if existingData != config.Spec.Configuration {
+		log.Info("Updating generated ConfigMap content (hash annotation preserved for hot-reload)", "name", configMapName)
+		existingConfigMap.Data[configurationYamlKey] = config.Spec.Configuration
 		if err := r.Update(ctx, existingConfigMap); err != nil {
 			return err
 		}
@@ -286,6 +294,10 @@ func (r *HomeAssistantConfigurationReconciler) SetupWithManager(mgr ctrl.Manager
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hav1alpha1.HomeAssistantConfiguration{}).
 		Owns(&corev1.ConfigMap{}).
+		Watches(
+			&corev1.ConfigMap{},
+			handler.EnqueueRequestsFromMapFunc(r.findHomeAssistantConfigurationForConfigMap),
+		).
 		Named("homeassistantconfiguration").
 		Complete(r)
 }
@@ -488,84 +500,76 @@ func httpSectionChanged(old, new interface{}) (changed bool, critical bool) {
 
 // buildHomeAssistantURL constructs the URL for Home Assistant service
 func (r *HomeAssistantConfigurationReconciler) buildHomeAssistantURL(ha *hav1alpha1.HomeAssistant) string {
-	serviceName := ha.Name + "-homeassistant"
-	port := ha.Spec.Service.Port
-	if port == 0 {
-		port = defaultHomeAssistantPort
+	// Service name matches the HomeAssistant CR name (not ha.Name + "-homeassistant")
+	// See homeassistant_controller.go:578 for Service creation
+	serviceName := ha.Name
+	port := int32(defaultHomeAssistantPort)
+	if ha.Spec.Service != nil && ha.Spec.Service.Port != 0 {
+		port = ha.Spec.Service.Port
 	}
 	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", serviceName, ha.Namespace, port)
 }
 
 // performHotReload attempts to hot-reload the configuration via HA REST API
+// Retries with fixed interval to handle kubelet ConfigMap sync delay
+// Kubelet typically syncs ConfigMap volumes every 60s (syncFrequency), so we need
+// to wait for the file to be synced to the pod before hot-reload will work correctly
 func (r *HomeAssistantConfigurationReconciler) performHotReload(ctx context.Context, haURL, token string) error {
 	log := logf.FromContext(ctx)
 
-	client := haclient.NewClient(haURL)
+	haClient := haclient.NewClient(haURL)
 
-	// First, validate the configuration
-	if err := client.CheckConfig(ctx, token); err != nil {
-		log.Error(err, "Configuration validation failed, cannot hot-reload")
-		return err
-	}
+	log.Info("Waiting for kubelet to sync ConfigMap to pod")
 
-	// Reload the core configuration
-	if err := client.ReloadCoreConfig(ctx, token); err != nil {
-		log.Error(err, "Failed to reload configuration")
-		return err
-	}
+	// Poll until CheckConfig succeeds (indicates file is synced)
+	// Kubelet syncFrequency is typically 60s, so we need generous timeout
+	const maxRetries = 20 // 20 * 5s = 100s max wait
+	const retryInterval = 5 * time.Second
 
-	log.Info("Configuration hot-reload successful")
-	return nil
-}
-
-// updateStatefulSetConfigAnnotation updates the config hash annotation on the StatefulSet
-// to trigger a rolling restart when config changes
-func (r *HomeAssistantConfigurationReconciler) updateStatefulSetConfigAnnotation(ctx context.Context, ha *hav1alpha1.HomeAssistant, hash string) error {
-	log := logf.FromContext(ctx)
-
-	// StatefulSet has the same name as the HomeAssistant CR
-	stsName := types.NamespacedName{
-		Name:      ha.Name,
-		Namespace: ha.Namespace,
-	}
-
-	sts := &appsv1.StatefulSet{}
-	if err := r.Get(ctx, stsName, sts); err != nil {
-		if errors.IsNotFound(err) {
-			log.Info("StatefulSet not found, skipping annotation update", "name", stsName.Name)
-			return nil
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			log.V(1).Info("Config not ready yet (waiting for kubelet sync)",
+				"attempt", attempt+1,
+				"waitTime", fmt.Sprintf("%ds", attempt*5),
+				"nextRetryIn", retryInterval)
+			time.Sleep(retryInterval)
 		}
-		return err
-	}
 
-	// Check if annotation needs update
-	currentHash := ""
-	if sts.Spec.Template.Annotations != nil {
-		currentHash = sts.Spec.Template.Annotations[configHashAnnotationKey]
-	}
+		// First, validate the configuration
+		// CheckConfig reads /config/configuration.yaml from pod
+		// It will fail if:
+		// - Kubelet hasn't synced yet → old/invalid config
+		// - Config has syntax errors
+		if err := haClient.CheckConfig(ctx, token); err != nil {
+			lastErr = err
+			log.V(1).Info("Configuration validation failed, will retry", "attempt", attempt+1, "error", err.Error())
+			continue
+		}
 
-	if currentHash == hash {
-		log.V(1).Info("StatefulSet annotation already up to date", "hash", hash)
+		// Config is valid and readable - kubelet must have synced
+		waitTime := time.Duration(attempt) * retryInterval
+		log.Info("Config synced and validated, proceeding with hot-reload", "waitTime", waitTime)
+
+		// Reload the core configuration
+		if err := haClient.ReloadCoreConfig(ctx, token); err != nil {
+			lastErr = err
+			log.V(1).Info("Failed to reload configuration, will retry", "attempt", attempt+1, "error", err.Error())
+			continue
+		}
+
+		log.Info("Configuration hot-reload successful", "attempts", attempt+1, "totalWaitTime", waitTime)
 		return nil
 	}
 
-	// Update pod template annotation to trigger rolling restart
-	if sts.Spec.Template.Annotations == nil {
-		sts.Spec.Template.Annotations = make(map[string]string)
-	}
-	sts.Spec.Template.Annotations[configHashAnnotationKey] = hash
-
-	log.Info("Updating StatefulSet annotation to trigger pod restart",
-		"statefulset", stsName.Name,
-		"oldHash", currentHash,
-		"newHash", hash)
-
-	if err := r.Update(ctx, sts); err != nil {
-		return fmt.Errorf("failed to update StatefulSet: %w", err)
-	}
-
-	return nil
+	log.Error(lastErr, "Configuration hot-reload failed after retries - timeout waiting for config sync", "maxRetries", maxRetries)
+	return fmt.Errorf("timeout waiting for config sync: %w", lastErr)
 }
+
+// updateStatefulSetConfigAnnotation was removed in Faza 1 refactor.
+// StatefulSet annotation updates are now handled by HomeAssistant Controller,
+// which reads the hash from ConfigMap annotation and syncs to StatefulSet.
+// See rozwiazanie-architektury.md for details.
 
 // performConfigReload executes reload based on strategy
 func (r *HomeAssistantConfigurationReconciler) performConfigReload(ctx context.Context, config *hav1alpha1.HomeAssistantConfiguration, ha *hav1alpha1.HomeAssistant, newHash string) error {
@@ -619,14 +623,14 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(ctx context.C
 	config.Status.LastReloadTime = &now
 
 	if strategy == string(hav1alpha1.ConfigurationReloadStrategyRestart) || strategy == reloadMethodRestart {
-		// Force pod restart via annotation
-		if err := r.updateStatefulSetConfigAnnotation(ctx, ha, newHash); err != nil {
-			log.Error(err, "Failed to update StatefulSet annotation")
-			config.Status.LastError = fmt.Sprintf("Failed to trigger restart: %v", err)
-			return err
+		// Update ConfigMap annotation hash to trigger pod restart via HomeAssistant Controller
+		if err := r.updateConfigMapHashAnnotation(ctx, config, newHash); err != nil {
+			return fmt.Errorf("failed to update ConfigMap hash for restart: %w", err)
 		}
+
 		config.Status.LastReloadMethod = reloadMethodRestart
-		log.Info("Configuration reload: restart", "hash", newHash)
+		config.Status.LastError = ""
+		log.Info("Configuration reload: restart (updated ConfigMap hash to trigger StatefulSet rolling restart)", "hash", newHash)
 		return nil
 	}
 
@@ -634,13 +638,14 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(ctx context.C
 	if tokenErr != nil {
 		log.Error(tokenErr, "No API token available, falling back to restart")
 		config.Status.LastError = fmt.Sprintf("No API token: %v", tokenErr)
-		// Fall back to restart
-		if err := r.updateStatefulSetConfigAnnotation(ctx, ha, newHash); err != nil {
-			log.Error(err, "Failed to update StatefulSet annotation")
-			config.Status.LastError = fmt.Sprintf("Fallback to restart failed: %v", err)
-			return err
+
+		// Update ConfigMap annotation to trigger restart via HomeAssistant Controller
+		if err := r.updateConfigMapHashAnnotation(ctx, config, newHash); err != nil {
+			return fmt.Errorf("failed to update ConfigMap hash for restart fallback: %w", err)
 		}
+
 		config.Status.LastReloadMethod = reloadMethodRestart
+		log.Info("Configuration reload: restart (fallback - no API token)", "hash", newHash)
 		return nil
 	}
 
@@ -648,16 +653,145 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(ctx context.C
 	if err := r.performHotReload(ctx, haURL, token); err != nil {
 		log.Error(err, "Hot-reload failed, falling back to restart")
 		config.Status.LastError = fmt.Sprintf("Hot-reload failed: %v", err)
-		// Fall back to restart
-		if err := r.updateStatefulSetConfigAnnotation(ctx, ha, newHash); err != nil {
-			log.Error(err, "Fallback restart failed")
-			return err
+
+		// Update ConfigMap annotation to trigger restart via HomeAssistant Controller
+		if updateErr := r.updateConfigMapHashAnnotation(ctx, config, newHash); updateErr != nil {
+			return fmt.Errorf("failed to update ConfigMap hash for restart fallback: %w", updateErr)
 		}
+
 		config.Status.LastReloadMethod = reloadMethodRestart
+		log.Info("Configuration reload: restart (fallback - hot-reload failed)", "hash", newHash)
 		return nil
 	}
 
+	// Hot-reload succeeded - do NOT update ConfigMap hash annotation
+	// This prevents unnecessary pod restart
 	config.Status.LastReloadMethod = reloadMethodHotReload
-	log.Info("Configuration reload: hot-reload", "hash", newHash)
+	config.Status.LastError = ""
+	log.Info("Configuration reload: hot-reload (no pod restart)", "hash", newHash)
 	return nil
+}
+
+// updateConfigMapHashAnnotation updates the hash annotation on ConfigMap to trigger pod restart
+// This should ONLY be called when restart strategy is used, not during hot-reload
+func (r *HomeAssistantConfigurationReconciler) updateConfigMapHashAnnotation(ctx context.Context, config *hav1alpha1.HomeAssistantConfiguration, newHash string) error {
+	log := logf.FromContext(ctx)
+
+	configMapName := config.Spec.HomeAssistantRef.Name + generatedConfigmapSuffix
+	configMap := &corev1.ConfigMap{}
+	if err := r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: config.Namespace}, configMap); err != nil {
+		return fmt.Errorf("failed to get ConfigMap for hash update: %w", err)
+	}
+
+	if configMap.Annotations == nil {
+		configMap.Annotations = make(map[string]string)
+	}
+
+	oldHash := configMap.Annotations[configHashAnnotationKey]
+	if oldHash == newHash {
+		// Hash already matches, no update needed
+		return nil
+	}
+
+	configMap.Annotations[configHashAnnotationKey] = newHash
+	if err := r.Update(ctx, configMap); err != nil {
+		return fmt.Errorf("failed to update ConfigMap hash annotation: %w", err)
+	}
+
+	log.Info("Updated ConfigMap hash annotation to trigger pod restart",
+		"configMapName", configMapName,
+		"oldHash", oldHash,
+		"newHash", newHash)
+	return nil
+}
+
+// syncConfigMapFromCRD ensures ConfigMap matches CRD state (operator exclusivity)
+// This prevents external modifications to ConfigMap by restoring it to CRD state
+func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(ctx context.Context, config *hav1alpha1.HomeAssistantConfiguration, expectedHash string) error {
+	log := logf.FromContext(ctx)
+
+	configMapName := config.Spec.HomeAssistantRef.Name + generatedConfigmapSuffix
+	existingConfigMap := &corev1.ConfigMap{}
+
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      configMapName,
+		Namespace: config.Namespace,
+	}, existingConfigMap)
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// ConfigMap doesn't exist yet - will be created by reconcileGeneratedConfigMap
+			return nil
+		}
+		return err
+	}
+
+	// Check if ConfigMap is owned by this HomeAssistantConfiguration
+	isOwned := false
+	for _, ownerRef := range existingConfigMap.OwnerReferences {
+		if ownerRef.UID == config.UID {
+			isOwned = true
+			break
+		}
+	}
+
+	if !isOwned {
+		// ConfigMap exists but is not owned by this CRD - don't touch it
+		log.Info("ConfigMap exists but is not owned by this HomeAssistantConfiguration, skipping sync",
+			"configMapName", configMapName)
+		return nil
+	}
+
+	// Check if ConfigMap was modified externally (content mismatch)
+	// NOTE: We only check content, NOT hash annotation.
+	// Hash annotation is managed by performConfigReload() and should not be synced here.
+	currentContent := existingConfigMap.Data[configurationYamlKey]
+	expectedContent := config.Spec.Configuration
+
+	if currentContent == expectedContent {
+		// ConfigMap content is in sync with CRD
+		return nil
+	}
+
+	// ConfigMap was modified externally - restore from CRD
+	// NOTE: We only restore the content (Data), NOT the hash annotation.
+	// The hash annotation is ONLY updated during restart strategy in performConfigReload()
+	// to explicitly trigger pod restart.
+	log.Info("ConfigMap was modified externally, restoring from CRD state",
+		"configMapName", configMapName,
+		"currentContent", currentContent[:min(50, len(currentContent))],
+		"expectedContent", expectedContent[:min(50, len(expectedContent))])
+
+	existingConfigMap.Data[configurationYamlKey] = expectedContent
+	// DO NOT update annotation hash here - it's managed by performConfigReload() only
+
+	if err := r.Update(ctx, existingConfigMap); err != nil {
+		log.Error(err, "Failed to restore ConfigMap from CRD state")
+		return err
+	}
+
+	log.Info("Successfully restored ConfigMap to CRD state", "configMapName", configMapName)
+	return nil
+}
+
+// findHomeAssistantConfigurationForConfigMap finds the HomeAssistantConfiguration that owns a given ConfigMap
+func (r *HomeAssistantConfigurationReconciler) findHomeAssistantConfigurationForConfigMap(ctx context.Context, obj client.Object) []reconcile.Request {
+	configMap := obj.(*corev1.ConfigMap)
+
+	// Check if this ConfigMap is owned by a HomeAssistantConfiguration
+	for _, ownerRef := range configMap.OwnerReferences {
+		if ownerRef.Kind == "HomeAssistantConfiguration" {
+			// Reconcile the owning HomeAssistantConfiguration
+			return []reconcile.Request{
+				{
+					NamespacedName: types.NamespacedName{
+						Name:      ownerRef.Name,
+						Namespace: configMap.Namespace,
+					},
+				},
+			}
+		}
+	}
+
+	return []reconcile.Request{}
 }

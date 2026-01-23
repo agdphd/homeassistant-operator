@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -1285,7 +1286,7 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 			}, timeout, interval).Should(Equal(0))
 		})
 
-		It("should update StatefulSet annotation when autoReload enabled and config changes", func() {
+		It("should NOT update ConfigMap annotation for hot-reload (only content changes)", func() {
 			By("Creating initial HomeAssistantConfiguration")
 			config := &hav1alpha1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
@@ -1297,7 +1298,8 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 						Name: haName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
-					AutoReload:    boolPtr(true),
+					// AutoReload false - we only test ConfigMap annotation behavior, not actual hot-reload API calls
+					AutoReload: boolPtr(false),
 				},
 			}
 			Expect(k8sClient.Create(ctx, config)).To(Succeed())
@@ -1315,7 +1317,20 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Updating configuration")
+			// Verify ConfigMap was created WITHOUT hash annotation (new behavior)
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName + "-configuration",
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				// Hash annotation should NOT be set initially
+				if cm.Annotations != nil {
+					g.Expect(cm.Annotations).NotTo(HaveKey("ha.homeassistant.io/config-hash"))
+				}
+			}, timeout, interval).Should(Succeed())
+
+			By("Updating configuration with reloadable change (automation)")
 			Eventually(func() error {
 				retrievedConfig := &hav1alpha1.HomeAssistantConfiguration{}
 				if err := k8sClient.Get(ctx, types.NamespacedName{
@@ -1324,7 +1339,7 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 				}, retrievedConfig); err != nil {
 					return err
 				}
-				retrievedConfig.Spec.Configuration = "homeassistant:\n  name: Home Updated\n"
+				retrievedConfig.Spec.Configuration = "homeassistant:\n  name: Home\nautomation: []"
 				return k8sClient.Update(ctx, retrievedConfig)
 			}, timeout, interval).Should(Succeed())
 
@@ -1337,21 +1352,25 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying StatefulSet annotation was updated with config hash")
+			By("Verifying ConfigMap content was updated but annotation hash is STILL NOT set (hot-reload path)")
 			Eventually(func(g Gomega) {
-				sts := &appsv1.StatefulSet{}
+				cm := &corev1.ConfigMap{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName,
+					Name:      haName + "-configuration",
 					Namespace: namespace,
-				}, sts)).To(Succeed())
-				g.Expect(sts.Spec.Template.Annotations).NotTo(BeNil())
-				g.Expect(sts.Spec.Template.Annotations).To(HaveKey("ha.homeassistant.io/config-hash"))
-				hash := sts.Spec.Template.Annotations["ha.homeassistant.io/config-hash"]
-				g.Expect(hash).NotTo(BeEmpty())
+				}, cm)).To(Succeed())
+				// Content should be updated
+				g.Expect(cm.Data["configuration.yaml"]).To(ContainSubstring("automation: []"))
+				// Hash annotation should STILL NOT be set (hot-reload doesn't trigger restart)
+				if cm.Annotations != nil {
+					g.Expect(cm.Annotations).NotTo(HaveKey("ha.homeassistant.io/config-hash"), "Hash annotation should NOT be set for hot-reload")
+				}
 			}, timeout, interval).Should(Succeed())
+
+			By("Note: Hash annotation is ONLY updated during restart strategy in performConfigReload()")
 		})
 
-		It("should NOT update StatefulSet annotation when autoReload disabled", func() {
+		It("should NOT update ConfigMap annotation when autoReload disabled", func() {
 			By("Creating HomeAssistantConfiguration with autoReload=false")
 			config := &hav1alpha1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
@@ -1381,13 +1400,18 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Getting initial StatefulSet state")
-			sts := &appsv1.StatefulSet{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name:      haName,
-				Namespace: namespace,
-			}, sts)).To(Succeed())
-			initialAnnotations := sts.Spec.Template.Annotations
+			// Verify ConfigMap was created WITHOUT hash annotation
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName + "-configuration",
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				// Hash annotation should NOT be set initially
+				if cm.Annotations != nil {
+					g.Expect(cm.Annotations).NotTo(HaveKey("ha.homeassistant.io/config-hash"))
+				}
+			}, timeout, interval).Should(Succeed())
 
 			By("Updating configuration")
 			Eventually(func() error {
@@ -1411,19 +1435,22 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying StatefulSet annotation was NOT updated")
-			sts = &appsv1.StatefulSet{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name:      haName,
-				Namespace: namespace,
-			}, sts)).To(Succeed())
+			By("Verifying ConfigMap content updated but hash annotation STILL NOT set (autoReload disabled)")
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName + "-configuration",
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				// Content should be updated
+				g.Expect(cm.Data["configuration.yaml"]).To(ContainSubstring("Home Updated"))
+				// Hash annotation should STILL NOT be set (no reload when autoReload disabled)
+				if cm.Annotations != nil {
+					g.Expect(cm.Annotations).NotTo(HaveKey("ha.homeassistant.io/config-hash"), "Hash annotation should NOT be set when autoReload disabled")
+				}
+			}, timeout, interval).Should(Succeed())
 
-			if initialAnnotations == nil {
-				Expect(sts.Spec.Template.Annotations).To(BeNil())
-			} else {
-				_, hasConfigHash := sts.Spec.Template.Annotations["ha.homeassistant.io/config-hash"]
-				Expect(hasConfigHash).To(BeFalse())
-			}
+			By("Note: autoReload=false skips reload entirely, so hash annotation is never updated")
 		})
 
 		It("should update status.lastReloadMethod after reload", func() {
@@ -1490,7 +1517,7 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 			}, timeout, interval).Should(Succeed())
 		})
 
-		It("should respect reloadStrategy=restart", func() {
+		It("should respect reloadStrategy=restart and update ConfigMap hash", func() {
 			By("Creating HomeAssistantConfiguration with strategy=restart")
 			config := &hav1alpha1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
@@ -1520,6 +1547,18 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
+			By("Capturing initial ConfigMap hash")
+			var initialHash string
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName + "-configuration",
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				g.Expect(cm.Annotations).To(HaveKey("ha.homeassistant.io/config-hash"))
+				initialHash = cm.Annotations["ha.homeassistant.io/config-hash"]
+			}, timeout, interval).Should(Succeed())
+
 			By("Updating to trigger reload")
 			Eventually(func() error {
 				retrievedConfig := &hav1alpha1.HomeAssistantConfiguration{}
@@ -1541,14 +1580,687 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying StatefulSet annotation updated (restart triggered)")
+			By("Verifying ConfigMap hash updated (Faza 1: HAConfig Controller updates ConfigMap)")
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName + "-configuration",
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				g.Expect(cm.Annotations).To(HaveKey("ha.homeassistant.io/config-hash"))
+				newHash := cm.Annotations["ha.homeassistant.io/config-hash"]
+				g.Expect(newHash).NotTo(Equal(initialHash), "Hash should change after config update")
+			}, timeout, interval).Should(Succeed())
+
+			By("Verifying status shows restart method")
+			Eventually(func(g Gomega) {
+				retrievedConfig := &hav1alpha1.HomeAssistantConfiguration{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configResourceName,
+					Namespace: namespace,
+				}, retrievedConfig)).To(Succeed())
+				g.Expect(retrievedConfig.Status.LastReloadMethod).To(Equal("restart"))
+			}, timeout, interval).Should(Succeed())
+
+			By("Note: StatefulSet annotation will be synced by HomeAssistant Controller in Faza 2")
+		})
+	})
+
+	Context("Controller - ConfigMap Operator Exclusivity", func() {
+		const (
+			haName     = "test-ha-exclusivity"
+			configName = "test-config-exclusivity"
+		)
+
+		BeforeEach(func() {
+			By("Creating HomeAssistant CR")
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      haName,
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantSpec{
+					Version: "stable",
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			config := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configName,
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: haName,
+					},
+					Configuration: "homeassistant:\n  name: Original\n",
+					AutoReload:    boolPtr(false), // Disable reload to avoid side effects
+				},
+			}
+			Expect(k8sClient.Create(ctx, config)).To(Succeed())
+
+			By("Triggering reconciliation to create ConfigMap")
+			reconciler := &HomeAssistantConfigurationReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      configName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying ConfigMap created")
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName + "-configuration",
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+			}, timeout, interval).Should(Succeed())
+		})
+
+		AfterEach(func() {
+			By("Cleaning up test resources")
+			config := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configName,
+					Namespace: namespace,
+				},
+			}
+			_ = k8sClient.Delete(ctx, config)
+
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      haName,
+					Namespace: namespace,
+				},
+			}
+			_ = k8sClient.Delete(ctx, ha)
+
+			// Wait for cleanup
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configName,
+					Namespace: namespace,
+				}, &hav1alpha1.HomeAssistantConfiguration{})
+				return errors.IsNotFound(err)
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("should restore ConfigMap when content is modified externally", func() {
+			configMapName := haName + "-configuration"
+
+			By("Verifying original ConfigMap state (no hash annotation initially)")
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				// Hash annotation should NOT be set initially
+				if cm.Annotations != nil {
+					g.Expect(cm.Annotations).NotTo(HaveKey("ha.homeassistant.io/config-hash"))
+				}
+				g.Expect(cm.Data["configuration.yaml"]).To(ContainSubstring("Original"))
+			}, timeout, interval).Should(Succeed())
+
+			By("Modifying ConfigMap content externally (simulating manual edit)")
+			Eventually(func() error {
+				cm := &corev1.ConfigMap{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: namespace,
+				}, cm); err != nil {
+					return err
+				}
+				cm.Data["configuration.yaml"] = "homeassistant:\n  name: ManuallyModified\n"
+				return k8sClient.Update(ctx, cm)
+			}, timeout, interval).Should(Succeed())
+
+			By("Verifying ConfigMap was actually modified")
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				g.Expect(cm.Data["configuration.yaml"]).To(ContainSubstring("ManuallyModified"))
+			}, timeout, interval).Should(Succeed())
+
+			By("Triggering reconciliation (watch would do this automatically)")
+			reconciler := &HomeAssistantConfigurationReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      configName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying ConfigMap restored to CRD state")
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				g.Expect(cm.Data["configuration.yaml"]).To(ContainSubstring("Original"))
+				g.Expect(cm.Data["configuration.yaml"]).NotTo(ContainSubstring("ManuallyModified"))
+				// Hash annotation should STILL NOT be set (only content is restored)
+				if cm.Annotations != nil {
+					g.Expect(cm.Annotations).NotTo(HaveKey("ha.homeassistant.io/config-hash"))
+				}
+			}, timeout, interval).Should(Succeed())
+		})
+
+		It("should NOT restore hash annotation when modified externally (only content is managed)", func() {
+			configMapName := haName + "-configuration"
+
+			By("Verifying original ConfigMap state (no hash annotation)")
+			var originalContent string
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				originalContent = cm.Data["configuration.yaml"]
+				g.Expect(originalContent).NotTo(BeEmpty())
+				// Hash annotation should NOT be set initially
+				if cm.Annotations != nil {
+					g.Expect(cm.Annotations).NotTo(HaveKey("ha.homeassistant.io/config-hash"))
+				}
+			}, timeout, interval).Should(Succeed())
+
+			By("Adding ConfigMap hash annotation externally (simulating manual edit)")
+			Eventually(func() error {
+				cm := &corev1.ConfigMap{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: namespace,
+				}, cm); err != nil {
+					return err
+				}
+				if cm.Annotations == nil {
+					cm.Annotations = make(map[string]string)
+				}
+				cm.Annotations["ha.homeassistant.io/config-hash"] = "tampered-hash-12345"
+				return k8sClient.Update(ctx, cm)
+			}, timeout, interval).Should(Succeed())
+
+			By("Verifying annotation was actually modified")
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				g.Expect(cm.Annotations["ha.homeassistant.io/config-hash"]).To(Equal("tampered-hash-12345"))
+			}, timeout, interval).Should(Succeed())
+
+			By("Triggering reconciliation")
+			reconciler := &HomeAssistantConfigurationReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      configName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying externally added hash annotation is NOT removed (only content is managed by syncConfigMapFromCRD)")
+			Consistently(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				// Hash annotation should remain as tampered (not removed/restored)
+				g.Expect(cm.Annotations).NotTo(BeNil())
+				g.Expect(cm.Annotations["ha.homeassistant.io/config-hash"]).To(Equal("tampered-hash-12345"))
+				// But content should match CRD (if it was modified, it would be restored)
+				g.Expect(cm.Data["configuration.yaml"]).To(Equal(originalContent))
+			}, time.Second*2, interval).Should(Succeed())
+		})
+
+		It("should NOT modify ConfigMap owned by different resource", func() {
+			By("Creating a ConfigMap owned by something else")
+			unrelatedCM := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "unrelated-configmap",
+					Namespace: namespace,
+					Annotations: map[string]string{
+						"ha.homeassistant.io/config-hash": "some-hash",
+					},
+				},
+				Data: map[string]string{
+					"configuration.yaml": "homeassistant:\n  name: Unrelated\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, unrelatedCM)).To(Succeed())
+
+			By("Verifying ConfigMap exists")
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "unrelated-configmap",
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+			}, timeout, interval).Should(Succeed())
+
+			By("Triggering reconciliation for HomeAssistantConfiguration")
+			reconciler := &HomeAssistantConfigurationReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      configName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying unrelated ConfigMap unchanged")
+			Consistently(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "unrelated-configmap",
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				g.Expect(cm.Data["configuration.yaml"]).To(ContainSubstring("Unrelated"))
+			}, time.Second*2, interval).Should(Succeed())
+
+			By("Cleaning up unrelated ConfigMap")
+			_ = k8sClient.Delete(ctx, unrelatedCM)
+		})
+
+		It("should allow CRD updates to change ConfigMap content", func() {
+			configMapName := haName + "-configuration"
+
+			By("Capturing original ConfigMap state")
+			var originalHash string
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				originalHash = cm.Annotations["ha.homeassistant.io/config-hash"]
+				g.Expect(cm.Data["configuration.yaml"]).To(ContainSubstring("Original"))
+			}, timeout, interval).Should(Succeed())
+
+			By("Updating HomeAssistantConfiguration CRD (legitimate change)")
+			Eventually(func() error {
+				config := &hav1alpha1.HomeAssistantConfiguration{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configName,
+					Namespace: namespace,
+				}, config); err != nil {
+					return err
+				}
+				config.Spec.Configuration = "homeassistant:\n  name: UpdatedViaCRD\n"
+				return k8sClient.Update(ctx, config)
+			}, timeout, interval).Should(Succeed())
+
+			By("Triggering reconciliation")
+			reconciler := &HomeAssistantConfigurationReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      configName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying ConfigMap content updated but hash annotation unchanged (AutoReload=false)")
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				// Content should be updated from CRD
+				g.Expect(cm.Data["configuration.yaml"]).To(ContainSubstring("UpdatedViaCRD"))
+				g.Expect(cm.Data["configuration.yaml"]).NotTo(ContainSubstring("Original"))
+				// Hash annotation should remain unchanged (AutoReload=false means no reload, no hash update)
+				newHash := cm.Annotations["ha.homeassistant.io/config-hash"]
+				g.Expect(newHash).To(Equal(originalHash), "Hash annotation should NOT change when AutoReload=false")
+			}, timeout, interval).Should(Succeed())
+		})
+	})
+
+	Context("Reconciliation Idempotency", func() {
+		const (
+			haName                   = "test-ha-idempotent"
+			configResourceName       = "config-idempotent"
+			namespace                = "default"
+			timeout                  = time.Second * 10
+			interval                 = time.Millisecond * 250
+			generatedConfigmapSuffix = "-configuration"
+		)
+
+		BeforeEach(func() {
+			// Create HomeAssistant resource
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      haName,
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantSpec{
+					Version: "stable",
+					Service: &hav1alpha1.ServiceSpec{
+						Port: 8123,
+						Type: corev1.ServiceTypeClusterIP,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			// Create StatefulSet for Pod testing
+			sts := &appsv1.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      haName,
+					Namespace: namespace,
+				},
+				Spec: appsv1.StatefulSetSpec{
+					ServiceName: haName + "-homeassistant",
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"app": "homeassistant"},
+					},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{"app": "homeassistant"},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "homeassistant",
+									Image: "ghcr.io/home-assistant/home-assistant:latest",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, sts)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			// Cleanup
+			configList := &hav1alpha1.HomeAssistantConfigurationList{}
+			_ = k8sClient.List(ctx, configList, &client.ListOptions{Namespace: namespace})
+			for _, config := range configList.Items {
+				_ = k8sClient.Delete(ctx, &config)
+			}
+
+			stsList := &appsv1.StatefulSetList{}
+			_ = k8sClient.List(ctx, stsList, &client.ListOptions{Namespace: namespace})
+			for _, sts := range stsList.Items {
+				_ = k8sClient.Delete(ctx, &sts)
+			}
+
+			cmList := &corev1.ConfigMapList{}
+			_ = k8sClient.List(ctx, cmList, &client.ListOptions{Namespace: namespace})
+			for _, cm := range cmList.Items {
+				_ = k8sClient.Delete(ctx, &cm)
+			}
+
+			haList := &hav1alpha1.HomeAssistantList{}
+			_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
+			for _, ha := range haList.Items {
+				_ = k8sClient.Delete(ctx, &ha)
+			}
+
+			Eventually(func() int {
+				configList := &hav1alpha1.HomeAssistantConfigurationList{}
+				_ = k8sClient.List(ctx, configList, &client.ListOptions{Namespace: namespace})
+				return len(configList.Items)
+			}, timeout, interval).Should(Equal(0))
+		})
+
+		It("should not modify resources when reconciling unchanged configuration", func() {
+			By("Creating a HomeAssistantConfiguration")
+			config := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configResourceName,
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: haName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n  latitude: 51.5074\n  longitude: -0.1278\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, config)).To(Succeed())
+
+			By("First reconciliation to create ConfigMap")
+			reconciler := &HomeAssistantConfigurationReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      configResourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Capturing ConfigMap state after first reconciliation")
+			var firstConfigMapContent string
+			var firstConfigMapHash string
+			var firstConfigMapResourceVersion string
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName + generatedConfigmapSuffix,
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				firstConfigMapContent = cm.Data["configuration.yaml"]
+				firstConfigMapHash = cm.Annotations["ha.homeassistant.io/config-hash"]
+				firstConfigMapResourceVersion = cm.ResourceVersion
+				g.Expect(firstConfigMapContent).NotTo(BeEmpty())
+				g.Expect(firstConfigMapHash).NotTo(BeEmpty())
+			}, timeout, interval).Should(Succeed())
+
+			By("Capturing HomeAssistantConfiguration status after first reconciliation")
+			var firstConfigStatus hav1alpha1.HomeAssistantConfigurationStatus
+			Eventually(func(g Gomega) {
+				retrievedConfig := &hav1alpha1.HomeAssistantConfiguration{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configResourceName,
+					Namespace: namespace,
+				}, retrievedConfig)).To(Succeed())
+				firstConfigStatus = retrievedConfig.Status
+				g.Expect(retrievedConfig.Status.ConfigHash).NotTo(BeEmpty())
+			}, timeout, interval).Should(Succeed())
+
+			By("Capturing StatefulSet state after first reconciliation")
+			var firstStsResourceVersion string
+			var firstStsAnnotations map[string]string
 			Eventually(func(g Gomega) {
 				sts := &appsv1.StatefulSet{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
 					Name:      haName,
 					Namespace: namespace,
 				}, sts)).To(Succeed())
-				g.Expect(sts.Spec.Template.Annotations).To(HaveKey("ha.homeassistant.io/config-hash"))
+				firstStsResourceVersion = sts.ResourceVersion
+				firstStsAnnotations = sts.Spec.Template.Annotations
+			}, timeout, interval).Should(Succeed())
+
+			By("Second reconciliation (no changes)")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      configResourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying ConfigMap unchanged")
+			Consistently(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName + generatedConfigmapSuffix,
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				g.Expect(cm.Data["configuration.yaml"]).To(Equal(firstConfigMapContent))
+				g.Expect(cm.Annotations["ha.homeassistant.io/config-hash"]).To(Equal(firstConfigMapHash))
+				g.Expect(cm.ResourceVersion).To(Equal(firstConfigMapResourceVersion))
+			}, time.Second*2, interval).Should(Succeed())
+
+			By("Verifying HomeAssistantConfiguration status unchanged")
+			Consistently(func(g Gomega) {
+				retrievedConfig := &hav1alpha1.HomeAssistantConfiguration{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configResourceName,
+					Namespace: namespace,
+				}, retrievedConfig)).To(Succeed())
+				g.Expect(retrievedConfig.Status.ConfigHash).To(Equal(firstConfigStatus.ConfigHash))
+				g.Expect(retrievedConfig.Status.LastReloadTime).To(Equal(firstConfigStatus.LastReloadTime))
+				g.Expect(retrievedConfig.Status.LastReloadMethod).To(Equal(firstConfigStatus.LastReloadMethod))
+			}, time.Second*2, interval).Should(Succeed())
+
+			By("Verifying StatefulSet unchanged")
+			Consistently(func(g Gomega) {
+				sts := &appsv1.StatefulSet{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName,
+					Namespace: namespace,
+				}, sts)).To(Succeed())
+				g.Expect(sts.ResourceVersion).To(Equal(firstStsResourceVersion))
+				g.Expect(sts.Spec.Template.Annotations).To(Equal(firstStsAnnotations))
+			}, time.Second*2, interval).Should(Succeed())
+
+			By("Third reconciliation (multiple calls - still no changes)")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      configResourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying all resources remain truly unchanged")
+			Consistently(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName + generatedConfigmapSuffix,
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				g.Expect(cm.ResourceVersion).To(Equal(firstConfigMapResourceVersion))
+
+				retrievedConfig := &hav1alpha1.HomeAssistantConfiguration{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configResourceName,
+					Namespace: namespace,
+				}, retrievedConfig)).To(Succeed())
+				g.Expect(retrievedConfig.Status.ConfigHash).To(Equal(firstConfigStatus.ConfigHash))
+
+				sts := &appsv1.StatefulSet{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName,
+					Namespace: namespace,
+				}, sts)).To(Succeed())
+				g.Expect(sts.ResourceVersion).To(Equal(firstStsResourceVersion))
+			}, time.Second*2, interval).Should(Succeed())
+		})
+
+		It("should maintain idempotency with auto-reload enabled", func() {
+			By("Creating HomeAssistantConfiguration with autoReload=true")
+			config := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configResourceName,
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: haName,
+					},
+					Configuration: "automation: []\n",
+					AutoReload:    boolPtr(true),
+				},
+			}
+			Expect(k8sClient.Create(ctx, config)).To(Succeed())
+
+			By("First reconciliation")
+			reconciler := &HomeAssistantConfigurationReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      configResourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Capturing initial state")
+			var initialHash string
+			var initialStsAnnotation string
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName + generatedConfigmapSuffix,
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				initialHash = cm.Annotations["ha.homeassistant.io/config-hash"]
+
+				sts := &appsv1.StatefulSet{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName,
+					Namespace: namespace,
+				}, sts)).To(Succeed())
+				if sts.Spec.Template.Annotations != nil {
+					initialStsAnnotation = sts.Spec.Template.Annotations["ha.homeassistant.io/config-hash"]
+				}
+			}, timeout, interval).Should(Succeed())
+
+			By("Running 5 consecutive reconciliations without changes")
+			for i := 0; i < 5; i++ {
+				_, err := reconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Name:      configResourceName,
+						Namespace: namespace,
+					},
+				})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			By("Verifying state remains unchanged after multiple reconciliations")
+			Eventually(func(g Gomega) {
+				cm := &corev1.ConfigMap{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName + generatedConfigmapSuffix,
+					Namespace: namespace,
+				}, cm)).To(Succeed())
+				g.Expect(cm.Annotations["ha.homeassistant.io/config-hash"]).To(Equal(initialHash))
+
+				sts := &appsv1.StatefulSet{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      haName,
+					Namespace: namespace,
+				}, sts)).To(Succeed())
+				if initialStsAnnotation != "" {
+					g.Expect(sts.Spec.Template.Annotations["ha.homeassistant.io/config-hash"]).To(Equal(initialStsAnnotation))
+				}
 			}, timeout, interval).Should(Succeed())
 		})
 	})

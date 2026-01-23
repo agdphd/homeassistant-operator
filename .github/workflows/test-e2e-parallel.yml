@@ -1,0 +1,152 @@
+name: E2E Tests (Parallel)
+
+on:
+  push:
+    branches: [main, v*]
+  pull_request:
+
+env:
+  K3D_VERSION: v5.7.4
+
+jobs:
+  # Job 1: Build and cache operator image
+  build:
+    name: Build Operator Image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build operator image
+        run: make docker-build IMG=operator:e2e
+
+      - name: Save image as tarball
+        run: docker save operator:e2e -o operator-e2e.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: operator-image
+          path: operator-e2e.tar
+          retention-days: 1
+
+  # Job 2-N: Run tests in parallel with matrix strategy
+  e2e:
+    name: E2E (${{ matrix.name }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Fast tests - core operator functionality
+          - name: core
+            label: "core"
+            timeout: 10
+
+          # HomeAssistant resource tests
+          - name: homeassistant
+            label: "homeassistant"
+            timeout: 15
+
+          # HomeAssistantSecrets tests
+          - name: secrets
+            label: "secrets"
+            timeout: 15
+
+          # Configuration tests - fast path (no bootstrap)
+          - name: config-fast
+            label: "configuration && fast"
+            timeout: 20
+
+          # Configuration tests - slow path (with bootstrap/restart)
+          - name: config-slow
+            label: "configuration && slow"
+            timeout: 45
+
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout }}
+
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+
+      - name: Verify k3d installation
+        run: k3d version
+
+      - name: Download operator image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: operator-image
+
+      - name: Create k3d cluster
+        run: |
+          k3d cluster create e2e-${{ matrix.name }} \
+            --agents 1 \
+            --wait \
+            --timeout 5m
+
+      - name: Load operator image into k3d
+        run: |
+          docker load -i operator-e2e.tar
+          k3d image import operator:e2e -c e2e-${{ matrix.name }}
+
+      - name: Verify cluster is ready
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Run E2E tests for ${{ matrix.name }}
+        env:
+          K3D_CLUSTER: e2e-${{ matrix.name }}
+        run: |
+          go test ./test/e2e/ -v \
+            -ginkgo.label-filter="${{ matrix.label }}" \
+            -ginkgo.v \
+            -timeout=${{ matrix.timeout }}m
+
+      - name: Collect controller logs on failure
+        if: failure()
+        run: |
+          echo "=== Controller Manager Logs ==="
+          kubectl logs -n homeassistant-operator-system \
+            -l control-plane=controller-manager \
+            --tail=500 || true
+
+      - name: Collect Kubernetes events on failure
+        if: failure()
+        run: |
+          echo "=== Kubernetes Events ==="
+          kubectl get events --all-namespaces \
+            --sort-by=.lastTimestamp || true
+
+      - name: Collect resource status on failure
+        if: failure()
+        run: |
+          echo "=== HomeAssistant Resources ==="
+          kubectl get homeassistants --all-namespaces -o wide || true
+          echo "=== HomeAssistantConfigurations ==="
+          kubectl get homeassistantconfigurations --all-namespaces -o wide || true
+          echo "=== HomeAssistantSecrets ==="
+          kubectl get homeassistantsecrets --all-namespaces -o wide || true
+          echo "=== Pods ==="
+          kubectl get pods --all-namespaces -o wide || true
+          echo "=== StatefulSets ==="
+          kubectl get statefulsets --all-namespaces -o wide || true
+
+      - name: Cleanup k3d cluster
+        if: always()
+        run: k3d cluster delete e2e-${{ matrix.name }}

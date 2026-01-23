@@ -2,4 +2,9 @@
 resources:
 - ha_v1alpha1_homeassistant.yaml
 - ha_v1alpha1_homeassistantsecrets.yaml
+- ha_v1alpha1_homeassistant_with_bootstrap.yaml
+- ha_v1alpha1_homeassistant_with_config.yaml
+- haconfig_hot_reload_strategy.yaml
+- haconfig_restart_strategy.yaml
+- complete_example_with_secrets.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

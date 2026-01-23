@@ -86,6 +86,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
 			By("Reconciling the resource")
 			reconciler := &HomeAssistantReconciler{
 				Client: k8sClient,
@@ -123,6 +138,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
 
 			By("Reconciling the resource")
 			reconciler := &HomeAssistantReconciler{
@@ -163,6 +193,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
 			By("Reconciling the resource")
 			reconciler := &HomeAssistantReconciler{
 				Client: k8sClient,
@@ -180,7 +225,7 @@ var _ = Describe("HomeAssistant Controller", func() {
 			Eventually(func(g Gomega) {
 				pvc := &corev1.PersistentVolumeClaim{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      resourceName + "-config",
+					Name:      resourceName + "-data",
 					Namespace: namespace,
 				}, pvc)).To(Succeed())
 				storageSize := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
@@ -200,6 +245,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
 
 			By("Reconciling the resource")
 			reconciler := &HomeAssistantReconciler{
@@ -280,6 +340,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
 			By("Reconciling the resource")
 			reconciler := &HomeAssistantReconciler{
 				Client: k8sClient,
@@ -342,23 +417,8 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}, timeout, interval).Should(Succeed())
 		})
 
-		It("should add ConfigMap volume when configurationFrom is specified", func() {
-			By("Creating a ConfigMap")
-			configMap := &corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-config",
-					Namespace: namespace,
-				},
-				Data: map[string]string{
-					"configuration.yaml": "# test config",
-				},
-			}
-			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
-			defer func() {
-				_ = k8sClient.Delete(ctx, configMap)
-			}()
-
-			By("Creating a HomeAssistant with configurationFrom")
+		It("should require HomeAssistantConfiguration to be created", func() {
+			By("Creating a HomeAssistant without HomeAssistantConfiguration")
 			ha := &hav1alpha1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
@@ -366,19 +426,41 @@ var _ = Describe("HomeAssistant Controller", func() {
 				},
 				Spec: hav1alpha1.HomeAssistantSpec{
 					Version: "stable",
-					ConfigurationFrom: &hav1alpha1.ConfigMapReference{
-						Name: "test-config",
-					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
-			By("Reconciling the resource")
+			By("Reconciling the resource should wait for HomeAssistantConfiguration")
 			reconciler := &HomeAssistantReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0), "Should requeue to wait for HomeAssistantConfiguration")
+
+			By("Creating HomeAssistantConfiguration")
+			config := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, config)).To(Succeed())
+
+			By("Reconciling again should now succeed")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      resourceName,
 					Namespace: namespace,
@@ -386,33 +468,13 @@ var _ = Describe("HomeAssistant Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying ConfigMap volume was added")
+			By("Verifying StatefulSet was created")
 			Eventually(func(g Gomega) {
 				sts := &appsv1.StatefulSet{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
 					Name:      resourceName,
 					Namespace: namespace,
 				}, sts)).To(Succeed())
-
-				// Check volumes
-				found := false
-				for _, vol := range sts.Spec.Template.Spec.Volumes {
-					if vol.Name == "ha-configuration" && vol.ConfigMap != nil && vol.ConfigMap.Name == "test-config" {
-						found = true
-						break
-					}
-				}
-				g.Expect(found).To(BeTrue(), "ConfigMap volume should be added")
-
-				// Check volume mounts
-				mountFound := false
-				for _, mount := range sts.Spec.Template.Spec.Containers[0].VolumeMounts {
-					if mount.Name == "ha-configuration" && mount.MountPath == "/config/configuration.yaml" {
-						mountFound = true
-						break
-					}
-				}
-				g.Expect(mountFound).To(BeTrue(), "ConfigMap volume mount should be added")
 			}, timeout, interval).Should(Succeed())
 		})
 
@@ -446,6 +508,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
 
 			By("Reconciling the resource")
 			reconciler := &HomeAssistantReconciler{
@@ -502,6 +579,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
 
 			By("Reconciling the resource")
 			reconciler := &HomeAssistantReconciler{
@@ -561,6 +653,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
 			By("Reconciling the resource")
 			reconciler := &HomeAssistantReconciler{
 				Client: k8sClient,
@@ -601,7 +708,7 @@ var _ = Describe("HomeAssistant Controller", func() {
 			Eventually(func(g Gomega) {
 				pvc := &corev1.PersistentVolumeClaim{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      resourceName + "-config",
+					Name:      resourceName + "-data",
 					Namespace: namespace,
 				}, pvc)).To(Succeed())
 				g.Expect(pvc.OwnerReferences).To(HaveLen(1))
@@ -621,6 +728,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
 
 			By("Reconciling the resource")
 			reconciler := &HomeAssistantReconciler{
@@ -664,6 +786,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
 
 			By("Reconciling the resource")
 			reconciler := &HomeAssistantReconciler{
@@ -709,6 +846,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
 
 			By("Reconciling the resource")
 			reconciler := &HomeAssistantReconciler{
@@ -758,6 +910,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
 			By("Reconciling the resource")
 			reconciler := &HomeAssistantReconciler{
 				Client: k8sClient,
@@ -800,6 +967,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
 			By("Reconciling the resource")
 			reconciler := &HomeAssistantReconciler{
 				Client: k8sClient,
@@ -838,6 +1020,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: resourceName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
 
 			By("Reconciling the resource")
 			reconciler := &HomeAssistantReconciler{
@@ -935,20 +1132,8 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}, timeout, interval).Should(Succeed())
 		})
 
-		It("should fallback to spec.configurationFrom when no HomeAssistantConfiguration exists", func() {
-			By("Creating ConfigMap for manual configuration")
-			configMap := &corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "manual-config",
-					Namespace: namespace,
-				},
-				Data: map[string]string{
-					"configuration.yaml": "homeassistant:\n  name: Manual Home\n",
-				},
-			}
-			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
-
-			By("Creating HomeAssistant with spec.configurationFrom")
+		It("should mount generated ConfigMap when HomeAssistantConfiguration exists", func() {
+			By("Creating HomeAssistant")
 			ha := &hav1alpha1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
@@ -956,70 +1141,6 @@ var _ = Describe("HomeAssistant Controller", func() {
 				},
 				Spec: hav1alpha1.HomeAssistantSpec{
 					Version: "stable",
-					ConfigurationFrom: &hav1alpha1.ConfigMapReference{
-						Name: "manual-config",
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
-
-			By("Reconciling the HomeAssistant")
-			reconciler := &HomeAssistantReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      resourceName,
-					Namespace: namespace,
-				},
-			})
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying StatefulSet mounts the manual ConfigMap")
-			Eventually(func(g Gomega) {
-				sts := &appsv1.StatefulSet{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      resourceName,
-					Namespace: namespace,
-				}, sts)).To(Succeed())
-
-				// Check volumes
-				var hasConfigVolume bool
-				for _, vol := range sts.Spec.Template.Spec.Volumes {
-					if vol.Name == "ha-configuration" && vol.ConfigMap != nil {
-						hasConfigVolume = vol.ConfigMap.Name == "manual-config"
-						break
-					}
-				}
-				g.Expect(hasConfigVolume).To(BeTrue(), "StatefulSet should mount manual ConfigMap volume")
-			}, timeout, interval).Should(Succeed())
-		})
-
-		It("should prefer HomeAssistantConfiguration over spec.configurationFrom", func() {
-			By("Creating manual ConfigMap")
-			configMap := &corev1.ConfigMap{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "manual-config-priority",
-					Namespace: namespace,
-				},
-				Data: map[string]string{
-					"configuration.yaml": "homeassistant:\n  name: Manual Home\n",
-				},
-			}
-			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
-
-			By("Creating HomeAssistant with both spec.configurationFrom and later HomeAssistantConfiguration will exist")
-			ha := &hav1alpha1.HomeAssistant{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSpec{
-					Version: "stable",
-					ConfigurationFrom: &hav1alpha1.ConfigMapReference{
-						Name: "manual-config-priority",
-					},
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
@@ -1027,14 +1148,14 @@ var _ = Describe("HomeAssistant Controller", func() {
 			By("Creating HomeAssistantConfiguration that references the HomeAssistant")
 			config := &hav1alpha1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "config-priority",
+					Name:      "config-mount-test",
 					Namespace: namespace,
 				},
 				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
 					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
 						Name: resourceName,
 					},
-					Configuration: "homeassistant:\n  name: Auto Home\n",
+					Configuration: "homeassistant:\n  name: Home\n",
 				},
 			}
 			Expect(k8sClient.Create(ctx, config)).To(Succeed())
@@ -1052,7 +1173,7 @@ var _ = Describe("HomeAssistant Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying StatefulSet mounts the generated ConfigMap (not manual)")
+			By("Verifying StatefulSet mounts the generated ConfigMap")
 			Eventually(func(g Gomega) {
 				sts := &appsv1.StatefulSet{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
@@ -1060,7 +1181,7 @@ var _ = Describe("HomeAssistant Controller", func() {
 					Namespace: namespace,
 				}, sts)).To(Succeed())
 
-				// Check volumes - should use generated ConfigMap, not manual
+				// Check volumes - should use generated ConfigMap
 				var hasGeneratedConfigVolume bool
 				for _, vol := range sts.Spec.Template.Spec.Volumes {
 					if vol.Name == "ha-configuration" && vol.ConfigMap != nil {
@@ -1068,8 +1189,194 @@ var _ = Describe("HomeAssistant Controller", func() {
 						break
 					}
 				}
-				g.Expect(hasGeneratedConfigVolume).To(BeTrue(), "Should prefer HomeAssistantConfiguration generated ConfigMap over spec.configurationFrom")
+				g.Expect(hasGeneratedConfigVolume).To(BeTrue(), "Should mount HomeAssistantConfiguration generated ConfigMap")
 			}, timeout, interval).Should(Succeed())
+		})
+
+		It("should preserve existing pod template annotations when building StatefulSet", func() {
+			// Use unique name to avoid conflicts with other tests
+			testName := resourceName + "-preserve"
+
+			By("Creating a new HomeAssistant")
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName,
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantSpec{
+					Version: "2024.1",
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: testName,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
+			By("Creating a StatefulSet with existing annotations")
+			sts := &appsv1.StatefulSet{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName,
+					Namespace: namespace,
+					Labels: map[string]string{
+						"app.kubernetes.io/name":       "homeassistant",
+						"app.kubernetes.io/instance":   testName,
+						"app.kubernetes.io/managed-by": "homeassistant-operator",
+					},
+				},
+				Spec: appsv1.StatefulSetSpec{
+					Replicas: ptr.To(int32(1)),
+					Selector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{
+							"app.kubernetes.io/name":       "homeassistant",
+							"app.kubernetes.io/instance":   testName,
+							"app.kubernetes.io/managed-by": "homeassistant-operator",
+						},
+					},
+					ServiceName: testName,
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: map[string]string{
+								"app.kubernetes.io/name":       "homeassistant",
+								"app.kubernetes.io/instance":   testName,
+								"app.kubernetes.io/managed-by": "homeassistant-operator",
+							},
+							Annotations: map[string]string{
+								"ha.homeassistant.io/config-hash": "existing-hash-abc123",
+								"some-other-annotation":           "some-value",
+							},
+						},
+						Spec: corev1.PodSpec{
+							Containers: []corev1.Container{
+								{
+									Name:  "home-assistant",
+									Image: "ghcr.io/home-assistant/home-assistant:2024.1",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, sts)).To(Succeed())
+
+			By("Building desired StatefulSet via reconciler")
+			reconciler := &HomeAssistantReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			desired := reconciler.buildStatefulSet(ctx, ha)
+
+			By("Verifying annotations are preserved")
+			Expect(desired.Spec.Template.Annotations).To(HaveKey("ha.homeassistant.io/config-hash"))
+			Expect(desired.Spec.Template.Annotations["ha.homeassistant.io/config-hash"]).To(Equal("existing-hash-abc123"))
+			Expect(desired.Spec.Template.Annotations).To(HaveKey("some-other-annotation"))
+			Expect(desired.Spec.Template.Annotations["some-other-annotation"]).To(Equal("some-value"))
+		})
+
+		It("should not trigger update when config hash is unchanged", func() {
+			// Use unique name to avoid conflicts
+			testName := resourceName + "-nochange"
+
+			By("Creating HomeAssistant and HomeAssistantConfiguration")
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName,
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantSpec{
+					Version: "2024.1",
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: testName,
+					},
+					Configuration: "automation: []\nscript: []\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
+			By("Creating ConfigMap with hash annotation (simulating HomeAssistantConfiguration controller)")
+			configMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName + "-configuration",
+					Namespace: namespace,
+					Annotations: map[string]string{
+						"ha.homeassistant.io/config-hash": "test-hash-abc123",
+					},
+				},
+				Data: map[string]string{
+					"configuration.yaml": "automation: []\nscript: []\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+			By("Reconciling HomeAssistant to create StatefulSet")
+			reconciler := &HomeAssistantReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      testName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Waiting for StatefulSet to be created with config hash")
+			var initialHash string
+			Eventually(func(g Gomega) {
+				sts := &appsv1.StatefulSet{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      testName,
+					Namespace: namespace,
+				}, sts)).To(Succeed())
+
+				g.Expect(sts.Spec.Template.Annotations).NotTo(BeNil())
+				hash, exists := sts.Spec.Template.Annotations["ha.homeassistant.io/config-hash"]
+				g.Expect(exists).To(BeTrue(), "Config hash annotation should exist")
+				initialHash = hash
+			}, timeout, interval).Should(Succeed())
+
+			By("Reconciling again without changing configuration")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      testName,
+					Namespace: namespace,
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying hash remains unchanged and no update triggered")
+			Consistently(func(g Gomega) {
+				sts := &appsv1.StatefulSet{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name:      testName,
+					Namespace: namespace,
+				}, sts)).To(Succeed())
+
+				currentHash := sts.Spec.Template.Annotations["ha.homeassistant.io/config-hash"]
+				g.Expect(currentHash).To(Equal(initialHash), "Hash should remain unchanged")
+			}, time.Second*2, interval).Should(Succeed())
 		})
 	})
 })

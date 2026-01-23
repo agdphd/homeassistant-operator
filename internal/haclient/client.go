@@ -480,21 +480,37 @@ func (c *Client) CheckConfig(ctx context.Context, token string) error {
 		}
 	}
 
-	// Parse response to check for errors
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	// Parse response - Home Assistant can return either array or object
+	var rawResponse json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&rawResponse); err != nil {
 		return &Error{Type: ErrorTypeInvalidResponse, Message: "failed to decode response", Err: err}
 	}
 
-	// Check if there are any errors in the response
-	if errors, ok := result["errors"].([]interface{}); ok && len(errors) > 0 {
-		return &Error{
-			Type:    ErrorTypeHTTP,
-			Message: fmt.Sprintf("config validation errors: %v", errors),
+	// Try to parse as object first (expected format for errors)
+	var resultObj map[string]interface{}
+	if err := json.Unmarshal(rawResponse, &resultObj); err == nil {
+		// It's an object - check for errors
+		if errors, ok := resultObj["errors"].([]interface{}); ok && len(errors) > 0 {
+			return &Error{
+				Type:    ErrorTypeHTTP,
+				Message: fmt.Sprintf("config validation errors: %v", errors),
+			}
 		}
+		return nil
 	}
 
-	return nil
+	// Try to parse as array (valid response from service call)
+	var resultArray []interface{}
+	if err := json.Unmarshal(rawResponse, &resultArray); err == nil {
+		// It's an array - treat as success
+		return nil
+	}
+
+	// If neither worked, return error
+	return &Error{
+		Type:    ErrorTypeInvalidResponse,
+		Message: "unexpected response format (neither array nor object)",
+	}
 }
 
 // ReloadCoreConfig triggers a hot-reload of Home Assistant core configuration

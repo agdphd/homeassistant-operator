@@ -740,4 +740,104 @@ var _ = Describe("HAClient", func() {
 			Expect(client.httpClient.Timeout).To(Equal(defaultTimeout))
 		})
 	})
+
+	Describe("CheckConfig", func() {
+		It("Should handle object response with errors", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal("/api/services/homeassistant/check_config"))
+				Expect(r.Method).To(Equal("POST"))
+				Expect(r.Header.Get("Authorization")).To(Equal("Bearer test-token"))
+				Expect(r.Header.Get("Content-Type")).To(Equal("application/json"))
+				Expect(r.Header.Get("User-Agent")).To(Equal(userAgent))
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"errors": ["config error 1", "config error 2"]}`))
+			}))
+
+			client = NewClient(server.URL)
+			err := client.CheckConfig(ctx, "test-token")
+			Expect(err).To(HaveOccurred())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeHTTP))
+			Expect(err.(*Error).Message).To(ContainSubstring("config validation errors"))
+		})
+
+		It("Should handle object response without errors", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal("/api/services/homeassistant/check_config"))
+				Expect(r.Method).To(Equal("POST"))
+				Expect(r.Header.Get("Authorization")).To(Equal("Bearer test-token"))
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"result": "valid"}`))
+			}))
+
+			client = NewClient(server.URL)
+			err := client.CheckConfig(ctx, "test-token")
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should handle empty array response", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal("/api/services/homeassistant/check_config"))
+				Expect(r.Method).To(Equal("POST"))
+				Expect(r.Header.Get("Authorization")).To(Equal("Bearer test-token"))
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[]`))
+			}))
+
+			client = NewClient(server.URL)
+			err := client.CheckConfig(ctx, "test-token")
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should handle array response with elements", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal("/api/services/homeassistant/check_config"))
+				Expect(r.Method).To(Equal("POST"))
+				Expect(r.Header.Get("Authorization")).To(Equal("Bearer test-token"))
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[{"service": "homeassistant.check_config"}]`))
+			}))
+
+			client = NewClient(server.URL)
+			err := client.CheckConfig(ctx, "test-token")
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should return HTTP error for non-200 status", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"error": "unauthorized"}`))
+			}))
+
+			client = NewClient(server.URL)
+			err := client.CheckConfig(ctx, "test-token")
+			Expect(err).To(HaveOccurred())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeHTTP))
+			Expect(err.(*Error).StatusCode).To(Equal(http.StatusUnauthorized))
+		})
+
+		It("Should return error for invalid JSON response", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`invalid json`))
+			}))
+
+			client = NewClient(server.URL)
+			err := client.CheckConfig(ctx, "test-token")
+			Expect(err).To(HaveOccurred())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeInvalidResponse))
+		})
+
+		It("Should return error for unexpected response format", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`"just a string"`))
+			}))
+
+			client = NewClient(server.URL)
+			err := client.CheckConfig(ctx, "test-token")
+			Expect(err).To(HaveOccurred())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeInvalidResponse))
+			Expect(err.(*Error).Message).To(ContainSubstring("unexpected response format"))
+		})
+	})
 })

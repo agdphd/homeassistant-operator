@@ -34,111 +34,80 @@ const namespace = "homeassistant-operator-system"
 // metricsServiceName is the name of the metrics service of the project
 const metricsServiceName = "homeassistant-operator-controller-manager-metrics-service"
 
-var _ = Describe("Manager", Ordered, func() {
-	var controllerPodName string
-
-	// Before running the tests, set up the environment by creating the namespace,
-	// enforce the restricted security policy to the namespace, installing CRDs,
-	// and deploying the controller.
+var _ = Describe("Manager", Label("core", "fast"), Ordered, func() {
+	// Manager namespace setup is now handled in BeforeSuite (e2e_suite_test.go)
+	// This ensures all tests share the same controller deployment
 	BeforeAll(func() {
-		By("creating manager namespace")
-		cmd := exec.Command("kubectl", "create", "ns", namespace)
-		_, err := utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
-
+		// Ensure the namespace has the required security policy label
 		By("labeling the namespace to enforce the restricted security policy")
-		cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
+		cmd := exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
 			"pod-security.kubernetes.io/enforce=restricted")
-		_, err = utils.Run(cmd)
+		_, err := utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
-
-		By("installing CRDs")
-		cmd = exec.Command("make", "install")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
-
-		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
 	})
 
-	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
-	// and deleting the namespace.
-	AfterAll(func() {
-		By("undeploying the controller-manager")
-		cmd := exec.Command("make", "undeploy")
-		_, _ = utils.Run(cmd)
-
-		By("uninstalling CRDs")
-		cmd = exec.Command("make", "uninstall")
-		_, _ = utils.Run(cmd)
-
-		By("removing manager namespace")
-		cmd = exec.Command("kubectl", "delete", "ns", namespace)
-		_, _ = utils.Run(cmd)
-	})
-
-	// After each test, check for failures and collect logs, events,
-	// and pod descriptions for debugging.
-	AfterEach(func() {
-		specReport := CurrentSpecReport()
-		if specReport.Failed() {
-			By("Fetching controller manager pod logs")
-			cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
-			controllerLogs, err := utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Controller logs: %s", err)
-			}
-
-			By("Fetching Kubernetes events")
-			cmd = exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
-			eventsOutput, err := utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Kubernetes events:\n%s", eventsOutput)
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Kubernetes events: %s", err)
-			}
-
-			By("Fetching controller manager pod description")
-			cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", namespace)
-			podDescription, err := utils.Run(cmd)
-			if err == nil {
-				fmt.Println("Pod description:\n", podDescription)
-			} else {
-				fmt.Println("Failed to describe controller pod")
-			}
-		}
-	})
-
-	SetDefaultEventuallyTimeout(2 * time.Minute)
-	SetDefaultEventuallyPollingInterval(time.Second)
+	SetDefaultEventuallyTimeout(utils.DefaultEventuallyTimeout)
+	SetDefaultEventuallyPollingInterval(utils.DefaultEventuallyPollingInterval)
 
 	Context("Manager", func() {
+		var controllerPodName string
+
+		BeforeEach(func() {
+			// Discover controller pod name at the start of each test to avoid race conditions
+			cmd := exec.Command("kubectl", "get",
+				"pods", "-l", "control-plane=controller-manager",
+				"-o", "go-template={{ range .items }}"+
+					"{{ if not .metadata.deletionTimestamp }}"+
+					"{{ .metadata.name }}"+
+					"{{ \"\\n\" }}{{ end }}{{ end }}",
+				"-n", namespace,
+			)
+
+			podOutput, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "Failed to retrieve controller-manager pod information")
+			podNames := utils.GetNonEmptyLines(podOutput)
+			Expect(podNames).To(HaveLen(1), "expected 1 controller pod running")
+			controllerPodName = podNames[0]
+			Expect(controllerPodName).To(ContainSubstring("controller-manager"))
+		})
+
+		AfterEach(func() {
+			specReport := CurrentSpecReport()
+			if specReport.Failed() {
+				By("Fetching controller manager pod logs")
+				cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
+				controllerLogs, err := utils.Run(cmd)
+				if err == nil {
+					_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
+				} else {
+					_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Controller logs: %s", err)
+				}
+
+				By("Fetching Kubernetes events")
+				cmd = exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
+				eventsOutput, err := utils.Run(cmd)
+				if err == nil {
+					_, _ = fmt.Fprintf(GinkgoWriter, "Kubernetes events:\n%s", eventsOutput)
+				} else {
+					_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Kubernetes events: %s", err)
+				}
+
+				By("Fetching controller manager pod description")
+				cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", namespace)
+				podDescription, err := utils.Run(cmd)
+				if err == nil {
+					fmt.Println("Pod description:\n", podDescription)
+				} else {
+					fmt.Println("Failed to describe controller pod")
+				}
+			}
+		})
+
 		It("should run successfully", func() {
 			By("validating that the controller-manager pod is running as expected")
 			verifyControllerUp := func(g Gomega) {
-				// Get the name of the controller-manager pod
-				cmd := exec.Command("kubectl", "get",
-					"pods", "-l", "control-plane=controller-manager",
-					"-o", "go-template={{ range .items }}"+
-						"{{ if not .metadata.deletionTimestamp }}"+
-						"{{ .metadata.name }}"+
-						"{{ \"\\n\" }}{{ end }}{{ end }}",
-					"-n", namespace,
-				)
-
-				podOutput, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve controller-manager pod information")
-				podNames := utils.GetNonEmptyLines(podOutput)
-				g.Expect(podNames).To(HaveLen(1), "expected 1 controller pod running")
-				controllerPodName = podNames[0]
-				g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
-
 				// Validate the pod's status
-				cmd = exec.Command("kubectl", "get",
+				cmd := exec.Command("kubectl", "get",
 					"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
 					"-n", namespace,
 				)
@@ -169,10 +138,11 @@ var _ = Describe("Manager", Ordered, func() {
 			Eventually(verifyMetricsServerStarted, 30*time.Second).Should(Succeed())
 		})
 
-		It("should create HomeAssistant resource successfully", func() {
+		It("should create HomeAssistant resource successfully", Label("homeassistant"), func() {
 			const (
 				testNamespace = "ha-e2e-test"
 				haName        = "test-ha-e2e"
+				configName    = "test-ha-e2e-config"
 			)
 
 			By("creating test namespace")
@@ -204,6 +174,29 @@ spec:
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 
+			By("creating HomeAssistantConfiguration instance")
+			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  configuration: |
+    homeassistant:
+      name: Home
+    default_config:
+`, configName, testNamespace, haName)
+
+			configFile := "/tmp/test-ha-config-e2e.yaml"
+			err = os.WriteFile(configFile, []byte(configYAML), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			cmd = exec.Command("kubectl", "apply", "-f", configFile)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
 			By("verifying HomeAssistant resource was created")
 			verifyHACreated := func(g Gomega) {
 				cmd := exec.Command("kubectl", "get", "homeassistant", haName, "-n", testNamespace)
@@ -230,17 +223,18 @@ spec:
 
 			By("verifying PVC was created")
 			verifyPVC := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pvc", haName+"-config", "-n", testNamespace)
+				cmd := exec.Command("kubectl", "get", "pvc", haName+"-data", "-n", testNamespace)
 				_, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 			}
 			Eventually(verifyPVC, 30*time.Second).Should(Succeed())
 		})
 
-		It("should create HomeAssistantSecrets resource successfully", func() {
+		It("should create HomeAssistantSecrets resource successfully", Label("secrets"), func() {
 			const (
 				testNamespace = "hasec-e2e-test"
 				haName        = "test-ha-sec-e2e"
+				configName    = "test-ha-sec-e2e-config"
 				secretName    = "test-secret-e2e"
 				haSecretsName = "test-hasecrets-e2e"
 			)
@@ -291,6 +285,29 @@ spec:
 			Expect(err).NotTo(HaveOccurred())
 
 			cmd = exec.Command("kubectl", "apply", "-f", haFile)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("creating HomeAssistantConfiguration instance")
+			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  configuration: |
+    homeassistant:
+      name: Home
+    default_config:
+`, configName, testNamespace, haName)
+
+			configFile := "/tmp/test-ha-sec-config-e2e.yaml"
+			err = os.WriteFile(configFile, []byte(configYAML), 0644)
+			Expect(err).NotTo(HaveOccurred())
+
+			cmd = exec.Command("kubectl", "apply", "-f", configFile)
 			_, err = utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 

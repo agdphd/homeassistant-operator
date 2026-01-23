@@ -52,6 +52,21 @@ var _ = Describe("Bootstrap Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
+
 			haKey := types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}
 
 			By("Verifying bootstrap status remains nil")
@@ -81,6 +96,21 @@ var _ = Describe("Bootstrap Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
 
 			haKey := types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}
 
@@ -130,6 +160,21 @@ var _ = Describe("Bootstrap Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
 
 			haKey := types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}
 
@@ -188,6 +233,21 @@ var _ = Describe("Bootstrap Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
 
 			haKey := types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}
 
@@ -258,6 +318,21 @@ var _ = Describe("Bootstrap Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
+
 			haKey := types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}
 
 			By("Reconciling the resource to create StatefulSet")
@@ -324,6 +399,21 @@ var _ = Describe("Bootstrap Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
 
 			haKey := types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}
 
@@ -408,6 +498,21 @@ var _ = Describe("Bootstrap Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
+
 			By("Creating reconciler to test credential retrieval")
 			reconciler := &HomeAssistantReconciler{
 				Client: k8sClient,
@@ -460,6 +565,21 @@ var _ = Describe("Bootstrap Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
 
 			By("Creating reconciler to test credential retrieval")
 			reconciler := &HomeAssistantReconciler{

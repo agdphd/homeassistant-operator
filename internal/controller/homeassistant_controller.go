@@ -98,6 +98,34 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 
+	// Validate that HomeAssistantConfiguration exists
+	// This is REQUIRED for v0.3.0+ architecture
+	generatedConfigMapName, err := r.getGeneratedConfigMapName(ctx, ha)
+	if err != nil {
+		log.Error(err, "Failed to check for HomeAssistantConfiguration")
+		return r.updateStatusFailed(ctx, ha, fmt.Errorf("failed to validate HomeAssistantConfiguration: %w", err))
+	}
+	if generatedConfigMapName == "" {
+		// HomeAssistantConfiguration doesn't exist yet - requeue to wait for it
+		log.Info("Waiting for HomeAssistantConfiguration to be created",
+			"homeassistant", ha.Name,
+			"namespace", ha.Namespace,
+			"expected-haconfig", ha.Name+"-config")
+		// Update status to indicate we're waiting
+		condition := metav1.Condition{
+			Type:               conditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: ha.Generation,
+			Reason:             "WaitingForConfiguration",
+			Message:            "Waiting for HomeAssistantConfiguration to be created",
+		}
+		meta.SetStatusCondition(&ha.Status.Conditions, condition)
+		if err := r.Status().Update(ctx, ha); err != nil {
+			log.Error(err, "Failed to update status")
+		}
+		return ctrl.Result{RequeueAfter: time.Second * 5}, nil
+	}
+
 	// Reconcile PVC
 	if err := r.reconcilePVC(ctx, ha); err != nil {
 		log.Error(err, "Failed to reconcile PVC")
@@ -137,7 +165,7 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 // reconcilePVC ensures the PVC exists for Home Assistant data
 func (r *HomeAssistantReconciler) reconcilePVC(ctx context.Context, ha *hav1alpha1.HomeAssistant) error {
 	log := logf.FromContext(ctx)
-	pvcName := fmt.Sprintf("%s-config", ha.Name)
+	pvcName := fmt.Sprintf("%s-data", ha.Name)
 
 	pvc := &corev1.PersistentVolumeClaim{}
 	err := r.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: ha.Namespace}, pvc)
@@ -206,6 +234,14 @@ func (r *HomeAssistantReconciler) reconcileStatefulSet(ctx context.Context, ha *
 	if err != nil && errors.IsNotFound(err) {
 		// Create new StatefulSet
 		sts = r.buildStatefulSet(ctx, ha)
+
+		// Sync config hash from ConfigMap even for new StatefulSet
+		// This ensures the hash annotation is set from the beginning
+		if err := r.syncConfigHashFromConfigMap(ctx, ha, sts); err != nil {
+			log.Error(err, "Failed to sync config hash from ConfigMap during creation")
+			// Don't fail creation - just log the error
+		}
+
 		if err := controllerutil.SetControllerReference(ha, sts, r.Scheme); err != nil {
 			return err
 		}
@@ -217,6 +253,15 @@ func (r *HomeAssistantReconciler) reconcileStatefulSet(ctx context.Context, ha *
 
 	// Update StatefulSet if needed
 	desired := r.buildStatefulSet(ctx, ha)
+
+	// Sync config hash from ConfigMap to desired StatefulSet (Faza 2)
+	// This allows HomeAssistantConfiguration Controller to signal configuration changes
+	// by updating ConfigMap annotation, which we then propagate to StatefulSet
+	if err := r.syncConfigHashFromConfigMap(ctx, ha, desired); err != nil {
+		log.Error(err, "Failed to sync config hash from ConfigMap")
+		// Don't fail reconciliation - just log the error
+	}
+
 	if needsUpdate(sts, desired) {
 		sts.Spec = desired.Spec
 		log.Info("Updating StatefulSet", "StatefulSet.Name", sts.Name)
@@ -247,6 +292,62 @@ func (r *HomeAssistantReconciler) getGeneratedConfigMapName(ctx context.Context,
 	}
 
 	return "", nil
+}
+
+// syncConfigHashFromConfigMap syncs the config hash annotation from ConfigMap to StatefulSet.
+// This implements the architectural pattern from Faza 2 (rozwiazanie-architektury.md):
+// - HomeAssistantConfiguration Controller updates ConfigMap with hash annotation
+// - HomeAssistant Controller (this function) reads the hash and syncs to StatefulSet
+// - StatefulSet annotation change triggers Kubernetes rolling restart
+func (r *HomeAssistantReconciler) syncConfigHashFromConfigMap(
+	ctx context.Context,
+	ha *hav1alpha1.HomeAssistant,
+	sts *appsv1.StatefulSet,
+) error {
+	log := logf.FromContext(ctx)
+
+	// 1. Get generated ConfigMap name
+	configMapName, err := r.getGeneratedConfigMapName(ctx, ha)
+	if err != nil || configMapName == "" {
+		return nil // No HomeAssistantConfiguration exists, skip
+	}
+
+	// 2. Fetch ConfigMap
+	configMap := &corev1.ConfigMap{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      configMapName,
+		Namespace: ha.Namespace,
+	}, configMap); err != nil {
+		if errors.IsNotFound(err) {
+			return nil // ConfigMap doesn't exist yet
+		}
+		return err
+	}
+
+	// 3. Get hash from ConfigMap annotation
+	configMapHash := configMap.Annotations[configHashAnnotationKey]
+	if configMapHash == "" {
+		return nil // No hash yet
+	}
+
+	// 4. Get current hash from StatefulSet pod template
+	if sts.Spec.Template.Annotations == nil {
+		sts.Spec.Template.Annotations = make(map[string]string)
+	}
+	currentHash := sts.Spec.Template.Annotations[configHashAnnotationKey]
+
+	// 5. If different, update StatefulSet annotation in-memory
+	// needsUpdate() will detect the change and trigger an Update()
+	if configMapHash != currentHash {
+		log.Info("Config hash changed, updating StatefulSet annotation",
+			"configmap", configMapName,
+			"oldHash", currentHash,
+			"newHash", configMapHash)
+
+		sts.Spec.Template.Annotations[configHashAnnotationKey] = configMapHash
+	}
+
+	return nil
 }
 
 // getGeneratedSecretsName returns the name of the auto-generated Secret if HomeAssistantSecrets exists
@@ -292,7 +393,7 @@ func (r *HomeAssistantReconciler) buildStatefulSet(ctx context.Context, ha *hav1
 		timezone = ha.Spec.Timezone
 	}
 
-	pvcName := fmt.Sprintf("%s-config", ha.Name)
+	pvcName := fmt.Sprintf("%s-data", ha.Name)
 
 	// Build volume mounts
 	volumeMounts := []corev1.VolumeMount{
@@ -315,33 +416,20 @@ func (r *HomeAssistantReconciler) buildStatefulSet(ctx context.Context, ha *hav1
 	}
 
 	// Add ConfigMap volume for configuration.yaml
-	// Priority: 1) Auto-generated by HomeAssistantConfiguration, 2) Spec.ConfigurationFrom
+	// HomeAssistantConfiguration CRD is REQUIRED - always add the volume
 	generatedConfigMapName, err := r.getGeneratedConfigMapName(ctx, ha)
-	if err == nil && generatedConfigMapName != "" {
-		// Use auto-generated ConfigMap from HomeAssistantConfiguration
+	if err != nil || generatedConfigMapName == "" {
+		// This should not happen if validation passed in Reconcile()
+		// But handle gracefully - skip volume mount
+		// The Reconcile() loop will requeue until HomeAssistantConfiguration exists
+	} else {
+		// Always add the ConfigMap volume (ConfigMap is guaranteed to exist by HomeAssistantConfiguration controller)
 		volumes = append(volumes, corev1.Volume{
 			Name: "ha-configuration",
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
 						Name: generatedConfigMapName,
-					},
-				},
-			},
-		})
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      "ha-configuration",
-			MountPath: "/config/configuration.yaml",
-			SubPath:   "configuration.yaml",
-		})
-	} else if ha.Spec.ConfigurationFrom != nil {
-		// Fallback to manually specified ConfigMap
-		volumes = append(volumes, corev1.Volume{
-			Name: "ha-configuration",
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: ha.Spec.ConfigurationFrom.Name,
 					},
 				},
 			},
@@ -388,6 +476,20 @@ func (r *HomeAssistantReconciler) buildStatefulSet(ctx context.Context, ha *hav1
 		})
 	}
 
+	// Preserve existing pod template annotations from current StatefulSet
+	// This is critical to avoid infinite reconciliation loops when config hash annotations exist
+	existingAnnotations := make(map[string]string)
+	currentSts := &appsv1.StatefulSet{}
+	if err = r.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, currentSts); err == nil {
+		// StatefulSet exists - preserve its pod template annotations
+		if currentSts.Spec.Template.Annotations != nil {
+			for k, v := range currentSts.Spec.Template.Annotations {
+				existingAnnotations[k] = v
+			}
+		}
+	}
+	// If StatefulSet doesn't exist (NotFound error), existingAnnotations will be empty - this is correct
+
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ha.Name,
@@ -402,7 +504,8 @@ func (r *HomeAssistantReconciler) buildStatefulSet(ctx context.Context, ha *hav1
 			ServiceName: ha.Name,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: labels,
+					Labels:      labels,
+					Annotations: existingAnnotations,
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -628,6 +731,24 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 
 	currentContainer := current.Spec.Template.Spec.Containers[0]
 	desiredContainer := desired.Spec.Template.Spec.Containers[0]
+
+	// Check pod template annotations (Faza 2: for config hash changes)
+	// This triggers pod restart when configuration changes
+	currentAnnotations := current.Spec.Template.Annotations
+	desiredAnnotations := desired.Spec.Template.Annotations
+
+	// Compare config-hash annotation specifically
+	currentHash := ""
+	desiredHash := ""
+	if currentAnnotations != nil {
+		currentHash = currentAnnotations[configHashAnnotationKey]
+	}
+	if desiredAnnotations != nil {
+		desiredHash = desiredAnnotations[configHashAnnotationKey]
+	}
+	if currentHash != desiredHash {
+		return true
+	}
 
 	// Check image
 	if currentContainer.Image != desiredContainer.Image {
