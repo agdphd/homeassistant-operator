@@ -37,7 +37,7 @@ func ApplyYAML(yamlContent, namespace string) error {
 	if err := os.WriteFile(tmpFile, []byte(yamlContent), 0644); err != nil {
 		return fmt.Errorf("failed to write YAML to temp file: %w", err)
 	}
-	defer os.Remove(tmpFile)
+	defer func() { _ = os.Remove(tmpFile) }()
 
 	cmd := exec.Command("kubectl", "apply", "-f", tmpFile, "-n", namespace)
 	_, err := Run(cmd)

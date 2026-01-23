@@ -37,10 +37,11 @@ import (
 var _ = Describe("HomeAssistant Controller", func() {
 	Context("When reconciling a HomeAssistant resource", func() {
 		const (
-			resourceName = "test-homeassistant"
-			namespace    = "default"
-			timeout      = time.Second * 10
-			interval     = time.Millisecond * 250
+			resourceName            = "test-homeassistant"
+			namespace               = "default"
+			timeout                 = time.Second * 10
+			interval                = time.Millisecond * 250
+			configurationVolumeName = "ha-configuration"
 		)
 
 		AfterEach(func() {
@@ -1112,7 +1113,7 @@ var _ = Describe("HomeAssistant Controller", func() {
 				// Check volumes
 				var hasConfigVolume bool
 				for _, vol := range sts.Spec.Template.Spec.Volumes {
-					if vol.Name == "ha-configuration" && vol.ConfigMap != nil {
+					if vol.Name == configurationVolumeName && vol.ConfigMap != nil {
 						hasConfigVolume = vol.ConfigMap.Name == resourceName+"-configuration"
 						break
 					}
@@ -1123,7 +1124,7 @@ var _ = Describe("HomeAssistant Controller", func() {
 				container := sts.Spec.Template.Spec.Containers[0]
 				var hasConfigMount bool
 				for _, mount := range container.VolumeMounts {
-					if mount.Name == "ha-configuration" && mount.MountPath == "/config/configuration.yaml" {
+					if mount.Name == configurationVolumeName && mount.MountPath == "/config/configuration.yaml" {
 						hasConfigMount = true
 						break
 					}
@@ -1184,7 +1185,7 @@ var _ = Describe("HomeAssistant Controller", func() {
 				// Check volumes - should use generated ConfigMap
 				var hasGeneratedConfigVolume bool
 				for _, vol := range sts.Spec.Template.Spec.Volumes {
-					if vol.Name == "ha-configuration" && vol.ConfigMap != nil {
+					if vol.Name == configurationVolumeName && vol.ConfigMap != nil {
 						hasGeneratedConfigVolume = vol.ConfigMap.Name == resourceName+"-configuration"
 						break
 					}

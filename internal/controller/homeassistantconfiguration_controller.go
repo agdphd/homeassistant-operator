@@ -175,13 +175,13 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	configHash := calculateConfigHash(config.Spec.Configuration)
 
 	// Sync ConfigMap back to CRD state if it was modified externally (operator exclusivity)
-	if err := r.syncConfigMapFromCRD(ctx, config, configHash); err != nil {
+	if err := r.syncConfigMapFromCRD(ctx, config); err != nil {
 		log.Error(err, "Failed to sync ConfigMap from CRD")
 		// Continue - we'll try to update it in reconcileGeneratedConfigMap
 	}
 
 	// Create or update the ConfigMap
-	if err := r.reconcileGeneratedConfigMap(ctx, config, configHash); err != nil {
+	if err := r.reconcileGeneratedConfigMap(ctx, config); err != nil {
 		log.Error(err, "Failed to reconcile generated ConfigMap")
 		meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
@@ -225,7 +225,7 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 }
 
 // reconcileGeneratedConfigMap creates or updates the ConfigMap containing configuration.yaml
-func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(ctx context.Context, config *hav1alpha1.HomeAssistantConfiguration, hash string) error {
+func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(ctx context.Context, config *hav1alpha1.HomeAssistantConfiguration) error {
 	log := logf.FromContext(ctx)
 
 	configMapName := config.Spec.HomeAssistantRef.Name + generatedConfigmapSuffix
@@ -707,7 +707,7 @@ func (r *HomeAssistantConfigurationReconciler) updateConfigMapHashAnnotation(ctx
 
 // syncConfigMapFromCRD ensures ConfigMap matches CRD state (operator exclusivity)
 // This prevents external modifications to ConfigMap by restoring it to CRD state
-func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(ctx context.Context, config *hav1alpha1.HomeAssistantConfiguration, expectedHash string) error {
+func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(ctx context.Context, config *hav1alpha1.HomeAssistantConfiguration) error {
 	log := logf.FromContext(ctx)
 
 	configMapName := config.Spec.HomeAssistantRef.Name + generatedConfigmapSuffix

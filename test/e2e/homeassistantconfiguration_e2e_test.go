@@ -109,7 +109,10 @@ spec:
 
 			By("Verifying ConfigMap contains configuration.yaml")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace, "-o", "jsonpath={.data.configuration\\.yaml}")
+				output := utils.Kubectl(
+					"get", "configmap", configMapName, "-n", namespace,
+					"-o", "jsonpath={.data.configuration\\.yaml}",
+				)
 				g.Expect(output).To(ContainSubstring("automation:"))
 				g.Expect(output).To(ContainSubstring("script:"))
 			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
@@ -178,7 +181,10 @@ spec:
 
 			By("Verifying ConfigMap is restored to CRD spec within 30 seconds")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace, "-o", "jsonpath={.data.configuration\\.yaml}")
+				output := utils.Kubectl(
+					"get", "configmap", configMapName, "-n", namespace,
+					"-o", "jsonpath={.data.configuration\\.yaml}",
+				)
 				g.Expect(output).To(ContainSubstring("original_config"))
 				g.Expect(output).NotTo(ContainSubstring("external_edit"))
 			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
@@ -241,7 +247,10 @@ spec:
 			By("Capturing initial StatefulSet annotation hash")
 			var oldHash string
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "statefulset", haName, "-n", namespace, "-o", "jsonpath={.spec.template.metadata.annotations.ha\\.homeassistant\\.io/config-hash}")
+				output := utils.Kubectl(
+					"get", "statefulset", haName, "-n", namespace,
+					"-o", "jsonpath={.spec.template.metadata.annotations.ha\\.homeassistant\\.io/config-hash}",
+				)
 				// May be empty initially, that's OK
 				oldHash = output
 			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
@@ -265,7 +274,10 @@ spec:
 
 			By("Verifying StatefulSet annotation changed (indicating restart triggered)")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "statefulset", haName, "-n", namespace, "-o", "jsonpath={.spec.template.metadata.annotations.ha\\.homeassistant\\.io/config-hash}")
+				output := utils.Kubectl(
+					"get", "statefulset", haName, "-n", namespace,
+					"-o", "jsonpath={.spec.template.metadata.annotations.ha\\.homeassistant\\.io/config-hash}",
+				)
 				g.Expect(output).NotTo(BeEmpty())
 				g.Expect(output).NotTo(Equal(oldHash))
 			}, utils.ReconciliationTimeout, reconcileInterval).Should(Succeed())
@@ -664,50 +676,56 @@ spec:
 
 // collectDebugInfo gathers debug information from the test environment on test failure.
 func collectDebugInfo(namespace, haName, configName string) {
-	fmt.Fprintf(GinkgoWriter, "\n=== DEBUG INFO ===\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "\n=== DEBUG INFO ===\n")
 
-	fmt.Fprintf(GinkgoWriter, "\n--- HAConfig Status ---\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "\n--- HAConfig Status ---\n")
 	cmd := exec.Command("kubectl", "describe", "haconfig", configName, "-n", namespace)
 	output, err := utils.Run(cmd)
 	if err == nil {
-		fmt.Fprintf(GinkgoWriter, "%s\n", output)
+		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", output)
 	}
 
-	fmt.Fprintf(GinkgoWriter, "\n--- ConfigMap Content ---\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "\n--- ConfigMap Content ---\n")
 	configMapName := haName + "-configuration"
 	cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", namespace, "-o", "yaml")
 	output, err = utils.Run(cmd)
 	if err == nil {
-		fmt.Fprintf(GinkgoWriter, "%s\n", output)
+		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", output)
 	}
 
-	fmt.Fprintf(GinkgoWriter, "\n--- StatefulSet Annotations ---\n")
-	cmd = exec.Command("kubectl", "get", "statefulset", haName, "-n", namespace, "-o", "jsonpath={.spec.template.metadata.annotations}")
+	_, _ = fmt.Fprintf(GinkgoWriter, "\n--- StatefulSet Annotations ---\n")
+	cmd = exec.Command(
+		"kubectl", "get", "statefulset", haName, "-n", namespace,
+		"-o", "jsonpath={.spec.template.metadata.annotations}",
+	)
 	output, err = utils.Run(cmd)
 	if err == nil {
-		fmt.Fprintf(GinkgoWriter, "%s\n", output)
+		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", output)
 	}
 
-	fmt.Fprintf(GinkgoWriter, "\n--- Pod Logs (last 100 lines) ---\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "\n--- Pod Logs (last 100 lines) ---\n")
 	cmd = exec.Command("kubectl", "logs", haName+"-0", "-n", namespace, "--tail=100")
 	output, err = utils.Run(cmd)
 	if err == nil {
-		fmt.Fprintf(GinkgoWriter, "%s\n", output)
+		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", output)
 	}
 
-	fmt.Fprintf(GinkgoWriter, "\n--- Kubernetes Events ---\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "\n--- Kubernetes Events ---\n")
 	cmd = exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
 	output, err = utils.Run(cmd)
 	if err == nil {
-		fmt.Fprintf(GinkgoWriter, "%s\n", output)
+		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", output)
 	}
 
-	fmt.Fprintf(GinkgoWriter, "\n--- Controller Logs ---\n")
-	cmd = exec.Command("kubectl", "logs", "-n", "homeassistant-operator-system", "-l", "control-plane=controller-manager", "--tail=200")
+	_, _ = fmt.Fprintf(GinkgoWriter, "\n--- Controller Logs ---\n")
+	cmd = exec.Command(
+		"kubectl", "logs", "-n", "homeassistant-operator-system",
+		"-l", "control-plane=controller-manager", "--tail=200",
+	)
 	output, err = utils.Run(cmd)
 	if err == nil {
-		fmt.Fprintf(GinkgoWriter, "%s\n", output)
+		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", output)
 	}
 
-	fmt.Fprintf(GinkgoWriter, "\n=== END DEBUG INFO ===\n")
+	_, _ = fmt.Fprintf(GinkgoWriter, "\n=== END DEBUG INFO ===\n")
 }

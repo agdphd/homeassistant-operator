@@ -34,9 +34,10 @@ import (
 
 var _ = Describe("HomeAssistantConfiguration", func() {
 	const (
-		namespace = "default"
-		timeout   = time.Second * 10
-		interval  = time.Millisecond * 250
+		namespace         = "default"
+		timeout           = time.Second * 10
+		interval          = time.Millisecond * 250
+		updatedConfigYAML = "homeassistant:\n  name: Home Updated\n"
 	)
 
 	Context("API Structure and Validation", func() {
@@ -1422,7 +1423,7 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 				}, retrievedConfig); err != nil {
 					return err
 				}
-				retrievedConfig.Spec.Configuration = "homeassistant:\n  name: Home Updated\n"
+				retrievedConfig.Spec.Configuration = updatedConfigYAML
 				return k8sClient.Update(ctx, retrievedConfig)
 			}, timeout, interval).Should(Succeed())
 
@@ -1492,7 +1493,7 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 				}, retrievedConfig); err != nil {
 					return err
 				}
-				retrievedConfig.Spec.Configuration = "homeassistant:\n  name: Home Updated\n"
+				retrievedConfig.Spec.Configuration = updatedConfigYAML
 				return k8sClient.Update(ctx, retrievedConfig)
 			}, timeout, interval).Should(Succeed())
 
@@ -1568,7 +1569,7 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 				}, retrievedConfig); err != nil {
 					return err
 				}
-				retrievedConfig.Spec.Configuration = "homeassistant:\n  name: Home Updated\n"
+				retrievedConfig.Spec.Configuration = updatedConfigYAML
 				return k8sClient.Update(ctx, retrievedConfig)
 			}, timeout, interval).Should(Succeed())
 
