@@ -78,6 +78,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			}, timeout, interval).Should(Succeed())
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 		})
 
@@ -122,6 +123,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			}, time.Second*2, interval).Should(Succeed())
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 		})
 	})
@@ -209,6 +211,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			}, time.Second*2, interval).Should(Succeed())
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, secret)).Should(Succeed())
 		})
@@ -294,6 +297,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			}, timeout, interval).Should(Succeed())
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 		})
 
@@ -376,6 +380,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			}, timeout, interval).Should(Succeed())
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 		})
 
@@ -458,6 +463,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			}, timeout, interval).Should(Succeed())
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 		})
 	})
@@ -526,6 +532,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(password).Should(Equal("testpass"))
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, secret)).Should(Succeed())
 		})
@@ -594,6 +601,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(password).Should(Equal("custompass"))
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, secret)).Should(Succeed())
 		})

@@ -33,7 +33,7 @@ func Kubectl(args ...string) string {
 
 // ApplyYAML applies YAML content to specified namespace using kubectl apply.
 func ApplyYAML(yamlContent, namespace string) error {
-	tmpFile := "/tmp/e2e-apply-" + RandomString(8) + ".yaml"
+	tmpFile := os.TempDir() + "/e2e-apply-" + RandomString(8) + ".yaml"
 	if err := os.WriteFile(tmpFile, []byte(yamlContent), 0644); err != nil {
 		return fmt.Errorf("failed to write YAML to temp file: %w", err)
 	}

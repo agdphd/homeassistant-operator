@@ -130,7 +130,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ### Getting Help
 
-- **GitHub Issues**: For bugs, feature, requests, questions and community support
+- **GitHub Issues**: For bugs, feature requests, questions, and community support
 
 ## Security
 

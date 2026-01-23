@@ -111,6 +111,8 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"homeassistant", ha.Name,
 			"namespace", ha.Namespace,
 			"expected-haconfig", ha.Name+"-config")
+		ha.Status.Phase = hav1alpha1.PhasePending
+		ha.Status.Ready = false
 		// Update status to indicate we're waiting
 		condition := metav1.Condition{
 			Type:               conditionTypeReady,
