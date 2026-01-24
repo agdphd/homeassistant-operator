@@ -174,6 +174,15 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	// Calculate hash of the configuration
 	configHash := calculateConfigHash(config.Spec.Configuration)
 
+	// Capture old configuration BEFORE updating ConfigMap
+	// This is critical for needsRestart() to work correctly in auto mode
+	var oldConfig string
+	configMapName := config.Spec.HomeAssistantRef.Name + generatedConfigmapSuffix
+	existingConfigMap := &corev1.ConfigMap{}
+	if err := r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: config.Namespace}, existingConfigMap); err == nil {
+		oldConfig = existingConfigMap.Data[configurationYamlKey]
+	}
+
 	// Sync ConfigMap back to CRD state if it was modified externally (operator exclusivity)
 	if err := r.syncConfigMapFromCRD(ctx, config); err != nil {
 		log.Error(err, "Failed to sync ConfigMap from CRD")
@@ -198,9 +207,17 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 
 	// Perform configuration reload if hash changed
 	if config.Status.ConfigHash != configHash {
-		if err := r.performConfigReload(ctx, config, ha, configHash); err != nil {
+		if err := r.performConfigReload(ctx, config, ha, configHash, oldConfig); err != nil {
 			log.Error(err, "Failed to reload configuration")
-			// Don't fail reconciliation - ConfigMap is updated successfully
+			meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
+				Type:               conditionTypeReady,
+				Status:             metav1.ConditionFalse,
+				Reason:             "ReloadFailed",
+				Message:            err.Error(),
+				ObservedGeneration: config.Generation,
+			})
+			_ = r.Status().Update(ctx, config)
+			return ctrl.Result{}, err
 		}
 	}
 
@@ -271,6 +288,41 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(ctx c
 	// IMPORTANT: We do NOT update the hash annotation here.
 	// The hash annotation is ONLY updated by performConfigReload() when restart strategy is used.
 	// For hot-reload, we update content but preserve the old annotation to avoid triggering pod restart.
+
+	// Verify ownership before updating - check if owned by a DIFFERENT resource
+	if len(existingConfigMap.OwnerReferences) > 0 {
+		owner := existingConfigMap.OwnerReferences[0]
+		// Check if owned by a different HomeAssistantConfiguration (by name, not UID)
+		// This protects against accidentally modifying ConfigMaps from other resources
+		if owner.Kind == "HomeAssistantConfiguration" && owner.Name != config.Name {
+			log.Info("ConfigMap exists but is owned by different HomeAssistantConfiguration; skipping update",
+				"name", configMapName,
+				"owner", owner.Name)
+			return nil
+		}
+		// If owner name matches but UID different (e.g., CR was deleted and recreated),
+		// update the owner reference to point to current CR
+		if owner.Name == config.Name && owner.UID != config.UID {
+			log.Info("ConfigMap owned by old instance of same CR, updating owner reference",
+				"name", configMapName)
+			if err := controllerutil.SetControllerReference(config, existingConfigMap, r.Scheme); err != nil {
+				return err
+			}
+			if err := r.Update(ctx, existingConfigMap); err != nil {
+				return err
+			}
+		}
+	} else {
+		// ConfigMap exists but has no owner - adopt it by setting owner reference
+		log.Info("Adopting existing ConfigMap (no owner reference)", "name", configMapName)
+		if err := controllerutil.SetControllerReference(config, existingConfigMap, r.Scheme); err != nil {
+			return err
+		}
+		if err := r.Update(ctx, existingConfigMap); err != nil {
+			return err
+		}
+	}
+
 	existingData := existingConfigMap.Data[configurationYamlKey]
 	if existingData != config.Spec.Configuration {
 		log.Info("Updating generated ConfigMap content (hash annotation preserved for hot-reload)", "name", configMapName)
@@ -572,7 +624,8 @@ func (r *HomeAssistantConfigurationReconciler) performHotReload(ctx context.Cont
 // See rozwiazanie-architektury.md for details.
 
 // performConfigReload executes reload based on strategy
-func (r *HomeAssistantConfigurationReconciler) performConfigReload(ctx context.Context, config *hav1alpha1.HomeAssistantConfiguration, ha *hav1alpha1.HomeAssistant, newHash string) error {
+// oldConfig parameter contains configuration content captured BEFORE ConfigMap update
+func (r *HomeAssistantConfigurationReconciler) performConfigReload(ctx context.Context, config *hav1alpha1.HomeAssistantConfiguration, ha *hav1alpha1.HomeAssistant, newHash string, oldConfig string) error {
 	log := logf.FromContext(ctx)
 
 	// Check if autoReload is enabled (default: true)
@@ -597,13 +650,8 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(ctx context.C
 	strategy := string(config.Spec.ReloadStrategy)
 	if strategy == "" || strategy == string(hav1alpha1.ConfigurationReloadStrategyAuto) {
 		// Auto: decide based on config changes
-		// Get old configuration from ConfigMap if it exists
-		oldConfig := ""
-		configMapName := config.Spec.HomeAssistantRef.Name + generatedConfigmapSuffix
-		existingCM := &corev1.ConfigMap{}
-		if err := r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: config.Namespace}, existingCM); err == nil {
-			oldConfig = existingCM.Data[configurationYamlKey]
-		}
+		// Use oldConfig passed from Reconcile (captured before ConfigMap update)
+		// This ensures needsRestart compares actual old vs new, not new vs new
 
 		needsRestart, parseErr := needsRestart(oldConfig, config.Spec.Configuration)
 		if parseErr != nil {
@@ -636,6 +684,13 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(ctx context.C
 
 	// Try hot-reload (strategy is hot-reload or auto decided to try it)
 	if tokenErr != nil {
+		// If user explicitly requested hot-reload strategy, fail instead of falling back
+		if strategy == string(hav1alpha1.ConfigurationReloadStrategyHotReload) {
+			config.Status.LastError = fmt.Sprintf("Hot-reload strategy requested but no API token available: %v", tokenErr)
+			return fmt.Errorf("hot-reload strategy requires API token but none available: %w", tokenErr)
+		}
+
+		// Auto strategy can fallback to restart
 		log.Error(tokenErr, "No API token available, falling back to restart")
 		config.Status.LastError = fmt.Sprintf("No API token: %v", tokenErr)
 
@@ -651,6 +706,13 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(ctx context.C
 
 	// Attempt hot-reload
 	if err := r.performHotReload(ctx, haURL, token); err != nil {
+		// If user explicitly requested hot-reload strategy, fail instead of falling back
+		if strategy == string(hav1alpha1.ConfigurationReloadStrategyHotReload) {
+			config.Status.LastError = fmt.Sprintf("Hot-reload failed: %v", err)
+			return fmt.Errorf("hot-reload strategy failed: %w", err)
+		}
+
+		// Auto strategy can fallback to restart
 		log.Error(err, "Hot-reload failed, falling back to restart")
 		config.Status.LastError = fmt.Sprintf("Hot-reload failed: %v", err)
 
