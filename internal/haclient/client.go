@@ -149,9 +149,20 @@ func (c *Client) CreateUser(ctx context.Context, req *CreateUserRequest) (*Creat
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyStr := string(bodyBytes)
+
+		// Check if user already exists - treat as idempotent success
+		if strings.Contains(bodyStr, "User step already done") {
+			return nil, &Error{
+				Type:       ErrorTypeOnboardingDone,
+				Message:    "user already created",
+				StatusCode: resp.StatusCode,
+			}
+		}
+
 		return nil, &Error{
 			Type:       ErrorTypeHTTP,
-			Message:    fmt.Sprintf("failed to create user: %s", string(bodyBytes)),
+			Message:    fmt.Sprintf("failed to create user: %s", bodyStr),
 			StatusCode: resp.StatusCode,
 		}
 	}

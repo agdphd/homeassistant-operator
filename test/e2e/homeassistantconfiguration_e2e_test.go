@@ -676,56 +676,64 @@ spec:
 
 // collectDebugInfo gathers debug information from the test environment on test failure.
 func collectDebugInfo(namespace, haName, configName string) {
-	_, _ = fmt.Fprintf(GinkgoWriter, "\n=== DEBUG INFO ===\n")
+	// Helper function for best-effort logging to GinkgoWriter
+	// Ignores write errors since debug output is non-critical
+	writeDebug := func(format string, args ...any) {
+		if _, err := fmt.Fprintf(GinkgoWriter, format, args...); err != nil {
+			// best-effort logging; ignore write errors
+		}
+	}
 
-	_, _ = fmt.Fprintf(GinkgoWriter, "\n--- HAConfig Status ---\n")
+	writeDebug("\n=== DEBUG INFO ===\n")
+
+	writeDebug("\n--- HAConfig Status ---\n")
 	cmd := exec.Command("kubectl", "describe", "haconfig", configName, "-n", namespace)
 	output, err := utils.Run(cmd)
 	if err == nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", output)
+		writeDebug("%s\n", output)
 	}
 
-	_, _ = fmt.Fprintf(GinkgoWriter, "\n--- ConfigMap Content ---\n")
+	writeDebug("\n--- ConfigMap Content ---\n")
 	configMapName := haName + "-configuration"
 	cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", namespace, "-o", "yaml")
 	output, err = utils.Run(cmd)
 	if err == nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", output)
+		writeDebug("%s\n", output)
 	}
 
-	_, _ = fmt.Fprintf(GinkgoWriter, "\n--- StatefulSet Annotations ---\n")
+	writeDebug("\n--- StatefulSet Annotations ---\n")
 	cmd = exec.Command(
 		"kubectl", "get", "statefulset", haName, "-n", namespace,
 		"-o", "jsonpath={.spec.template.metadata.annotations}",
 	)
 	output, err = utils.Run(cmd)
 	if err == nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", output)
+		writeDebug("%s\n", output)
 	}
 
-	_, _ = fmt.Fprintf(GinkgoWriter, "\n--- Pod Logs (last 100 lines) ---\n")
+	writeDebug("\n--- Pod Logs (last 100 lines) ---\n")
 	cmd = exec.Command("kubectl", "logs", haName+"-0", "-n", namespace, "--tail=100")
 	output, err = utils.Run(cmd)
 	if err == nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", output)
+		writeDebug("%s\n", output)
 	}
 
-	_, _ = fmt.Fprintf(GinkgoWriter, "\n--- Kubernetes Events ---\n")
+	writeDebug("\n--- Kubernetes Events ---\n")
 	cmd = exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
 	output, err = utils.Run(cmd)
 	if err == nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", output)
+		writeDebug("%s\n", output)
 	}
 
-	_, _ = fmt.Fprintf(GinkgoWriter, "\n--- Controller Logs ---\n")
+	writeDebug("\n--- Controller Logs ---\n")
 	cmd = exec.Command(
 		"kubectl", "logs", "-n", "homeassistant-operator-system",
 		"-l", "control-plane=controller-manager", "--tail=200",
 	)
 	output, err = utils.Run(cmd)
 	if err == nil {
-		_, _ = fmt.Fprintf(GinkgoWriter, "%s\n", output)
+		writeDebug("%s\n", output)
 	}
 
-	_, _ = fmt.Fprintf(GinkgoWriter, "\n=== END DEBUG INFO ===\n")
+	writeDebug("\n=== END DEBUG INFO ===\n")
 }

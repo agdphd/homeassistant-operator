@@ -1287,7 +1287,7 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 			}, timeout, interval).Should(Equal(0))
 		})
 
-		It("should NOT update ConfigMap annotation for hot-reload (only content changes)", func() {
+		It("should NOT update ConfigMap annotation when AutoReload is disabled", func() {
 			By("Creating initial HomeAssistantConfiguration")
 			config := &hav1alpha1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
