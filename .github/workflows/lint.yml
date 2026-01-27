@@ -5,8 +5,8 @@ on:
   pull_request:
 
 jobs:
-  lint:
-    name: Run on Ubuntu
+  golangci-lint:
+    name: golangci-lint
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
@@ -21,3 +21,18 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.1.0
+
+  pre-commit:
+    name: pre-commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run pre-commit
+        uses: pre-commit/action@v3.0.1

@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"reflect"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -506,12 +507,12 @@ func homeassistantSectionChanged(old, new interface{}) (changed bool, critical b
 	}
 
 	// Check if logger settings changed (reloadable)
-	if oldMap["logger"] != newMap["logger"] {
+	if !reflect.DeepEqual(oldMap["logger"], newMap["logger"]) {
 		return true, false // Logger is reloadable
 	}
 
 	// Check if automations changed (reloadable)
-	if oldMap["automation"] != newMap["automation"] {
+	if !reflect.DeepEqual(oldMap["automation"], newMap["automation"]) {
 		return true, false // Automations are reloadable
 	}
 

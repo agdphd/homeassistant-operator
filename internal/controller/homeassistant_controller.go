@@ -61,6 +61,10 @@ const (
 type HomeAssistantReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// lastConfigHashSync tracks last time config hash was synced from ConfigMap
+	// Used for debouncing to avoid rapid StatefulSet updates
+	lastConfigHashSync map[string]time.Time
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch;create;update;patch;delete
@@ -265,9 +269,44 @@ func (r *HomeAssistantReconciler) reconcileStatefulSet(ctx context.Context, ha *
 	}
 
 	if needsUpdate(sts, desired) {
-		sts.Spec = desired.Spec
 		log.Info("Updating StatefulSet", "StatefulSet.Name", sts.Name)
-		return r.Update(ctx, sts)
+
+		// Retry with exponential backoff to handle optimistic locking conflicts
+		// This prevents race conditions when multiple controllers try to update StatefulSet simultaneously
+		const maxRetries = 3
+		backoff := time.Millisecond * 100
+
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			// Refresh StatefulSet from API server to get latest resourceVersion
+			freshSts := &appsv1.StatefulSet{}
+			if err := r.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, freshSts); err != nil {
+				return err
+			}
+
+			// Apply desired spec to fresh object
+			freshSts.Spec = desired.Spec
+
+			// Attempt update
+			if err := r.Update(ctx, freshSts); err != nil {
+				if errors.IsConflict(err) && attempt < maxRetries {
+					// Optimistic locking conflict - retry with backoff
+					log.Info("StatefulSet update conflict, retrying",
+						"attempt", attempt,
+						"backoff", backoff)
+					time.Sleep(backoff)
+					backoff *= 2 // Exponential backoff
+					continue
+				}
+				// Non-conflict error or max retries exceeded
+				return err
+			}
+
+			// Success
+			log.Info("StatefulSet updated successfully", "attempt", attempt)
+			return nil
+		}
+
+		return fmt.Errorf("failed to update StatefulSet after %d retries", maxRetries)
 	}
 
 	return nil
@@ -301,6 +340,7 @@ func (r *HomeAssistantReconciler) getGeneratedConfigMapName(ctx context.Context,
 // - HomeAssistantConfiguration Controller updates ConfigMap with hash annotation
 // - HomeAssistant Controller (this function) reads the hash and syncs to StatefulSet
 // - StatefulSet annotation change triggers Kubernetes rolling restart
+// Includes debouncing to prevent rapid updates during concurrent reconciliation
 func (r *HomeAssistantReconciler) syncConfigHashFromConfigMap(
 	ctx context.Context,
 	ha *hav1alpha1.HomeAssistant,
@@ -338,9 +378,30 @@ func (r *HomeAssistantReconciler) syncConfigHashFromConfigMap(
 	}
 	currentHash := sts.Spec.Template.Annotations[configHashAnnotationKey]
 
-	// 5. If different, update StatefulSet annotation in-memory
-	// needsUpdate() will detect the change and trigger an Update()
+	// 5. If different, check debouncing before updating
 	if configMapHash != currentHash {
+		// Initialize debounce map if needed
+		if r.lastConfigHashSync == nil {
+			r.lastConfigHashSync = make(map[string]time.Time)
+		}
+
+		// Check if we should debounce (wait before applying change)
+		resourceKey := fmt.Sprintf("%s/%s", ha.Namespace, ha.Name)
+		lastSync, exists := r.lastConfigHashSync[resourceKey]
+		debounceWindow := time.Second * 2 // Wait 2 seconds between config hash syncs
+
+		if exists && time.Since(lastSync) < debounceWindow {
+			// Too soon since last sync - skip this update to avoid race conditions
+			log.V(1).Info("Debouncing config hash sync",
+				"configmap", configMapName,
+				"timeSinceLastSync", time.Since(lastSync),
+				"debounceWindow", debounceWindow)
+			return nil
+		}
+
+		// Update debounce timestamp
+		r.lastConfigHashSync[resourceKey] = time.Now()
+
 		log.Info("Config hash changed, updating StatefulSet annotation",
 			"configmap", configMapName,
 			"oldHash", currentHash,
