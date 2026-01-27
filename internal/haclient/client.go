@@ -500,13 +500,40 @@ func (c *Client) CheckConfig(ctx context.Context, token string) error {
 	// Try to parse as object first (expected format for errors)
 	var resultObj map[string]interface{}
 	if err := json.Unmarshal(rawResponse, &resultObj); err == nil {
-		// It's an object - check for errors
+		// It's an object - check for various error formats
+
+		// Check for "errors" field (array)
 		if errors, ok := resultObj["errors"].([]interface{}); ok && len(errors) > 0 {
 			return &Error{
 				Type:    ErrorTypeHTTP,
 				Message: fmt.Sprintf("config validation errors: %v", errors),
 			}
 		}
+
+		// Check for "errors" field (string)
+		if errorStr, ok := resultObj["errors"].(string); ok && errorStr != "" {
+			return &Error{
+				Type:    ErrorTypeHTTP,
+				Message: fmt.Sprintf("config validation error: %s", errorStr),
+			}
+		}
+
+		// Check for "error" field (string)
+		if errorStr, ok := resultObj["error"].(string); ok && errorStr != "" {
+			return &Error{
+				Type:    ErrorTypeHTTP,
+				Message: fmt.Sprintf("config validation error: %s", errorStr),
+			}
+		}
+
+		// Check for "message" field (string)
+		if message, ok := resultObj["message"].(string); ok && message != "" {
+			return &Error{
+				Type:    ErrorTypeHTTP,
+				Message: fmt.Sprintf("config validation message: %s", message),
+			}
+		}
+
 		return nil
 	}
 

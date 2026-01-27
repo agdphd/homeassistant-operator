@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -64,7 +65,8 @@ type HomeAssistantReconciler struct {
 
 	// lastConfigHashSync tracks last time config hash was synced from ConfigMap
 	// Used for debouncing to avoid rapid StatefulSet updates
-	lastConfigHashSync map[string]time.Time
+	// sync.Map is used because reconcilers run concurrently for different resources
+	lastConfigHashSync sync.Map // map[string]time.Time
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch;create;update;patch;delete
@@ -380,14 +382,13 @@ func (r *HomeAssistantReconciler) syncConfigHashFromConfigMap(
 
 	// 5. If different, check debouncing before updating
 	if configMapHash != currentHash {
-		// Initialize debounce map if needed
-		if r.lastConfigHashSync == nil {
-			r.lastConfigHashSync = make(map[string]time.Time)
-		}
-
 		// Check if we should debounce (wait before applying change)
 		resourceKey := fmt.Sprintf("%s/%s", ha.Namespace, ha.Name)
-		lastSync, exists := r.lastConfigHashSync[resourceKey]
+		lastSyncVal, exists := r.lastConfigHashSync.Load(resourceKey)
+		var lastSync time.Time
+		if exists {
+			lastSync = lastSyncVal.(time.Time)
+		}
 		debounceWindow := time.Second * 2 // Wait 2 seconds between config hash syncs
 
 		if exists && time.Since(lastSync) < debounceWindow {
@@ -400,7 +401,7 @@ func (r *HomeAssistantReconciler) syncConfigHashFromConfigMap(
 		}
 
 		// Update debounce timestamp
-		r.lastConfigHashSync[resourceKey] = time.Now()
+		r.lastConfigHashSync.Store(resourceKey, time.Now())
 
 		log.Info("Config hash changed, updating StatefulSet annotation",
 			"configmap", configMapName,

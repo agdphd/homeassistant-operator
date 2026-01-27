@@ -166,7 +166,12 @@ spec:
     size: "1Gi"
 `, haName, testNamespace)
 
-			haFile := "/tmp/test-ha-e2e.yaml"
+			tmpFile, err := os.CreateTemp("", "ha-e2e-*.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			haFile := tmpFile.Name()
+			_ = tmpFile.Close()
+			defer func() { _ = os.Remove(haFile) }()
+
 			err = os.WriteFile(haFile, []byte(haYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -189,7 +194,12 @@ spec:
     default_config:
 `, configName, testNamespace, haName)
 
-			configFile := "/tmp/test-ha-config-e2e.yaml"
+			tmpFile2, err := os.CreateTemp("", "ha-config-e2e-*.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			configFile := tmpFile2.Name()
+			_ = tmpFile2.Close()
+			defer func() { _ = os.Remove(configFile) }()
+
 			err = os.WriteFile(configFile, []byte(configYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -260,7 +270,12 @@ stringData:
   mqtt_password: "testpass"
 `, secretName, testNamespace)
 
-			secretFile := "/tmp/test-secret-e2e.yaml"
+			tmpFile3, err := os.CreateTemp("", "secret-e2e-*.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			secretFile := tmpFile3.Name()
+			_ = tmpFile3.Close()
+			defer func() { _ = os.Remove(secretFile) }()
+
 			err = os.WriteFile(secretFile, []byte(secretYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -280,7 +295,12 @@ spec:
     size: "1Gi"
 `, haName, testNamespace)
 
-			haFile := "/tmp/test-ha-hasec-e2e.yaml"
+			tmpFile4, err := os.CreateTemp("", "ha-hasec-e2e-*.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			haFile := tmpFile4.Name()
+			_ = tmpFile4.Close()
+			defer func() { _ = os.Remove(haFile) }()
+
 			err = os.WriteFile(haFile, []byte(haYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -303,7 +323,12 @@ spec:
     default_config:
 `, configName, testNamespace, haName)
 
-			configFile := "/tmp/test-ha-sec-config-e2e.yaml"
+			tmpFile5, err := os.CreateTemp("", "ha-sec-config-e2e-*.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			configFile := tmpFile5.Name()
+			_ = tmpFile5.Close()
+			defer func() { _ = os.Remove(configFile) }()
+
 			err = os.WriteFile(configFile, []byte(configYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -327,7 +352,12 @@ spec:
         - mqtt_password
 `, haSecretsName, testNamespace, haName, secretName)
 
-			haSecretsFile := "/tmp/test-hasecrets-e2e.yaml"
+			tmpFile6, err := os.CreateTemp("", "hasecrets-e2e-*.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			haSecretsFile := tmpFile6.Name()
+			_ = tmpFile6.Close()
+			defer func() { _ = os.Remove(haSecretsFile) }()
+
 			err = os.WriteFile(haSecretsFile, []byte(haSecretsYAML), 0644)
 			Expect(err).NotTo(HaveOccurred())
 
