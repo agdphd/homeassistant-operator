@@ -81,8 +81,25 @@ var _ = BeforeSuite(func() {
 	// Shared setup for all E2E tests: Install CRDs and deploy controller once
 	By("installing CRDs")
 	cmd = exec.Command("make", "install")
-	_, err = utils.Run(cmd)
+	output, err := utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
+	_, _ = fmt.Fprintf(GinkgoWriter, "CRD installation output:\n%s\n", output)
+
+	// Verify that CRDs are actually installed in the cluster
+	By("verifying CRDs are installed")
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "crd", "homeassistants.ha.homeassistant.io")
+		_, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "HomeAssistant CRD should exist")
+
+		cmd = exec.Command("kubectl", "get", "crd", "homeassistantconfigurations.ha.homeassistant.io")
+		_, err = utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "HomeAssistantConfiguration CRD should exist")
+
+		cmd = exec.Command("kubectl", "get", "crd", "homeassistantsecrets.ha.homeassistant.io")
+		_, err = utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "HomeAssistantSecrets CRD should exist")
+	}, 30*time.Second, 2*time.Second).Should(Succeed(), "All CRDs should be installed and available")
 
 	By("creating controller namespace")
 	cmd = exec.Command("kubectl", "create", "ns", "homeassistant-operator-system")

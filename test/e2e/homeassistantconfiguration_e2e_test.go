@@ -679,9 +679,7 @@ func collectDebugInfo(namespace, haName, configName string) {
 	// Helper function for best-effort logging to GinkgoWriter
 	// Ignores write errors since debug output is non-critical
 	writeDebug := func(format string, args ...any) {
-		if _, err := fmt.Fprintf(GinkgoWriter, format, args...); err != nil {
-			// best-effort logging; ignore write errors
-		}
+		_, _ = fmt.Fprintf(GinkgoWriter, format, args...) // best-effort logging; ignore write errors
 	}
 
 	writeDebug("\n=== DEBUG INFO ===\n")
