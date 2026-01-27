@@ -95,3 +95,18 @@ spec:
     limits:
       cpu: "1000m"
       memory: "1Gi"
+---
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: my-home-config
+spec:
+  homeAssistantRef:
+    name: my-home
+  configuration: |
+    homeassistant:
+      name: Home
+      unit_system: metric
+
+    # Enables the default set of integrations
+    default_config:

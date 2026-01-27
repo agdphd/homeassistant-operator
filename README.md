@@ -12,14 +12,6 @@ A Kubernetes operator that simplifies deploying and managing [Home Assistant](ht
 
 The Home Assistant Operator automates the deployment and lifecycle management of Home Assistant instances in Kubernetes. Instead of manually creating Deployments, Services, PVCs, and Ingresses, you simply define a `HomeAssistant` custom resource and the operator handles the rest.
 
-### Key Features
-
-- **Declarative Configuration** - Define your Home Assistant instance as a Kubernetes custom resource
-- **Automatic Resource Management** - Operator creates and manages StatefulSets, Services, PVCs, and Ingresses
-- **Storage Management** - Persistent storage for Home Assistant configuration and data
-- **Flexible Networking** - Support for ClusterIP, NodePort, LoadBalancer, and Ingress
-- **Resource Control** - Configure CPU and memory limits for your instance
-- **Timezone Support** - Easy timezone configuration for your Home Assistant instance
 
 ### Target Environment
 
@@ -34,25 +26,8 @@ The Home Assistant Operator automates the deployment and lifecycle management of
 |-----|--------|-------------|
 | `HomeAssistant` | Alpha | Core Home Assistant deployment |
 | `HomeAssistantSecrets` | Alpha | Declarative secrets management |
+| `HomeAssistantConfiguration` | Alpha | Declarative configuration with hot-reload |
 
-## Custom Resource Definitions
-
-### HomeAssistant
-
-The `HomeAssistant` CRD defines a Home Assistant instance with the following configuration options:
-
-| Field | Description | Default |
-|-------|-------------|---------|
-| `spec.version` | Home Assistant version/tag | `stable` |
-| `spec.image` | Container image | `ghcr.io/home-assistant/home-assistant` |
-| `spec.timezone` | Timezone (e.g., `Europe/Warsaw`) | `UTC` |
-| `spec.storage.size` | PVC size | `5Gi` |
-| `spec.storage.storageClassName` | Storage class | cluster default |
-| `spec.service.type` | Service type | `ClusterIP` |
-| `spec.service.port` | Service port | `8123` |
-| `spec.ingress.enabled` | Enable Ingress | `false` |
-| `spec.ingress.host` | Ingress hostname | - |
-| `spec.resources` | CPU/Memory requests and limits | - |
 
 ## Quick Start
 
@@ -78,41 +53,12 @@ kubectl apply -f https://raw.githubusercontent.com/przemekhys/homeassistant-oper
 
 3. **Create a Home Assistant instance:**
 
-```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: my-home
-spec:
-  version: "stable"
-  timezone: "Europe/Warsaw"
-  storage:
-    size: "10Gi"
-  service:
-    type: NodePort
-    port: 8123
-  resources:
-    requests:
-      cpu: "100m"
-      memory: "256Mi"
-    limits:
-      cpu: "1000m"
-      memory: "1Gi"
-```
+See example configurations in [config/samples/](config/samples/):
+- [ha_v1alpha1_homeassistant.yaml](config/samples/ha_v1alpha1_homeassistant.yaml) - Basic deployment
+- [ha_v1alpha1_homeassistant_with_bootstrap.yaml](config/samples/ha_v1alpha1_homeassistant_with_bootstrap.yaml) - With automatic bootstrap
+- [ha_v1alpha1_homeassistant_with_config.yaml](config/samples/ha_v1alpha1_homeassistant_with_config.yaml) - With configuration management
+- [complete_example_with_secrets.yaml](config/samples/complete_example_with_secrets.yaml) - Complete example with secrets
 
-```sh
-kubectl apply -f homeassistant.yaml
-```
-
-4. **Access Home Assistant:**
-
-```sh
-# For NodePort
-kubectl get svc -l app.kubernetes.io/instance=my-home
-
-# For port-forward
-kubectl port-forward svc/my-home 8123:8123
-```
 
 ### Uninstallation
 
@@ -127,259 +73,15 @@ kubectl delete -f https://raw.githubusercontent.com/przemekhys/homeassistant-ope
 kubectl delete -f https://raw.githubusercontent.com/przemekhys/homeassistant-operator/main/dist/install.yaml
 ```
 
-## Advanced Configuration
+#### Example Configurations
 
-### Zero-Touch Deployment with Bootstrap
+See complete examples in [config/samples/](config/samples/):
 
-The operator supports automatic bootstrap of Home Assistant, enabling a completely hands-off deployment experience. When enabled, the operator will:
+- **[ha_v1alpha1_homeassistant_with_config.yaml](config/samples/ha_v1alpha1_homeassistant_with_config.yaml)** - Basic configuration with `auto` strategy (recommended)
+- **[haconfig_hot_reload_strategy.yaml](config/samples/haconfig_hot_reload_strategy.yaml)** - Force hot-reload strategy
+- **[haconfig_restart_strategy.yaml](config/samples/haconfig_restart_strategy.yaml)** - Force restart strategy
+- **[complete_example_with_secrets.yaml](config/samples/complete_example_with_secrets.yaml)** - Complete example with secrets management
 
-1. Deploy Home Assistant
-2. Wait for it to be ready
-3. Automatically complete the onboarding process
-4. Create an admin user with credentials you provide
-5. Configure location and core settings (optional)
-6. Set analytics preferences (optional)
-7. Generate a long-lived API token for programmatic access
-8. Store the token in a Kubernetes Secret
-
-#### Benefits
-
-- **Zero Manual Setup**: No need to manually access Home Assistant UI to complete onboarding
-- **Automated Credentials**: Create admin user programmatically
-- **API Token Ready**: Get immediate API access for automation and integrations
-- **Perfect for GitOps**: Fully declarative, works with CI/CD pipelines
-- **Idempotent**: Safe to re-apply manifests, bootstrap runs only once
-
-#### Quick Start
-
-1. **Create a Secret with admin credentials:**
-
-```bash
-kubectl create secret generic ha-bootstrap-credentials \
-  --from-literal=username=admin \
-  --from-literal=password=your-secure-password
-```
-
-2. **Deploy Home Assistant with bootstrap enabled:**
-
-```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: my-home
-spec:
-  version: "stable"
-  timezone: "Europe/Warsaw"
-
-  storage:
-    size: "10Gi"
-
-  # Enable automatic bootstrap
-  bootstrap:
-    enabled: true
-
-    # Reference to Secret with admin credentials
-    credentials:
-      secretRef:
-        name: ha-bootstrap-credentials
-        usernameKey: username        # optional, defaults to "username"
-        passwordKey: password        # optional, defaults to "password"
-
-    # Create and store a long-lived API token
-    createApiToken: true
-    apiTokenSecretName: my-home-api-token
-
-    # Display name for the admin user
-    ownerName: "Home Admin"
-
-    # Language for Home Assistant UI
-    language: "en"
-
-    # Location configuration (optional)
-    # Configures location, timezone, units, and currency during onboarding
-    location:
-      name: "Home"
-      latitude: 52.2297      # Warsaw, Poland
-      longitude: 21.0122
-      elevation: 100         # meters
-      unitSystem: "metric"   # "metric" or "us_customary"
-      currency: "PLN"
-      timeZone: "Europe/Warsaw"
-
-    # Analytics (optional, defaults to false)
-    # Enable Home Assistant analytics to help improve the platform
-    analytics: false
-
-  resources:
-    requests:
-      cpu: "100m"
-      memory: "256Mi"
-    limits:
-      cpu: "1000m"
-      memory: "1Gi"
-```
-
-3. **Apply the manifest:**
-
-```bash
-kubectl apply -f homeassistant-with-bootstrap.yaml
-```
-
-4. **Wait for bootstrap to complete:**
-
-```bash
-kubectl get ha my-home -o jsonpath='{.status.bootstrap.completed}'
-```
-
-5. **Retrieve the API token:**
-
-```bash
-kubectl get secret my-home-api-token -o jsonpath='{.data.token}' | base64 -d
-```
-
-#### Bootstrap Status
-
-Monitor bootstrap progress via status conditions:
-
-```bash
-# Check if bootstrap is completed
-kubectl get ha my-home -o jsonpath='{.status.bootstrap.completed}'
-
-# View bootstrap status message
-kubectl get ha my-home -o jsonpath='{.status.bootstrap.message}'
-
-# See full bootstrap status
-kubectl get ha my-home -o jsonpath='{.status.bootstrap}' | jq .
-```
-
-#### Custom Credential Keys
-
-If your Secret uses different key names, specify them in the bootstrap config:
-
-```yaml
-bootstrap:
-  enabled: true
-  credentials:
-    secretRef:
-      name: my-custom-secret
-      usernameKey: user            # Custom username key
-      passwordKey: pwd             # Custom password key
-  createApiToken: true
-```
-
-#### Complete Example
-
-See [config/samples/ha_v1alpha1_homeassistant_with_bootstrap.yaml](config/samples/ha_v1alpha1_homeassistant_with_bootstrap.yaml) for a complete working example.
-
-### Managing Secrets with HomeAssistantSecrets
-
-The operator provides a `HomeAssistantSecrets` CRD for declarative secret management. Instead of manually creating ConfigMaps or Secrets for `secrets.yaml`, you can reference existing Kubernetes Secrets and the operator will automatically generate and mount the `secrets.yaml` file.
-
-#### Benefits
-
-- **Declarative**: Define secrets in Kubernetes-native way
-- **Automatic Updates**: Secrets are automatically regenerated when source Secrets change
-- **Integration Ready**: Works seamlessly with Sealed Secrets, External Secrets Operator, or Vault
-- **No Manual Mounting**: The operator handles all the volume mounting automatically
-
-#### Example Usage
-
-1. **Create Kubernetes Secrets with your sensitive data:**
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: mqtt-credentials
-type: Opaque
-stringData:
-  mqtt_user: "homeassistant"
-  mqtt_password: "changeme"
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: database-credentials
-type: Opaque
-stringData:
-  db_url: "postgresql://ha:password@postgres:5432/homeassistant"
-```
-
-2. **Create HomeAssistant instance:**
-
-```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: my-home
-spec:
-  version: "2024.1"
-  storage:
-    size: 10Gi
-```
-
-3. **Create HomeAssistantSecrets to auto-generate secrets.yaml:**
-
-```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantSecrets
-metadata:
-  name: my-home-secrets
-spec:
-  homeAssistantRef:
-    name: my-home  # Must match HomeAssistant name
-
-  secretRefs:
-    # Include specific keys from a Secret
-    - name: mqtt-credentials
-      keys:
-        - mqtt_user
-        - mqtt_password
-
-    # Include all keys from a Secret (omit keys field)
-    - name: database-credentials
-```
-
-The operator will:
-1. Collect secrets from referenced Kubernetes Secrets
-2. Generate a `secrets.yaml` file with these entries
-3. Create a Secret named `my-home-generated-secrets`
-4. Mount it into the Home Assistant pod at `/config/secrets.yaml`
-5. Automatically restart the pod when secrets change
-
-#### Using Secrets in Home Assistant Configuration
-
-Once configured, you can reference secrets in your `configuration.yaml`:
-
-```yaml
-http:
-  api_password: !secret http_password
-
-mqtt:
-  broker: mqtt.example.com
-  username: !secret mqtt_user
-  password: !secret mqtt_password
-
-recorder:
-  db_url: !secret db_url
-```
-
-#### kubectl Commands
-
-```sh
-# List HomeAssistantSecrets
-kubectl get homeassistantsecrets
-# or use short name:
-kubectl get hasecrets
-
-# View details
-kubectl describe homeassistantsecrets my-home-secrets
-
-# Check status
-kubectl get hasecrets my-home-secrets -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
-```
-
-For complete examples, see [config/samples/complete_example_with_secrets.yaml](config/samples/complete_example_with_secrets.yaml).
 
 ## Development
 
@@ -428,8 +130,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ### Getting Help
 
-- **GitHub Issues**: For bugs and feature requests
-- **Discussions**: For questions and community support
+- **GitHub Issues**: For bugs, feature requests, questions, and community support
 
 ## Security
 

@@ -52,6 +52,21 @@ var _ = Describe("Bootstrap Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
+
 			haKey := types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}
 
 			By("Verifying bootstrap status remains nil")
@@ -63,6 +78,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			}, timeout, interval).Should(Succeed())
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 		})
 
@@ -82,6 +98,21 @@ var _ = Describe("Bootstrap Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
+
 			haKey := types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}
 
 			By("Verifying bootstrap status remains nil")
@@ -92,6 +123,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			}, time.Second*2, interval).Should(Succeed())
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 		})
 	})
@@ -131,6 +163,21 @@ var _ = Describe("Bootstrap Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
+
 			haKey := types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}
 
 			By("Manually marking bootstrap as completed")
@@ -164,6 +211,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			}, time.Second*2, interval).Should(Succeed())
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, secret)).Should(Succeed())
 		})
@@ -188,6 +236,21 @@ var _ = Describe("Bootstrap Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
 
 			haKey := types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}
 
@@ -234,6 +297,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			}, timeout, interval).Should(Succeed())
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 		})
 
@@ -257,6 +321,21 @@ var _ = Describe("Bootstrap Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
 
 			haKey := types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}
 
@@ -301,6 +380,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			}, timeout, interval).Should(Succeed())
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 		})
 
@@ -324,6 +404,21 @@ var _ = Describe("Bootstrap Controller", func() {
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
 
 			haKey := types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}
 
@@ -368,6 +463,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			}, timeout, interval).Should(Succeed())
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 		})
 	})
@@ -408,6 +504,21 @@ var _ = Describe("Bootstrap Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
+
 			By("Creating reconciler to test credential retrieval")
 			reconciler := &HomeAssistantReconciler{
 				Client: k8sClient,
@@ -421,6 +532,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(password).Should(Equal("testpass"))
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, secret)).Should(Succeed())
 		})
@@ -461,6 +573,21 @@ var _ = Describe("Bootstrap Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
+			By("Creating HomeAssistantConfiguration")
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+						Name: ha.Name,
+					},
+					Configuration: "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
+
 			By("Creating reconciler to test credential retrieval")
 			reconciler := &HomeAssistantReconciler{
 				Client: k8sClient,
@@ -474,6 +601,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(password).Should(Equal("custompass"))
 
 			By("Cleaning up")
+			Expect(k8sClient.Delete(ctx, haConfig)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, ha)).Should(Succeed())
 			Expect(k8sClient.Delete(ctx, secret)).Should(Succeed())
 		})

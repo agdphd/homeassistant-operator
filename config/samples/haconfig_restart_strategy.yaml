@@ -1,0 +1,119 @@
+# Example: HomeAssistantConfiguration with forced restart strategy
+#
+# This configuration always restarts pods when configuration changes,
+# regardless of whether hot-reload would be possible.
+#
+# Use this when:
+# - You prefer predictable behavior (always restart)
+# - You're making critical changes that should trigger a full restart
+# - You want to ensure all components are reinitialized
+# - You don't have bootstrap enabled (no API token)
+
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: my-home-restart
+spec:
+  version: "stable"
+  timezone: "Europe/Warsaw"
+  storage:
+    size: "5Gi"
+  service:
+    type: ClusterIP
+    port: 8123
+
+  # Bootstrap is optional when using restart strategy
+  # (hot-reload not used, so API token not needed)
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+---
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: my-home-restart-configuration
+spec:
+  homeAssistantRef:
+    name: my-home-restart
+
+  # Force restart strategy - always restart pods on configuration change
+  reloadStrategy: restart
+
+  # Enable automatic reload (will trigger rolling restart)
+  autoReload: true
+
+  configuration: |
+    homeassistant:
+      name: Home
+      # Changing these requires restart anyway
+      latitude: 52.2297
+      longitude: 21.0122
+      elevation: 100
+      unit_system: metric
+      currency: PLN
+      country: PL
+      time_zone: Europe/Warsaw
+
+    default_config:
+
+    # HTTP configuration - requires restart
+    http:
+      server_port: 8123
+      use_x_forwarded_for: true
+      trusted_proxies:
+        - 10.42.0.0/16
+        - 10.43.0.0/16
+      cors_allowed_origins:
+        - https://cast.home-assistant.io
+
+    # Logger configuration
+    logger:
+      default: info
+      logs:
+        homeassistant.core: warning
+        homeassistant.components: info
+
+    # Recorder with external database
+    recorder:
+      db_url: !secret db_url
+      purge_keep_days: 10
+      commit_interval: 1
+      include:
+        domains:
+          - sensor
+          - switch
+          - light
+        entities:
+          - climate.bedroom
+
+    # MQTT integration
+    mqtt:
+      broker: mosquitto.default.svc.cluster.local
+      port: 1883
+      username: !secret mqtt_user
+      password: !secret mqtt_password
+      discovery: true
+      discovery_prefix: homeassistant
+
+    # Prometheus metrics
+    prometheus:
+      namespace: ha
+
+    # History
+    history:
+      include:
+        domains:
+          - sensor
+          - switch
+
+    # System health
+    system_health:
+
+    automation: !include automations.yaml
+    script: !include scripts.yaml
+    scene: !include scenes.yaml

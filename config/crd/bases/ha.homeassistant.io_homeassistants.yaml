@@ -11,10 +11,23 @@ spec:
     kind: HomeAssistant
     listKind: HomeAssistantList
     plural: homeassistants
+    shortNames:
+    - ha
+    - has
     singular: homeassistant
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.version
+      name: Version
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: HomeAssistant is the Schema for the homeassistants API.
@@ -140,17 +153,6 @@ spec:
                     description: OwnerName is the display name for the owner user
                       created during onboarding
                     type: string
-                type: object
-              configurationFrom:
-                description: |-
-                  ConfigurationFrom references a ConfigMap containing configuration.yaml
-                  The ConfigMap should have a key "configuration.yaml" with the HA configuration
-                properties:
-                  name:
-                    description: Name of the ConfigMap
-                    type: string
-                required:
-                - name
                 type: object
               image:
                 default: ghcr.io/home-assistant/home-assistant

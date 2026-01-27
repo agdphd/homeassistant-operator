@@ -244,32 +244,66 @@ func (r *HomeAssistantReconciler) handleBootstrapError(ctx context.Context, ha *
 func (r *HomeAssistantReconciler) updateBootstrapStatus(ctx context.Context, ha *hav1alpha1.HomeAssistant, reason, message string, completed, tokenCreated bool) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	now := metav1.Now()
-	ha.Status.Bootstrap.LastAttempt = &now
-	ha.Status.Bootstrap.Message = message
-	ha.Status.Bootstrap.Completed = completed
+	// Retry with exponential backoff to handle optimistic locking conflicts
+	// This prevents race conditions when multiple controllers try to update status simultaneously
+	const maxRetries = 3
+	backoff := time.Millisecond * 100
 
-	if completed && tokenCreated {
-		ha.Status.Bootstrap.ApiTokenReady = true
-		ha.Status.Bootstrap.ApiTokenSecretName = r.getApiTokenSecretName(ha)
-	}
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Refresh HomeAssistant from API server to get latest resourceVersion
+		freshHA := &hav1alpha1.HomeAssistant{}
+		if err := r.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, freshHA); err != nil {
+			return ctrl.Result{}, err
+		}
 
-	// Update main status condition
-	conditionStatus := metav1.ConditionFalse
-	if completed {
-		conditionStatus = metav1.ConditionTrue
-	}
-	meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-		Type:               "BootstrapReady",
-		Status:             conditionStatus,
-		ObservedGeneration: ha.Generation,
-		Reason:             reason,
-		Message:            message,
-	})
+		// Initialize bootstrap status if needed
+		if freshHA.Status.Bootstrap == nil {
+			freshHA.Status.Bootstrap = &hav1alpha1.BootstrapStatus{}
+		}
 
-	if err := r.Status().Update(ctx, ha); err != nil {
-		log.Error(err, "Failed to update bootstrap status")
-		return ctrl.Result{}, err
+		// Apply desired status updates to fresh object
+		now := metav1.Now()
+		freshHA.Status.Bootstrap.LastAttempt = &now
+		freshHA.Status.Bootstrap.Message = message
+		freshHA.Status.Bootstrap.Completed = completed
+
+		if completed && tokenCreated {
+			freshHA.Status.Bootstrap.ApiTokenReady = true
+			freshHA.Status.Bootstrap.ApiTokenSecretName = r.getApiTokenSecretName(freshHA)
+		}
+
+		// Update main status condition
+		conditionStatus := metav1.ConditionFalse
+		if completed {
+			conditionStatus = metav1.ConditionTrue
+		}
+		meta.SetStatusCondition(&freshHA.Status.Conditions, metav1.Condition{
+			Type:               "BootstrapReady",
+			Status:             conditionStatus,
+			ObservedGeneration: freshHA.Generation,
+			Reason:             reason,
+			Message:            message,
+		})
+
+		// Attempt status update
+		if err := r.Status().Update(ctx, freshHA); err != nil {
+			if errors.IsConflict(err) && attempt < maxRetries {
+				// Optimistic locking conflict - retry with backoff
+				log.Info("Bootstrap status update conflict, retrying",
+					"attempt", attempt,
+					"backoff", backoff)
+				time.Sleep(backoff)
+				backoff *= 2 // Exponential backoff
+				continue
+			}
+			// Non-conflict error or max retries exceeded
+			log.Error(err, "Failed to update bootstrap status")
+			return ctrl.Result{}, err
+		}
+
+		// Success
+		log.Info("Bootstrap status updated successfully", "attempt", attempt)
+		break
 	}
 
 	// Determine requeue behavior

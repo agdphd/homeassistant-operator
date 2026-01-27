@@ -1,0 +1,137 @@
+# Example: HomeAssistantConfiguration with forced hot-reload strategy
+#
+# This configuration forces hot-reload via REST API for all changes.
+# If hot-reload is not possible (e.g., critical section changed or API unavailable),
+# the reconciliation will fail and require manual intervention.
+#
+# Use this when you want to ensure zero-downtime updates and be explicitly
+# notified if a restart would be required.
+
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: my-home-hot-reload
+spec:
+  version: "stable"
+  timezone: "Europe/Warsaw"
+  storage:
+    size: "5Gi"
+  service:
+    type: ClusterIP
+    port: 8123
+
+  # Bootstrap is REQUIRED for hot-reload to work (provides API token)
+  bootstrap:
+    enabled: true
+    credentials:
+      secretRef:
+        name: ha-bootstrap-credentials
+    createApiToken: true
+    apiTokenSecretName: my-home-hot-reload-api-token
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+---
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: my-home-hot-reload-configuration
+spec:
+  homeAssistantRef:
+    name: my-home-hot-reload
+
+  # Force hot-reload strategy - never restart pods
+  # If configuration change requires restart, reconciliation will fail
+  reloadStrategy: hot-reload
+
+  # Enable automatic reload on configuration changes
+  autoReload: true
+
+  configuration: |
+    homeassistant:
+      name: Home
+      unit_system: metric
+      currency: PLN
+      country: PL
+
+    default_config:
+
+    # HTTP configuration - AVOID changing this with hot-reload strategy
+    # Changes here require restart and will cause reconciliation to fail
+    http:
+      use_x_forwarded_for: true
+      trusted_proxies:
+        - 10.42.0.0/16
+
+    # Logger - safe to hot-reload
+    logger:
+      default: info
+      logs:
+        homeassistant.components.mqtt: warning
+        homeassistant.components.http: debug
+
+    # Automations - safe to hot-reload
+    automation:
+      - alias: "Morning Lights"
+        trigger:
+          platform: time
+          at: "07:00:00"
+        action:
+          service: light.turn_on
+          target:
+            entity_id: light.bedroom
+
+      - alias: "Evening Lights"
+        trigger:
+          platform: sun
+          event: sunset
+        action:
+          service: light.turn_on
+          target:
+            entity_id: light.living_room
+          data:
+            brightness: 128
+
+    # Scripts - safe to hot-reload
+    script:
+      good_night:
+        alias: "Good Night"
+        sequence:
+          - service: light.turn_off
+            target:
+              entity_id: all
+          - service: climate.set_temperature
+            target:
+              entity_id: climate.bedroom
+            data:
+              temperature: 18
+
+    # Scenes - safe to hot-reload
+    scene:
+      - name: "Movie Time"
+        entities:
+          light.living_room:
+            state: on
+            brightness: 25
+          media_player.tv:
+            state: on
+
+    # Input helpers - safe to hot-reload
+    input_boolean:
+      guest_mode:
+        name: "Guest Mode"
+        icon: mdi:account-multiple
+
+    input_select:
+      home_mode:
+        name: "Home Mode"
+        options:
+          - "Home"
+          - "Away"
+          - "Sleep"
+        initial: "Home"

@@ -8,14 +8,6 @@ rules:
   - ""
   resources:
   - configmaps
-  - pods
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
   - persistentvolumeclaims
   - secrets
   - services
@@ -26,6 +18,14 @@ rules:
   - list
   - patch
   - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
   - watch
 - apiGroups:
   - apps
@@ -42,6 +42,7 @@ rules:
 - apiGroups:
   - ha.homeassistant.io
   resources:
+  - homeassistantconfigurations
   - homeassistants
   - homeassistantsecrets
   verbs:
@@ -55,6 +56,7 @@ rules:
 - apiGroups:
   - ha.homeassistant.io
   resources:
+  - homeassistantconfigurations/finalizers
   - homeassistants/finalizers
   - homeassistantsecrets/finalizers
   verbs:
@@ -62,6 +64,7 @@ rules:
 - apiGroups:
   - ha.homeassistant.io
   resources:
+  - homeassistantconfigurations/status
   - homeassistants/status
   - homeassistantsecrets/status
   verbs:

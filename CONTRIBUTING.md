@@ -10,7 +10,7 @@ The best way to contribute is by **opening an Issue** on GitHub:
 
 - **Feature requests** - Have an idea for a new feature? Open an Issue!
 - **Bug reports** - Found a bug? Let us know!
-- **Questions** - Have questions? Open an Issue or use GitHub Discussions
+- **Questions** - Have questions? Open an Issue
 
 Every submission is valuable and helps us develop the project in the right direction.
 

@@ -121,20 +121,24 @@ test: manifests generate fmt vet setup-envtest ## Run unit tests.
 K3D_CLUSTER_E2E ?= homeassistant-operator-test-e2e
 
 .PHONY: setup-test-e2e
-setup-test-e2e: ## Set up a k3d cluster for e2e tests if it does not exist
+setup-test-e2e: ## Set up a k3d cluster for e2e tests (always creates fresh cluster)
 	@command -v k3d >/dev/null 2>&1 || { echo "k3d is not installed. Install with: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash"; exit 1; }
-	@k3d cluster list | grep -q $(K3D_CLUSTER_E2E) && echo "Cluster $(K3D_CLUSTER_E2E) already exists. Skipping creation." || k3d cluster create $(K3D_CLUSTER_E2E) --agents 1
+	@echo "Ensuring clean k3d cluster state..."
+	@k3d cluster delete $(K3D_CLUSTER_E2E) 2>/dev/null || true
+	@echo "Creating fresh k3d cluster $(K3D_CLUSTER_E2E)..."
+	@k3d cluster create $(K3D_CLUSTER_E2E) --agents 1
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run e2e tests on k3d cluster
-	K3D_CLUSTER=$(K3D_CLUSTER_E2E) go test ./test/e2e/ -v -ginkgo.v; \
+	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) go test ./test/e2e/ -v -ginkgo.v; \
 	status=$$?; \
 	$(MAKE) cleanup-test-e2e; \
 	exit $$status
 
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the k3d cluster used for e2e tests
-	@k3d cluster delete $(K3D_CLUSTER_E2E)
+	@echo "Cleaning up k3d cluster $(K3D_CLUSTER_E2E)..."
+	@k3d cluster delete $(K3D_CLUSTER_E2E) 2>/dev/null || true
 
 ##@ k3d Testing (recommended for k3s target environments)
 

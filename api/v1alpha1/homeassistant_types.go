@@ -55,11 +55,6 @@ type HomeAssistantSpec struct {
 	// +optional
 	Timezone string `json:"timezone,omitempty"`
 
-	// ConfigurationFrom references a ConfigMap containing configuration.yaml
-	// The ConfigMap should have a key "configuration.yaml" with the HA configuration
-	// +optional
-	ConfigurationFrom *ConfigMapReference `json:"configurationFrom,omitempty"`
-
 	// SecretsFrom references a Secret containing secrets.yaml
 	// The Secret should have a key "secrets.yaml" with the HA secrets
 	// +optional
@@ -173,12 +168,6 @@ type CredentialsSecretRef struct {
 	// +kubebuilder:default="password"
 	// +optional
 	PasswordKey string `json:"passwordKey,omitempty"`
-}
-
-// ConfigMapReference references a ConfigMap for configuration
-type ConfigMapReference struct {
-	// Name of the ConfigMap
-	Name string `json:"name"`
 }
 
 // SecretReference references a Secret for sensitive data
@@ -321,6 +310,10 @@ const (
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:resource:shortName=ha;has
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.status.version`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // HomeAssistant is the Schema for the homeassistants API.
 type HomeAssistant struct {

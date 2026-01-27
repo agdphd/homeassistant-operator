@@ -149,9 +149,20 @@ func (c *Client) CreateUser(ctx context.Context, req *CreateUserRequest) (*Creat
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
+		bodyStr := string(bodyBytes)
+
+		// Check if user already exists - treat as idempotent success
+		if strings.Contains(bodyStr, "User step already done") {
+			return nil, &Error{
+				Type:       ErrorTypeOnboardingDone,
+				Message:    "user already created",
+				StatusCode: resp.StatusCode,
+			}
+		}
+
 		return nil, &Error{
 			Type:       ErrorTypeHTTP,
-			Message:    fmt.Sprintf("failed to create user: %s", string(bodyBytes)),
+			Message:    fmt.Sprintf("failed to create user: %s", bodyStr),
 			StatusCode: resp.StatusCode,
 		}
 	}
@@ -451,4 +462,121 @@ func (c *Client) PerformBootstrap(ctx context.Context, username, password, owner
 	}
 
 	return longLivedResp.Token, nil
+}
+
+// CheckConfig validates the current Home Assistant configuration
+// Returns nil if config is valid, error if invalid
+// Requires authenticated API call with long-lived token
+func (c *Client) CheckConfig(ctx context.Context, token string) error {
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/services/homeassistant/check_config", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to check config", Err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return &Error{
+			Type:       ErrorTypeHTTP,
+			Message:    fmt.Sprintf("config check failed: %s", string(bodyBytes)),
+			StatusCode: resp.StatusCode,
+		}
+	}
+
+	// Parse response - Home Assistant can return either array or object
+	var rawResponse json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&rawResponse); err != nil {
+		return &Error{Type: ErrorTypeInvalidResponse, Message: "failed to decode response", Err: err}
+	}
+
+	// Try to parse as object first (expected format for errors)
+	var resultObj map[string]interface{}
+	if err := json.Unmarshal(rawResponse, &resultObj); err == nil {
+		// It's an object - check for various error formats
+
+		// Check for "errors" field (array)
+		if errors, ok := resultObj["errors"].([]interface{}); ok && len(errors) > 0 {
+			return &Error{
+				Type:    ErrorTypeHTTP,
+				Message: fmt.Sprintf("config validation errors: %v", errors),
+			}
+		}
+
+		// Check for "errors" field (string)
+		if errorStr, ok := resultObj["errors"].(string); ok && errorStr != "" {
+			return &Error{
+				Type:    ErrorTypeHTTP,
+				Message: fmt.Sprintf("config validation error: %s", errorStr),
+			}
+		}
+
+		// Check for "error" field (string)
+		if errorStr, ok := resultObj["error"].(string); ok && errorStr != "" {
+			return &Error{
+				Type:    ErrorTypeHTTP,
+				Message: fmt.Sprintf("config validation error: %s", errorStr),
+			}
+		}
+
+		// Check for "message" field (string)
+		if message, ok := resultObj["message"].(string); ok && message != "" {
+			return &Error{
+				Type:    ErrorTypeHTTP,
+				Message: fmt.Sprintf("config validation message: %s", message),
+			}
+		}
+
+		return nil
+	}
+
+	// Try to parse as array (valid response from service call)
+	var resultArray []interface{}
+	if err := json.Unmarshal(rawResponse, &resultArray); err == nil {
+		// It's an array - treat as success
+		return nil
+	}
+
+	// If neither worked, return error
+	return &Error{
+		Type:    ErrorTypeInvalidResponse,
+		Message: "unexpected response format (neither array nor object)",
+	}
+}
+
+// ReloadCoreConfig triggers a hot-reload of Home Assistant core configuration
+// Returns nil if reload successful, error if failed
+// Requires authenticated API call with long-lived token
+func (c *Client) ReloadCoreConfig(ctx context.Context, token string) error {
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/services/homeassistant/reload_core_config", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to reload config", Err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return &Error{
+			Type:       ErrorTypeHTTP,
+			Message:    fmt.Sprintf("reload failed: %s", string(bodyBytes)),
+			StatusCode: resp.StatusCode,
+		}
+	}
+
+	return nil
 }

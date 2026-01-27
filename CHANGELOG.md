@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [0.3.0] - 2026-01-27
+
+### Added
+
+- **HomeAssistantConfiguration CRD**: Declarative configuration management with intelligent hot-reload capabilities
+  - Full `configuration.yaml` management via `spec.configuration` field
+  - Smart reload strategy: automatically determines if changes require restart or can be hot-reloaded
+  - Zero-downtime updates for reloadable sections (automations, scripts, logger, input helpers, etc.)
+  - Three reload strategies: `auto` (default, analyzes changes), `hot-reload` (force REST API), `restart` (force pod restart)
+  - Requires bootstrap-generated API token for hot-reload functionality
+  - Short names: `haconfig`, `hacfg`
+
+### Changed
+
+- **BREAKING CHANGE**: HomeAssistantConfiguration CRD now REQUIRED for every HomeAssistant instance
+  - Every `HomeAssistant` CR must have a corresponding `HomeAssistantConfiguration` CR
+  - Controller validates HomeAssistantConfiguration exists before creating StatefulSet
+  - ConfigMap auto-generated from HomeAssistantConfiguration spec (pattern: `<name>-configuration`)
+- **BREAKING CHANGE**: PVC naming convention changed from `<name>-config` to `<name>-data`
+  - The PersistentVolumeClaim for Home Assistant data storage now uses the suffix `-data` instead of `-config`
+
+
 ## [0.2.0] - 2026-01-11
 
 ### Added
@@ -56,5 +79,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Primary: k3s on Raspberry Pi 4/5 (ARM64)
 - Also supported: Any Kubernetes cluster (AMD64/ARM64)
 
+[0.3.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.3.0
 [0.2.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.2.0
 [0.1.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.1.0
