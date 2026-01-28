@@ -80,6 +80,18 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(ctx context.Context, ha *ha
 	// Create HA client
 	client := haclient.NewClient(haURL).WithTimeout(30 * time.Second)
 
+	// Health check - ensure HA is responding before attempting bootstrap
+	log.Info("Performing health check before bootstrap", "url", haURL)
+	if err := client.CheckHealth(ctx); err != nil {
+		if haclient.IsNotReady(err) {
+			log.Info("Home Assistant not ready for bootstrap, will retry", "error", err.Error())
+			return r.updateBootstrapStatus(ctx, ha, reasonBootstrapNotReady, "Home Assistant health check failed - not ready yet", false, false)
+		}
+		log.Error(err, "Bootstrap health check failed")
+		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed, fmt.Sprintf("Health check failed: %v", err), false, false)
+	}
+	log.Info("Health check passed, proceeding with bootstrap")
+
 	// Get bootstrap configuration
 	ownerName := getOrDefault(ha.Spec.Bootstrap.OwnerName, defaultOwnerName)
 	language := getOrDefault(ha.Spec.Bootstrap.Language, defaultLanguage)
@@ -100,7 +112,7 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(ctx context.Context, ha *ha
 	token, err := client.PerformBootstrap(ctx, username, password, ownerName, language, opts)
 
 	if err != nil {
-		return r.handleBootstrapError(ctx, ha, err)
+		return r.handleBootstrapError(ctx, ha, err, username, password, haURL)
 	}
 
 	// Bootstrap completed successfully
@@ -219,7 +231,7 @@ func (r *HomeAssistantReconciler) buildHomeAssistantURL(ha *hav1alpha1.HomeAssis
 }
 
 // handleBootstrapError handles errors from bootstrap process
-func (r *HomeAssistantReconciler) handleBootstrapError(ctx context.Context, ha *hav1alpha1.HomeAssistant, err error) (ctrl.Result, error) {
+func (r *HomeAssistantReconciler) handleBootstrapError(ctx context.Context, ha *hav1alpha1.HomeAssistant, err error, username, password, haURL string) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	// Check error type
@@ -229,14 +241,53 @@ func (r *HomeAssistantReconciler) handleBootstrapError(ctx context.Context, ha *
 	}
 
 	if haclient.IsOnboardingDone(err) {
-		log.Info("Onboarding already completed")
-		// completed=true but tokenCreated=false since we didn't create a token
-		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapAlreadyDone, "Onboarding already completed", true, false)
+		log.Info("Onboarding already completed, attempting to create API token if requested")
+		return r.handleOnboardingAlreadyDone(ctx, ha, username, password, haURL)
 	}
 
 	// Other errors
 	log.Error(err, "Bootstrap failed")
 	return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed, fmt.Sprintf("Bootstrap failed: %v", err), false, false)
+}
+
+// handleOnboardingAlreadyDone handles the case where onboarding was already completed
+// (e.g., manually or by a previous run). It attempts to create an API token Secret
+// if requested, even though onboarding is done.
+func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(ctx context.Context, ha *hav1alpha1.HomeAssistant, username, password, haURL string) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	// Check if API token creation was requested
+	if !ha.Spec.Bootstrap.CreateApiToken {
+		log.Info("Onboarding already completed, no API token requested")
+		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapAlreadyDone, "Onboarding already completed", true, false)
+	}
+
+	// Check if Secret already exists
+	secretName := r.getApiTokenSecretName(ha)
+	existingSecret := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: ha.Namespace}, existingSecret)
+	if err == nil {
+		// Secret already exists
+		log.Info("Onboarding already completed, API token Secret already exists", "Secret.Name", secretName)
+		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapAlreadyDone, "Onboarding already completed, API token Secret exists", true, true)
+	}
+	if !errors.IsNotFound(err) {
+		// Error other than NotFound
+		log.Error(err, "Failed to check for existing API token Secret")
+		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed, fmt.Sprintf("Failed to check for API token Secret: %v", err), false, false)
+	}
+
+	// Secret doesn't exist - we need to create it
+	// Since onboarding is done, we can't use CreateUser (it would fail).
+	// The best approach is to inform the user and skip token creation.
+	log.Info("Onboarding already completed but no API token Secret exists. " +
+		"This typically happens when HA was manually configured before bootstrap ran. " +
+		"Marking bootstrap as completed without API token.")
+
+	return r.updateBootstrapStatus(ctx, ha, reasonBootstrapAlreadyDone,
+		"Onboarding already completed. API token Secret not created (manual onboarding detected). "+
+			"Create Secret manually or delete HA pod to retry bootstrap.",
+		true, false)
 }
 
 // updateBootstrapStatus updates the bootstrap status and returns appropriate Result

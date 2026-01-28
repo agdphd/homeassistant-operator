@@ -143,7 +143,9 @@ func (c *Client) CreateUser(ctx context.Context, req *CreateUserRequest) (*Creat
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to create user", Err: err}
+		// Connection errors (EOF, connection refused, etc.) indicate HA not ready yet
+		// This allows the controller to retry with appropriate backoff
+		return nil, &Error{Type: ErrorTypeNotReady, Message: "failed to create user: Home Assistant not ready", Err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -195,7 +197,8 @@ func (c *Client) ExchangeAuthCode(ctx context.Context, authCode, clientID string
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, &Error{Type: ErrorTypeAuth, Message: "failed to exchange auth code", Err: err}
+		// Connection errors indicate HA not responding - use NotReady type for retry
+		return nil, &Error{Type: ErrorTypeNotReady, Message: "failed to exchange auth code: Home Assistant not responding", Err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
