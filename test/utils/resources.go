@@ -23,15 +23,16 @@ const (
 	DefaultHAMemoryLimit = "1Gi"
 
 	// EnhancedHACPURequest is a higher CPU request for tests requiring better performance.
-	// Used when faster startup or more responsive operations are needed.
-	EnhancedHACPURequest = "500m"
+	// 2000m (2 CPU cores) provides faster startup and more responsive operations.
+	EnhancedHACPURequest = "2000m"
 
 	// EnhancedHAMemoryRequest is a higher memory request for tests with larger workloads.
-	// Used for scenarios with more integrations or data processing.
-	EnhancedHAMemoryRequest = "512Mi"
+	// 1Gi provides adequate headroom for scenarios with more integrations or data processing.
+	EnhancedHAMemoryRequest = "1Gi"
 
 	// EnhancedHAMemoryLimit is a higher memory limit for resource-intensive test scenarios.
-	EnhancedHAMemoryLimit = "1Gi"
+	// 2Gi ensures sufficient memory for complex test scenarios and prevents OOM conditions.
+	EnhancedHAMemoryLimit = "2Gi"
 )
 
 // GetDefaultHAResourceRequests returns the standard resource requests YAML block
