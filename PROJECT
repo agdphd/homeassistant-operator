@@ -29,4 +29,9 @@ resources:
   kind: HomeAssistantSecrets
   path: github.com/przemekhys/homeassistant-operator/api/v1alpha1
   version: v1alpha1
+- controller: true
+  domain: homeassistant.io
+  group: ha
+  kind: HomeAssistantAutomation
+  version: v1alpha1
 version: "3"

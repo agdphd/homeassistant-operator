@@ -42,6 +42,7 @@ rules:
 - apiGroups:
   - ha.homeassistant.io
   resources:
+  - homeassistantautomations
   - homeassistantconfigurations
   - homeassistants
   - homeassistantsecrets
@@ -56,6 +57,7 @@ rules:
 - apiGroups:
   - ha.homeassistant.io
   resources:
+  - homeassistantautomations/finalizers
   - homeassistantconfigurations/finalizers
   - homeassistants/finalizers
   - homeassistantsecrets/finalizers
@@ -64,6 +66,7 @@ rules:
 - apiGroups:
   - ha.homeassistant.io
   resources:
+  - homeassistantautomations/status
   - homeassistantconfigurations/status
   - homeassistants/status
   - homeassistantsecrets/status

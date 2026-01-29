@@ -1,0 +1,90 @@
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantAutomation
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: homeassistantautomation-advanced
+spec:
+  homeAssistantRef:
+    name: homeassistant-sample
+
+  alias: "Security alert with multiple triggers"
+  description: "Advanced automation with multiple triggers, conditions, and actions"
+
+  # Multiple triggers - ANY trigger will start the automation
+  triggers:
+    # Motion detected
+    - trigger: state
+      entity_id: binary_sensor.motion_detector
+      from: "off"
+      to: "on"
+
+    # Door opened
+    - trigger: state
+      entity_id: binary_sensor.front_door
+      from: "off"
+      to: "on"
+
+    # Window opened
+    - trigger: state
+      entity_id: binary_sensor.window_sensor
+      from: "off"
+      to: "on"
+
+  # Multiple conditions - ALL must be true
+  conditions:
+    # Only when nobody is home
+    - condition: state
+      entity_id: binary_sensor.someone_home
+      state: "off"
+
+    # Only during specific time window
+    - condition: time
+      after: "22:00:00"
+      before: "06:00:00"
+
+    # Only if alarm is armed
+    - condition: state
+      entity_id: alarm_control_panel.home
+      state: "armed_away"
+
+  # Multiple actions in sequence
+  actions:
+    # Turn on all lights
+    - action: light.turn_on
+      target:
+        entity_id: all
+      data:
+        brightness: 255
+
+    # Send notification
+    - action: notify.mobile_app
+      data:
+        title: "Security Alert!"
+        message: "Motion/door/window detected while nobody is home"
+        data:
+          priority: high
+          ttl: 0
+
+    # Take snapshot from camera
+    - action: camera.snapshot
+      target:
+        entity_id: camera.front_door
+      data:
+        filename: "/config/www/snapshots/alert_{{ now().strftime('%Y%m%d_%H%M%S') }}.jpg"
+
+    # Wait before turning off lights
+    - delay:
+        minutes: 5
+
+    # Turn lights off
+    - action: light.turn_off
+      target:
+        entity_id: all
+
+  # Use restart mode - stop previous run if triggered again
+  mode: restart
+
+  autoReload: true
+  enabled: true
