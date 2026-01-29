@@ -181,6 +181,11 @@ security-check: ## Run govulncheck to scan for vulnerabilities
 	@echo "Running govulncheck..."
 	@go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+.PHONY: dupl-check
+dupl-check: ## Check for duplicate code (excluding tests and generated files)
+	@echo "Checking for code duplication..."
+	@golangci-lint run --enable-only=dupl
+
 ##@ Build
 
 .PHONY: build

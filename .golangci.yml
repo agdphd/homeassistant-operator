@@ -22,6 +22,8 @@ linters:
     - unparam
     - unused
   settings:
+    dupl:
+      threshold: 100
     revive:
       rules:
         - name: comment-spacings
@@ -34,8 +36,19 @@ linters:
         path: api/*
       - linters:
           - dupl
-          - lll
-        path: internal/*
+        path: _test\.go$
+      - linters:
+          - dupl
+        path: ^test/
+      - linters:
+          - dupl
+        path: zz_generated\.
+      - linters:
+          - dupl
+        path: groupversion_info\.go$
+      - linters:
+          - dupl
+        path: ^cmd/main\.go$
     paths:
       - third_party$
       - builtin$
