@@ -174,6 +174,13 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	$(GOLANGCI_LINT) config verify
 
+##@ Security
+
+.PHONY: security-check
+security-check: ## Run govulncheck to scan for vulnerabilities
+	@echo "Running govulncheck..."
+	@go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
 ##@ Build
 
 .PHONY: build

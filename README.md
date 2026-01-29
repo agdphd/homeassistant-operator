@@ -3,6 +3,7 @@
 [![Lint](https://github.com/przemekhys/homeassistant-operator/actions/workflows/lint.yml/badge.svg)](https://github.com/przemekhys/homeassistant-operator/actions/workflows/lint.yml)
 [![Tests](https://github.com/przemekhys/homeassistant-operator/actions/workflows/test.yml/badge.svg)](https://github.com/przemekhys/homeassistant-operator/actions/workflows/test.yml)
 [![E2E Tests](https://github.com/przemekhys/homeassistant-operator/actions/workflows/test-e2e.yml/badge.svg)](https://github.com/przemekhys/homeassistant-operator/actions/workflows/test-e2e.yml)
+[![Security Scan](https://github.com/przemekhys/homeassistant-operator/actions/workflows/security.yml/badge.svg)](https://github.com/przemekhys/homeassistant-operator/actions/workflows/security.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/przemekhys/homeassistant-operator)](https://goreportcard.com/report/github.com/przemekhys/homeassistant-operator)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
@@ -134,7 +135,16 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ## Security
 
-If you discover a security vulnerability, please report it via GitHub Security Advisories instead of opening a public issue.
+This project uses automated security scanning to ensure dependencies are free of known vulnerabilities:
+
+- **[govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck)**: Scans Go dependencies against the [Go Vulnerability Database](https://vuln.go.dev/)
+  - Runs on every pull request (blocks merge if vulnerabilities found)
+  - Local check: `make security-check`
+
+- **[Dependabot](https://docs.github.com/en/code-security/dependabot)**: Automated dependency updates
+  - Weekly scans (Fridays at 23:00 UTC)
+  - Automatically creates PRs for security patches
+  - Monitors Go modules, GitHub Actions, and Docker dependencies
 
 ## License
 

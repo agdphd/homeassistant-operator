@@ -22,6 +22,7 @@ Every submission is valuable and helps us develop the project in the right direc
 2. **One PR = one change** - Don't mix unrelated changes in one PR
 3. **Tests** - Make sure `make test` passes
 4. **Linting** - Make sure `make lint` reports no errors
+5. **Security** - Run `make security-check` before submitting (CI will block PRs with vulnerabilities)
 
 
 
@@ -53,6 +54,9 @@ make test
 
 # Linting
 make lint
+
+# Security scanning
+make security-check
 
 # Local testing with k3d
 make k3d-create

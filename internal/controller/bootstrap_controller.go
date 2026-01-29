@@ -112,7 +112,7 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(ctx context.Context, ha *ha
 	token, err := client.PerformBootstrap(ctx, username, password, ownerName, language, opts)
 
 	if err != nil {
-		return r.handleBootstrapError(ctx, ha, err, username, password, haURL)
+		return r.handleBootstrapError(ctx, ha, err)
 	}
 
 	// Bootstrap completed successfully
@@ -231,7 +231,7 @@ func (r *HomeAssistantReconciler) buildHomeAssistantURL(ha *hav1alpha1.HomeAssis
 }
 
 // handleBootstrapError handles errors from bootstrap process
-func (r *HomeAssistantReconciler) handleBootstrapError(ctx context.Context, ha *hav1alpha1.HomeAssistant, err error, username, password, haURL string) (ctrl.Result, error) {
+func (r *HomeAssistantReconciler) handleBootstrapError(ctx context.Context, ha *hav1alpha1.HomeAssistant, err error) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	// Check error type
@@ -242,7 +242,7 @@ func (r *HomeAssistantReconciler) handleBootstrapError(ctx context.Context, ha *
 
 	if haclient.IsOnboardingDone(err) {
 		log.Info("Onboarding already completed, attempting to create API token if requested")
-		return r.handleOnboardingAlreadyDone(ctx, ha, username, password, haURL)
+		return r.handleOnboardingAlreadyDone(ctx, ha)
 	}
 
 	// Other errors
@@ -253,7 +253,7 @@ func (r *HomeAssistantReconciler) handleBootstrapError(ctx context.Context, ha *
 // handleOnboardingAlreadyDone handles the case where onboarding was already completed
 // (e.g., manually or by a previous run). It attempts to create an API token Secret
 // if requested, even though onboarding is done.
-func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(ctx context.Context, ha *hav1alpha1.HomeAssistant, username, password, haURL string) (ctrl.Result, error) {
+func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(ctx context.Context, ha *hav1alpha1.HomeAssistant) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	// Check if API token creation was requested
