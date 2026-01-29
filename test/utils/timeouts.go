@@ -23,24 +23,27 @@ const (
 	// - Package installation
 	// - Database initialization
 	// - Integration discovery
-	HAPodReadyTimeout = 10 * time.Minute
+	// Increased for CI environments with limited resources (GitHub Actions: 4 CPU / 16 GB RAM)
+	HAPodReadyTimeout = 12 * time.Minute
 
 	// BootstrapTimeout is the timeout for complete bootstrap process including:
 	// - HA startup (see HAPodReadyTimeout)
 	// - Onboarding workflow
 	// - API token generation
-	BootstrapTimeout = 12 * time.Minute
+	// Increased for CI environments with limited resources
+	BootstrapTimeout = 15 * time.Minute
 
 	// HotReloadTimeout is the timeout for hot-reload operations via REST API.
 	// Should be fast as it's just an HTTP call to reload config.
-	HotReloadTimeout = 1 * time.Minute
+	HotReloadTimeout = 2 * time.Minute
 
 	// RestartTimeout is the timeout for detecting pod restarts during rolling updates.
 	// Includes time for:
 	// - StatefulSet annotation change detection
 	// - Pod termination
 	// - New pod scheduling and startup
-	RestartTimeout = 3 * time.Minute
+	// Increased significantly for CI environments (GitHub Actions runners are slower)
+	RestartTimeout = 5 * time.Minute
 
 	// ResourceTimeout is the timeout for basic Kubernetes resource operations:
 	// - ConfigMap creation/update

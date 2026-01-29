@@ -79,10 +79,8 @@ spec:
   service:
     type: ClusterIP
     port: 8123
-  resources:
-    limits:
-      memory: "512Mi"
-`, haName, namespace)
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration CR")
@@ -146,10 +144,8 @@ spec:
   version: "stable"
   storage:
     size: "1Gi"
-  resources:
-    limits:
-      memory: "512Mi"
-`, haName, namespace)
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration CR")
@@ -203,14 +199,8 @@ spec:
   version: "stable"
   storage:
     size: "1Gi"
-  resources:
-    requests:
-      cpu: "100m"
-      memory: "256Mi"
-    limits:
-      cpu: "500m"
-      memory: "512Mi"
-`, haName, namespace)
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration with initial timezone")
@@ -330,14 +320,8 @@ spec:
     apiTokenSecretName: %s-homeassistant-api-token
     ownerName: "E2E Test Admin"
     language: "en"
-  resources:
-    requests:
-      cpu: "100m"
-      memory: "256Mi"
-    limits:
-      cpu: "500m"
-      memory: "512Mi"
-`, haName, namespace, bootstrapCertsSecret, haName)
+  %s
+`, haName, namespace, bootstrapCertsSecret, haName, utils.GetDefaultHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration with reloadable config")
@@ -469,14 +453,8 @@ spec:
   version: "stable"
   storage:
     size: "1Gi"
-  resources:
-    requests:
-      cpu: "100m"
-      memory: "256Mi"
-    limits:
-      cpu: "500m"
-      memory: "512Mi"
-`, haName, namespace)
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration instance")
@@ -583,10 +561,8 @@ spec:
   version: "stable"
   storage:
     size: "1Gi"
-  resources:
-    limits:
-      memory: "512Mi"
-`, haName, namespace)
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration with initial timezone")
