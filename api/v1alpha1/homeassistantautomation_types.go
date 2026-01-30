@@ -43,7 +43,6 @@ type AutomationTrigger struct {
 	// This allows any valid Home Assistant trigger type (platform, event, state, time, etc.)
 	// +kubebuilder:validation:Type=object
 	// +kubebuilder:pruning:PreserveUnknownFields
-	// +kubebuilder:validation:Required
 	runtime.RawExtension `json:",inline"`
 }
 
@@ -54,7 +53,6 @@ type AutomationCondition struct {
 	// This allows any valid Home Assistant condition type (state, numeric_state, time, etc.)
 	// +kubebuilder:validation:Type=object
 	// +kubebuilder:pruning:PreserveUnknownFields
-	// +kubebuilder:validation:Required
 	runtime.RawExtension `json:",inline"`
 }
 
@@ -65,7 +63,6 @@ type AutomationAction struct {
 	// This allows any valid Home Assistant action (service calls, delays, conditions, etc.)
 	// +kubebuilder:validation:Type=object
 	// +kubebuilder:pruning:PreserveUnknownFields
-	// +kubebuilder:validation:Required
 	runtime.RawExtension `json:",inline"`
 }
 

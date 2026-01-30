@@ -70,8 +70,6 @@ spec:
                   description: |-
                     AutomationAction defines an action to be executed by the automation
                     This is a flexible structure that accepts any valid Home Assistant action configuration
-                  required:
-                  - ""
                   type: object
                   x-kubernetes-preserve-unknown-fields: true
                 minItems: 1
@@ -94,8 +92,6 @@ spec:
                   description: |-
                     AutomationCondition defines a condition that must be met for the automation to execute
                     This is a flexible structure that accepts any valid Home Assistant condition configuration
-                  required:
-                  - ""
                   type: object
                   x-kubernetes-preserve-unknown-fields: true
                 type: array
@@ -164,8 +160,6 @@ spec:
                   description: |-
                     AutomationTrigger defines an event that will trigger the automation
                     This is a flexible structure that accepts any valid Home Assistant trigger configuration
-                  required:
-                  - ""
                   type: object
                   x-kubernetes-preserve-unknown-fields: true
                 minItems: 1
