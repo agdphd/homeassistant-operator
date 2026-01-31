@@ -125,7 +125,8 @@ type HomeAssistantConfigurationReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantconfigurations,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantconfigurations,verbs=get;list;watch
+// +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantconfigurations,verbs=create;update;patch;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantconfigurations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantconfigurations/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
@@ -152,24 +153,9 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 		Name:      config.Spec.HomeAssistantRef.Name,
 		Namespace: config.Namespace,
 	}
-	ha := &hav1alpha1.HomeAssistant{}
-	if err := r.Get(ctx, haRef, ha); err != nil {
-		if errors.IsNotFound(err) {
-			log.Error(err, "Referenced HomeAssistant not found", "name", haRef.Name)
-			meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
-				Type:               conditionTypeReady,
-				Status:             metav1.ConditionFalse,
-				Reason:             reasonInvalidConfig,
-				Message:            fmt.Sprintf("HomeAssistant %s not found", haRef.Name),
-				ObservedGeneration: config.Generation,
-			})
-			if err := r.Status().Update(ctx, config); err != nil {
-				log.Error(err, "Failed to update status")
-			}
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-		}
-		log.Error(err, "Failed to get HomeAssistant")
-		return ctrl.Result{}, err
+	ha, err := r.validateHomeAssistantRef(ctx, haRef, config)
+	if err != nil {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	// Calculate hash of the configuration
@@ -180,7 +166,10 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	var oldConfig string
 	configMapName := config.Spec.HomeAssistantRef.Name + generatedConfigmapSuffix
 	existingConfigMap := &corev1.ConfigMap{}
-	if err := r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: config.Namespace}, existingConfigMap); err == nil {
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      configMapName,
+		Namespace: config.Namespace,
+	}, existingConfigMap); err == nil {
 		oldConfig = existingConfigMap.Data[configurationYamlKey]
 	}
 
@@ -242,8 +231,12 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	return ctrl.Result{}, nil
 }
 
-// reconcileGeneratedConfigMap creates or updates the ConfigMap containing configuration.yaml
-func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(ctx context.Context, config *hav1alpha1.HomeAssistantConfiguration) error {
+// reconcileGeneratedConfigMap creates or updates the ConfigMap containing
+// configuration.yaml
+func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
+	ctx context.Context,
+	config *hav1alpha1.HomeAssistantConfiguration,
+) error {
 	log := logf.FromContext(ctx)
 
 	configMapName := config.Spec.HomeAssistantRef.Name + generatedConfigmapSuffix
@@ -356,7 +349,10 @@ func (r *HomeAssistantConfigurationReconciler) SetupWithManager(mgr ctrl.Manager
 }
 
 // getApiToken retrieves the API token from the bootstrap-created Secret
-func (r *HomeAssistantConfigurationReconciler) getApiToken(ctx context.Context, ha *hav1alpha1.HomeAssistant) (string, error) {
+func (r *HomeAssistantConfigurationReconciler) getApiToken(
+	ctx context.Context,
+	ha *hav1alpha1.HomeAssistant,
+) (string, error) {
 	log := logf.FromContext(ctx)
 
 	// Determine token secret name
@@ -615,7 +611,9 @@ func (r *HomeAssistantConfigurationReconciler) performHotReload(ctx context.Cont
 		return nil
 	}
 
-	log.Error(lastErr, "Configuration hot-reload failed after retries - timeout waiting for config sync", "maxRetries", maxRetries)
+	log.Error(lastErr,
+		"Configuration hot-reload failed after retries - timeout waiting for config sync",
+		"maxRetries", maxRetries)
 	return fmt.Errorf("timeout waiting for config sync: %w", lastErr)
 }
 
@@ -626,7 +624,13 @@ func (r *HomeAssistantConfigurationReconciler) performHotReload(ctx context.Cont
 
 // performConfigReload executes reload based on strategy
 // oldConfig parameter contains configuration content captured BEFORE ConfigMap update
-func (r *HomeAssistantConfigurationReconciler) performConfigReload(ctx context.Context, config *hav1alpha1.HomeAssistantConfiguration, ha *hav1alpha1.HomeAssistant, newHash string, oldConfig string) error {
+func (r *HomeAssistantConfigurationReconciler) performConfigReload(
+	ctx context.Context,
+	config *hav1alpha1.HomeAssistantConfiguration,
+	ha *hav1alpha1.HomeAssistant,
+	newHash string,
+	oldConfig string,
+) error {
 	log := logf.FromContext(ctx)
 
 	// Check if autoReload is enabled (default: true)
@@ -679,7 +683,10 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(ctx context.C
 
 		config.Status.LastReloadMethod = reloadMethodRestart
 		config.Status.LastError = ""
-		log.Info("Configuration reload: restart (updated ConfigMap hash to trigger StatefulSet rolling restart)", "hash", newHash)
+		log.Info(
+			"Configuration reload: restart "+
+				"(updated ConfigMap hash to trigger StatefulSet rolling restart)",
+			"hash", newHash)
 		return nil
 	}
 
@@ -737,7 +744,11 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(ctx context.C
 
 // updateConfigMapHashAnnotation updates the hash annotation on ConfigMap to trigger pod restart
 // This should ONLY be called when restart strategy is used, not during hot-reload
-func (r *HomeAssistantConfigurationReconciler) updateConfigMapHashAnnotation(ctx context.Context, config *hav1alpha1.HomeAssistantConfiguration, newHash string) error {
+func (r *HomeAssistantConfigurationReconciler) updateConfigMapHashAnnotation(
+	ctx context.Context,
+	config *hav1alpha1.HomeAssistantConfiguration,
+	newHash string,
+) error {
 	log := logf.FromContext(ctx)
 
 	configMapName := config.Spec.HomeAssistantRef.Name + generatedConfigmapSuffix
@@ -770,7 +781,10 @@ func (r *HomeAssistantConfigurationReconciler) updateConfigMapHashAnnotation(ctx
 
 // syncConfigMapFromCRD ensures ConfigMap matches CRD state (operator exclusivity)
 // This prevents external modifications to ConfigMap by restoring it to CRD state
-func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(ctx context.Context, config *hav1alpha1.HomeAssistantConfiguration) error {
+func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
+	ctx context.Context,
+	config *hav1alpha1.HomeAssistantConfiguration,
+) error {
 	log := logf.FromContext(ctx)
 
 	configMapName := config.Spec.HomeAssistantRef.Name + generatedConfigmapSuffix
@@ -837,8 +851,12 @@ func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(ctx context.
 	return nil
 }
 
-// findHomeAssistantConfigurationForConfigMap finds the HomeAssistantConfiguration that owns a given ConfigMap
-func (r *HomeAssistantConfigurationReconciler) findHomeAssistantConfigurationForConfigMap(ctx context.Context, obj client.Object) []reconcile.Request {
+// findHomeAssistantConfigurationForConfigMap finds the HomeAssistantConfiguration
+// that owns a given ConfigMap
+func (r *HomeAssistantConfigurationReconciler) findHomeAssistantConfigurationForConfigMap(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
 	configMap := obj.(*corev1.ConfigMap)
 
 	// Check if this ConfigMap is owned by a HomeAssistantConfiguration
@@ -857,4 +875,40 @@ func (r *HomeAssistantConfigurationReconciler) findHomeAssistantConfigurationFor
 	}
 
 	return []reconcile.Request{}
+}
+
+// validateHomeAssistantRef validates that referenced HomeAssistant exists
+// and sets appropriate status condition if not found
+func (r *HomeAssistantConfigurationReconciler) validateHomeAssistantRef(
+	ctx context.Context,
+	haRef types.NamespacedName,
+	config *hav1alpha1.HomeAssistantConfiguration,
+) (*hav1alpha1.HomeAssistant, error) {
+	log := logf.FromContext(ctx)
+
+	ha, err := getHomeAssistant(ctx, r.Client, haRef)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			log.Error(err, "Referenced HomeAssistant not found",
+				"name", haRef.Name)
+			meta.SetStatusCondition(&config.Status.Conditions,
+				metav1.Condition{
+					Type:   conditionTypeReady,
+					Status: metav1.ConditionFalse,
+					Reason: reasonInvalidConfig,
+					Message: fmt.Sprintf(
+						"HomeAssistant %s not found",
+						haRef.Name,
+					),
+					ObservedGeneration: config.Generation,
+				})
+			if err := r.Status().Update(ctx, config); err != nil {
+				log.Error(err, "Failed to update status")
+			}
+			return nil, err
+		}
+		log.Error(err, "Failed to get HomeAssistant")
+		return nil, err
+	}
+	return ha, nil
 }

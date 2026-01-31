@@ -314,8 +314,12 @@ func (r *HomeAssistantReconciler) reconcileStatefulSet(ctx context.Context, ha *
 	return nil
 }
 
-// getGeneratedConfigMapName returns the name of the auto-generated ConfigMap if HomeAssistantConfiguration exists
-func (r *HomeAssistantReconciler) getGeneratedConfigMapName(ctx context.Context, ha *hav1alpha1.HomeAssistant) (string, error) {
+// getGeneratedConfigMapName returns the name of the auto-generated ConfigMap if
+// HomeAssistantConfiguration exists
+func (r *HomeAssistantReconciler) getGeneratedConfigMapName(
+	ctx context.Context,
+	ha *hav1alpha1.HomeAssistant,
+) (string, error) {
 	log := logf.FromContext(ctx)
 
 	// List all HomeAssistantConfigurations in the same namespace
@@ -414,8 +418,12 @@ func (r *HomeAssistantReconciler) syncConfigHashFromConfigMap(
 	return nil
 }
 
-// getGeneratedSecretsName returns the name of the auto-generated Secret if HomeAssistantSecrets exists
-func (r *HomeAssistantReconciler) getGeneratedSecretsName(ctx context.Context, ha *hav1alpha1.HomeAssistant) (string, error) {
+// getGeneratedSecretsName returns the name of the auto-generated Secret if
+// HomeAssistantSecrets exists
+func (r *HomeAssistantReconciler) getGeneratedSecretsName(
+	ctx context.Context,
+	ha *hav1alpha1.HomeAssistant,
+) (string, error) {
 	log := logf.FromContext(ctx)
 
 	// List all HomeAssistantSecrets in the same namespace
@@ -438,7 +446,10 @@ func (r *HomeAssistantReconciler) getGeneratedSecretsName(ctx context.Context, h
 }
 
 // buildStatefulSet creates a StatefulSet spec for Home Assistant
-func (r *HomeAssistantReconciler) buildStatefulSet(ctx context.Context, ha *hav1alpha1.HomeAssistant) *appsv1.StatefulSet {
+func (r *HomeAssistantReconciler) buildStatefulSet(
+	ctx context.Context,
+	ha *hav1alpha1.HomeAssistant,
+) *appsv1.StatefulSet {
 	labels := r.labelsForHomeAssistant(ha)
 	replicas := int32(1)
 
@@ -651,7 +662,10 @@ func (r *HomeAssistantReconciler) reconcileService(ctx context.Context, ha *hav1
 
 	// Update Service if needed
 	desired := r.buildService(ha)
-	if svc.Spec.Type != desired.Spec.Type || len(svc.Spec.Ports) == 0 || len(desired.Spec.Ports) == 0 || svc.Spec.Ports[0].Port != desired.Spec.Ports[0].Port {
+	if svc.Spec.Type != desired.Spec.Type ||
+		len(svc.Spec.Ports) == 0 ||
+		len(desired.Spec.Ports) == 0 ||
+		svc.Spec.Ports[0].Port != desired.Spec.Ports[0].Port {
 		svc.Spec.Type = desired.Spec.Type
 		svc.Spec.Ports = desired.Spec.Ports
 		log.Info("Updating Service", "Service.Name", svc.Name)
@@ -713,7 +727,11 @@ func (r *HomeAssistantReconciler) labelsForHomeAssistant(ha *hav1alpha1.HomeAssi
 }
 
 // updateStatusFailed updates the status when reconciliation fails
-func (r *HomeAssistantReconciler) updateStatusFailed(ctx context.Context, ha *hav1alpha1.HomeAssistant, reconcileErr error) (ctrl.Result, error) {
+func (r *HomeAssistantReconciler) updateStatusFailed(
+	ctx context.Context,
+	ha *hav1alpha1.HomeAssistant,
+	reconcileErr error,
+) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	ha.Status.Phase = hav1alpha1.PhaseFailed
@@ -735,7 +753,10 @@ func (r *HomeAssistantReconciler) updateStatusFailed(ctx context.Context, ha *ha
 }
 
 // updateStatusFromStatefulSet updates the status based on StatefulSet state
-func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(ctx context.Context, ha *hav1alpha1.HomeAssistant) (ctrl.Result, error) {
+func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
+	ctx context.Context,
+	ha *hav1alpha1.HomeAssistant,
+) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
 	sts := &appsv1.StatefulSet{}
@@ -930,8 +951,12 @@ func (r *HomeAssistantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// findHomeAssistantForConfiguration finds the HomeAssistant that is referenced by a HomeAssistantConfiguration
-func (r *HomeAssistantReconciler) findHomeAssistantForConfiguration(ctx context.Context, obj client.Object) []reconcile.Request {
+// findHomeAssistantForConfiguration finds the HomeAssistant that is referenced by a
+// HomeAssistantConfiguration
+func (r *HomeAssistantReconciler) findHomeAssistantForConfiguration(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
 	haConfig := obj.(*hav1alpha1.HomeAssistantConfiguration)
 
 	// Return reconcile request for the referenced HomeAssistant
@@ -945,8 +970,12 @@ func (r *HomeAssistantReconciler) findHomeAssistantForConfiguration(ctx context.
 	}
 }
 
-// findHomeAssistantForSecrets finds the HomeAssistant that is referenced by a HomeAssistantSecrets
-func (r *HomeAssistantReconciler) findHomeAssistantForSecrets(ctx context.Context, obj client.Object) []reconcile.Request {
+// findHomeAssistantForSecrets finds the HomeAssistant that is referenced by a
+// HomeAssistantSecrets
+func (r *HomeAssistantReconciler) findHomeAssistantForSecrets(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
 	haSecrets := obj.(*hav1alpha1.HomeAssistantSecrets)
 
 	// Return reconcile request for the referenced HomeAssistant

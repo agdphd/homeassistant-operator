@@ -32,7 +32,7 @@ Every submission is valuable and helps us develop the project in the right direc
 
 ```bash
 # Requirements
-# - Go 1.24+
+# - Go 1.25+
 # - Docker
 # - kubectl
 # - k3d (for local testing)

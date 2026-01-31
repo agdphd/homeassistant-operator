@@ -16,11 +16,25 @@ limitations under the License.
 
 package controller
 
-// Shared constants used across multiple controllers
+import (
+	"context"
 
-const (
-	// Annotations
-	// configHashAnnotationKey - Used by both HomeAssistant and
-	// HomeAssistantConfiguration controllers
-	configHashAnnotationKey = "ha.homeassistant.io/config-hash"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
 )
+
+// getHomeAssistant retrieves a HomeAssistant CR by namespaced name
+// This is a common helper used across multiple controllers
+func getHomeAssistant(
+	ctx context.Context,
+	c client.Client,
+	haRef types.NamespacedName,
+) (*hav1alpha1.HomeAssistant, error) {
+	ha := &hav1alpha1.HomeAssistant{}
+	if err := c.Get(ctx, haRef, ha); err != nil {
+		return nil, err
+	}
+	return ha, nil
+}

@@ -425,7 +425,9 @@ var _ = Describe("CRD Short Names", func() {
 			Expect(k8sClient.Get(ctx, key, retrieved)).To(Succeed())
 
 			By("Verifying print column fields are accessible")
-			// Print columns are: HomeAssistant (spec.homeAssistantRef.name), Secrets (spec.secretRefs[*].name), Ready (status.conditions), Age (metadata.creationTimestamp)
+			// Print columns: HomeAssistant (spec.homeAssistantRef.name),
+			// Secrets (spec.secretRefs[*].name), Ready (status.conditions),
+			// Age (metadata.creationTimestamp)
 			Expect(retrieved.Spec.HomeAssistantRef.Name).To(Equal("test-ha-ref"))
 			Expect(retrieved.Spec.SecretRefs).To(HaveLen(1))
 			Expect(retrieved.ObjectMeta.CreationTimestamp).NotTo(BeNil())

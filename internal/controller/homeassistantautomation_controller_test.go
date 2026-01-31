@@ -45,7 +45,13 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 	var reconciler *HomeAssistantAutomationReconciler
 
 	// Helper to create a test automation CR
-	createTestAutomation := func(name string, haRef string, alias string, triggers []runtime.RawExtension, actions []runtime.RawExtension) *hav1alpha1.HomeAssistantAutomation {
+	createTestAutomation := func(
+		name string,
+		haRef string,
+		alias string,
+		triggers []runtime.RawExtension,
+		actions []runtime.RawExtension,
+	) *hav1alpha1.HomeAssistantAutomation {
 		triggerList := make([]hav1alpha1.AutomationTrigger, len(triggers))
 		for i, t := range triggers {
 			triggerList[i] = hav1alpha1.AutomationTrigger{RawExtension: t}
@@ -83,7 +89,10 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 	}
 
 	defaultAction := func() runtime.RawExtension {
-		return rawExt(map[string]interface{}{"service": "light.turn_on", "target": map[string]interface{}{"entity_id": "light.living_room"}})
+		return rawExt(map[string]interface{}{
+			"service": "light.turn_on",
+			"target":  map[string]interface{}{"entity_id": "light.living_room"},
+		})
 	}
 
 	reconcileAutomation := func(name string) (reconcile.Result, error) {
@@ -192,7 +201,11 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			By("Verifying status is Ready=True")
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-with-ha", Namespace: namespace}, updated)).To(Succeed())
+				g.Expect(k8sClient.Get(
+					ctx,
+					types.NamespacedName{Name: "auto-with-ha", Namespace: namespace},
+					updated,
+				)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
 				g.Expect(condition).NotTo(BeNil())
 				g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
@@ -239,8 +252,13 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 
 			By("Creating second automation")
 			auto2 := createTestAutomation("auto-agg-2", haName, "Motion Sensor",
-				[]runtime.RawExtension{rawExt(map[string]interface{}{"platform": "state", "entity_id": "binary_sensor.motion"})},
-				[]runtime.RawExtension{rawExt(map[string]interface{}{"service": "notify.notify", "data": map[string]interface{}{"message": "Motion detected"}})},
+				[]runtime.RawExtension{rawExt(map[string]interface{}{
+					"platform": "state", "entity_id": "binary_sensor.motion",
+				})},
+				[]runtime.RawExtension{rawExt(map[string]interface{}{
+					"service": "notify.notify",
+					"data":    map[string]interface{}{"message": "Motion detected"},
+				})},
 			)
 			Expect(k8sClient.Create(ctx, auto2)).To(Succeed())
 
@@ -427,14 +445,23 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			By("Creating automation with trigger, condition, and action")
 			auto := createTestAutomation("auto-full", haName, "Full Auto",
 				[]runtime.RawExtension{
-					rawExt(map[string]interface{}{"platform": "sun", "event": "sunset", "offset": "-00:30:00"}),
+					rawExt(map[string]interface{}{
+						"platform": "sun", "event": "sunset", "offset": "-00:30:00",
+					}),
 				},
 				[]runtime.RawExtension{
-					rawExt(map[string]interface{}{"service": "light.turn_on", "target": map[string]interface{}{"entity_id": "light.porch"}}),
+					rawExt(map[string]interface{}{
+						"service": "light.turn_on",
+						"target":  map[string]interface{}{"entity_id": "light.porch"},
+					}),
 				},
 			)
 			auto.Spec.Conditions = []hav1alpha1.AutomationCondition{
-				{RawExtension: rawExt(map[string]interface{}{"condition": "state", "entity_id": "input_boolean.guest_mode", "state": "on"})},
+				{RawExtension: rawExt(map[string]interface{}{
+					"condition": "state",
+					"entity_id": "input_boolean.guest_mode",
+					"state":     "on",
+				})},
 			}
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
@@ -563,7 +590,11 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			var firstHash string
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-hash-stable", Namespace: namespace}, updated)).To(Succeed())
+				g.Expect(k8sClient.Get(
+					ctx,
+					types.NamespacedName{Name: "auto-hash-stable", Namespace: namespace},
+					updated,
+				)).To(Succeed())
 				firstHash = updated.Status.AutomationHash
 				g.Expect(firstHash).NotTo(BeEmpty())
 			}, timeout, interval).Should(Succeed())
@@ -574,7 +605,11 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			By("Verifying hash did not change")
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-hash-stable", Namespace: namespace}, updated)).To(Succeed())
+				g.Expect(k8sClient.Get(
+					ctx,
+					types.NamespacedName{Name: "auto-hash-stable", Namespace: namespace},
+					updated,
+				)).To(Succeed())
 				g.Expect(updated.Status.AutomationHash).To(Equal(firstHash))
 			}, timeout, interval).Should(Succeed())
 		})
@@ -594,7 +629,11 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			var initialHash string
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}, updated)).To(Succeed())
+				g.Expect(k8sClient.Get(
+					ctx,
+					types.NamespacedName{Name: "auto-hash-change", Namespace: namespace},
+					updated,
+				)).To(Succeed())
 				initialHash = updated.Status.AutomationHash
 				g.Expect(initialHash).NotTo(BeEmpty())
 			}, timeout, interval).Should(Succeed())
@@ -602,7 +641,11 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			By("Updating triggers")
 			Eventually(func() error {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}, updated); err != nil {
+				if err := k8sClient.Get(
+					ctx,
+					types.NamespacedName{Name: "auto-hash-change", Namespace: namespace},
+					updated,
+				); err != nil {
 					return err
 				}
 				updated.Spec.Triggers = []hav1alpha1.AutomationTrigger{
@@ -618,7 +661,11 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			By("Verifying hash changed")
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}, updated)).To(Succeed())
+				g.Expect(k8sClient.Get(
+					ctx,
+					types.NamespacedName{Name: "auto-hash-change", Namespace: namespace},
+					updated,
+				)).To(Succeed())
 				g.Expect(updated.Status.AutomationHash).NotTo(Equal(initialHash))
 			}, timeout, interval).Should(Succeed())
 		})
@@ -641,7 +688,11 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			By("Verifying no lastReloadTime and no lastError")
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-no-reload", Namespace: namespace}, updated)).To(Succeed())
+				g.Expect(k8sClient.Get(
+					ctx,
+					types.NamespacedName{Name: "auto-no-reload", Namespace: namespace},
+					updated,
+				)).To(Succeed())
 				g.Expect(updated.Status.LastReloadTime).To(BeNil())
 				g.Expect(updated.Status.LastError).To(BeEmpty())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
@@ -665,7 +716,11 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			By("Verifying graceful skip with lastError set")
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-no-token", Namespace: namespace}, updated)).To(Succeed())
+				g.Expect(k8sClient.Get(
+					ctx,
+					types.NamespacedName{Name: "auto-no-token", Namespace: namespace},
+					updated,
+				)).To(Succeed())
 				g.Expect(updated.Status.LastError).To(ContainSubstring("API token"))
 				// Should still be Ready since reload failure is graceful
 				condition := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
@@ -847,7 +902,11 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			By("Disabling the automation")
 			Eventually(func() error {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "auto-disable", Namespace: namespace}, updated); err != nil {
+				if err := k8sClient.Get(
+					ctx,
+					types.NamespacedName{Name: "auto-disable", Namespace: namespace},
+					updated,
+				); err != nil {
 					return err
 				}
 				updated.Spec.Enabled = ptr.To(false)
@@ -906,7 +965,11 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			By("Verifying AutomationHash is set in status")
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-status-hash", Namespace: namespace}, updated)).To(Succeed())
+				g.Expect(k8sClient.Get(
+					ctx,
+					types.NamespacedName{Name: "auto-status-hash", Namespace: namespace},
+					updated,
+				)).To(Succeed())
 				g.Expect(updated.Status.AutomationHash).NotTo(BeEmpty())
 			}, timeout, interval).Should(Succeed())
 		})

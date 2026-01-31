@@ -60,7 +60,8 @@ type HomeAssistantAutomationReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantautomations,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantautomations,verbs=get;list;watch
+// +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantautomations,verbs=create;update;patch;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantautomations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantautomations/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
@@ -88,24 +89,9 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 		Name:      automation.Spec.HomeAssistantRef.Name,
 		Namespace: automation.Namespace,
 	}
-	ha := &hav1alpha1.HomeAssistant{}
-	if err := r.Get(ctx, haRef, ha); err != nil {
-		if errors.IsNotFound(err) {
-			log.Error(err, "Referenced HomeAssistant not found", "name", haRef.Name)
-			meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
-				Type:               conditionTypeReady,
-				Status:             metav1.ConditionFalse,
-				Reason:             reasonInvalidAutomation,
-				Message:            fmt.Sprintf("HomeAssistant %s not found", haRef.Name),
-				ObservedGeneration: automation.Generation,
-			})
-			if err := r.Status().Update(ctx, automation); err != nil {
-				log.Error(err, "Failed to update status")
-			}
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-		}
-		log.Error(err, "Failed to get HomeAssistant")
-		return ctrl.Result{}, err
+	ha, err := r.validateHomeAssistantRef(ctx, haRef, automation)
+	if err != nil {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	// Calculate hash of the automation
@@ -167,9 +153,13 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 	return ctrl.Result{}, nil
 }
 
-// reconcileAutomationsConfigMap creates or updates the aggregated automations.yaml ConfigMap
-// This ConfigMap contains ALL automations for a given HomeAssistant instance
-func (r *HomeAssistantAutomationReconciler) reconcileAutomationsConfigMap(ctx context.Context, automation *hav1alpha1.HomeAssistantAutomation) error {
+// reconcileAutomationsConfigMap creates or updates the aggregated
+// automations.yaml ConfigMap. This ConfigMap contains ALL automations
+// for a given HomeAssistant instance.
+func (r *HomeAssistantAutomationReconciler) reconcileAutomationsConfigMap(
+	ctx context.Context,
+	automation *hav1alpha1.HomeAssistantAutomation,
+) error {
 	log := logf.FromContext(ctx)
 
 	configMapName := automation.Spec.HomeAssistantRef.Name + generatedAutomationsSuffix
@@ -260,7 +250,9 @@ func (r *HomeAssistantAutomationReconciler) reconcileAutomationsConfigMap(ctx co
 }
 
 // automationToYaml converts HomeAssistantAutomation CR to YAML-compatible map
-func (r *HomeAssistantAutomationReconciler) automationToYaml(automation *hav1alpha1.HomeAssistantAutomation) (map[string]interface{}, error) {
+func (r *HomeAssistantAutomationReconciler) automationToYaml(
+	automation *hav1alpha1.HomeAssistantAutomation,
+) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
 
 	// ID
@@ -338,7 +330,12 @@ func (r *HomeAssistantAutomationReconciler) automationToYaml(automation *hav1alp
 }
 
 // performAutomationReload triggers hot-reload of automations via Home Assistant REST API
-func (r *HomeAssistantAutomationReconciler) performAutomationReload(ctx context.Context, automation *hav1alpha1.HomeAssistantAutomation, ha *hav1alpha1.HomeAssistant, newHash string) error {
+func (r *HomeAssistantAutomationReconciler) performAutomationReload(
+	ctx context.Context,
+	automation *hav1alpha1.HomeAssistantAutomation,
+	ha *hav1alpha1.HomeAssistant,
+	newHash string,
+) error {
 	log := logf.FromContext(ctx)
 
 	// Check if autoReload is enabled
@@ -373,7 +370,10 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(ctx context.
 	}
 
 	// Construct Home Assistant URL
-	haURL := fmt.Sprintf("http://%s-homeassistant.%s.svc.cluster.local:%d", ha.Name, ha.Namespace, defaultHomeAssistantPort)
+	haURL := fmt.Sprintf(
+		"http://%s-homeassistant.%s.svc.cluster.local:%d",
+		ha.Name, ha.Namespace, defaultHomeAssistantPort,
+	)
 	haClient := haclient.NewClient(haURL)
 
 	// Call automation reload endpoint
@@ -393,7 +393,9 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(ctx context.
 }
 
 // calculateAutomationHash computes SHA256 hash of the automation spec
-func (r *HomeAssistantAutomationReconciler) calculateAutomationHash(automation *hav1alpha1.HomeAssistantAutomation) (string, error) {
+func (r *HomeAssistantAutomationReconciler) calculateAutomationHash(
+	automation *hav1alpha1.HomeAssistantAutomation,
+) (string, error) {
 	// Convert spec to YAML for consistent hashing
 	yamlData, err := r.automationToYaml(automation)
 	if err != nil {
@@ -424,7 +426,10 @@ func (r *HomeAssistantAutomationReconciler) SetupWithManager(mgr ctrl.Manager) e
 
 // findAutomationsForHomeAssistant returns reconcile requests for all HomeAssistantAutomation
 // resources that reference the given HomeAssistant
-func (r *HomeAssistantAutomationReconciler) findAutomationsForHomeAssistant(ctx context.Context, obj client.Object) []reconcile.Request {
+func (r *HomeAssistantAutomationReconciler) findAutomationsForHomeAssistant(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
 	ha := obj.(*hav1alpha1.HomeAssistant)
 
 	automationList := &hav1alpha1.HomeAssistantAutomationList{}
@@ -445,4 +450,40 @@ func (r *HomeAssistantAutomationReconciler) findAutomationsForHomeAssistant(ctx 
 	}
 
 	return requests
+}
+
+// validateHomeAssistantRef validates that referenced HomeAssistant exists
+// and sets appropriate status condition if not found
+func (r *HomeAssistantAutomationReconciler) validateHomeAssistantRef(
+	ctx context.Context,
+	haRef types.NamespacedName,
+	automation *hav1alpha1.HomeAssistantAutomation,
+) (*hav1alpha1.HomeAssistant, error) {
+	log := logf.FromContext(ctx)
+
+	ha, err := getHomeAssistant(ctx, r.Client, haRef)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			log.Error(err, "Referenced HomeAssistant not found",
+				"name", haRef.Name)
+			meta.SetStatusCondition(&automation.Status.Conditions,
+				metav1.Condition{
+					Type:   conditionTypeReady,
+					Status: metav1.ConditionFalse,
+					Reason: reasonInvalidAutomation,
+					Message: fmt.Sprintf(
+						"HomeAssistant %s not found",
+						haRef.Name,
+					),
+					ObservedGeneration: automation.Generation,
+				})
+			if err := r.Status().Update(ctx, automation); err != nil {
+				log.Error(err, "Failed to update status")
+			}
+			return nil, err
+		}
+		log.Error(err, "Failed to get HomeAssistant")
+		return nil, err
+	}
+	return ha, nil
 }
