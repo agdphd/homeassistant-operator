@@ -125,8 +125,8 @@ setup-test-e2e: ## Set up a k3d cluster for e2e tests (always creates fresh clus
 	@command -v k3d >/dev/null 2>&1 || { echo "k3d is not installed. Install with: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash"; exit 1; }
 	@echo "Ensuring clean k3d cluster state..."
 	@k3d cluster delete $(K3D_CLUSTER_E2E) 2>/dev/null || true
-	@echo "Creating fresh k3d cluster $(K3D_CLUSTER_E2E)..."
-	@k3d cluster create $(K3D_CLUSTER_E2E) --agents 1
+	@echo "Creating fresh k3d cluster $(K3D_CLUSTER_E2E) with enhanced resources..."
+	@k3d cluster create $(K3D_CLUSTER_E2E) --agents 0 --servers-memory 8g
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run e2e tests on k3d cluster
@@ -147,7 +147,7 @@ K3D_CLUSTER ?= ha-operator-test
 .PHONY: k3d-create
 k3d-create: ## Create a k3d cluster for testing
 	@command -v k3d >/dev/null 2>&1 || { echo "k3d is not installed. Install with: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash"; exit 1; }
-	@k3d cluster list | grep -q $(K3D_CLUSTER) && echo "Cluster $(K3D_CLUSTER) already exists" || k3d cluster create $(K3D_CLUSTER) --agents 1
+	@k3d cluster list | grep -q $(K3D_CLUSTER) && echo "Cluster $(K3D_CLUSTER) already exists" || k3d cluster create $(K3D_CLUSTER) --agents 0 --servers-memory 8g
 
 .PHONY: k3d-delete
 k3d-delete: ## Delete the k3d test cluster

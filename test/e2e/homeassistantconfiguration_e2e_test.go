@@ -200,7 +200,7 @@ spec:
   storage:
     size: "1Gi"
   %s
-`, haName, namespace, utils.GetDefaultHAResourceRequests())
+`, haName, namespace, utils.GetEnhancedHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration with initial timezone")
@@ -321,7 +321,7 @@ spec:
     ownerName: "E2E Test Admin"
     language: "en"
   %s
-`, haName, namespace, bootstrapCertsSecret, haName, utils.GetDefaultHAResourceRequests())
+`, haName, namespace, bootstrapCertsSecret, haName, utils.GetEnhancedHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration with reloadable config")
@@ -454,7 +454,7 @@ spec:
   storage:
     size: "1Gi"
   %s
-`, haName, namespace, utils.GetDefaultHAResourceRequests())
+`, haName, namespace, utils.GetEnhancedHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration instance")
