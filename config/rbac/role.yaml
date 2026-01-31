@@ -78,4 +78,6 @@ rules:
   resources:
   - homeassistantsecrets
   verbs:
-  - '*'
+  - get
+  - list
+  - watch

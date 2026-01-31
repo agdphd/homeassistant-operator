@@ -61,7 +61,7 @@ type HomeAssistantSecretsReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantsecrets,verbs=*
+// +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantsecrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantsecrets/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantsecrets/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete

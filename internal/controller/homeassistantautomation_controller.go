@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -86,7 +87,7 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 	}
 
 	// Handle finalizer for proper cleanup
-	if !automation.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !automation.DeletionTimestamp.IsZero() {
 		// Resource is being deleted
 		if controllerutil.ContainsFinalizer(automation, automationFinalizerName) {
 			log.Info("Handling deletion - regenerating ConfigMap without this automation")
@@ -213,7 +214,7 @@ func (r *HomeAssistantAutomationReconciler) reconcileAutomationsConfigMap(
 			continue
 		}
 		// Skip automations being deleted
-		if !auto.ObjectMeta.DeletionTimestamp.IsZero() {
+		if !auto.DeletionTimestamp.IsZero() {
 			log.Info("Skipping automation being deleted", "name", auto.Name)
 			continue
 		}
@@ -255,24 +256,28 @@ func (r *HomeAssistantAutomationReconciler) reconcileAutomationsConfigMap(
 		},
 	}
 
+	// Get HomeAssistant to set owner reference
+	ha := &hav1alpha1.HomeAssistant{}
+	haRef := types.NamespacedName{Name: automation.Spec.HomeAssistantRef.Name, Namespace: automation.Namespace}
+	if err := r.Get(ctx, haRef, ha); err != nil {
+		// If HA doesn't exist, we can't create/update ConfigMap with proper owner reference
+		// This is expected during cleanup/deletion scenarios
+		if errors.IsNotFound(err) {
+			log.V(1).Info("HomeAssistant not found, skipping ConfigMap reconciliation", "ha", haRef.Name)
+			return nil
+		}
+		return fmt.Errorf("failed to get HomeAssistant: %w", err)
+	}
+
+	// Set owner reference to HomeAssistant (not to individual automation)
+	if err := controllerutil.SetControllerReference(ha, configMap, r.Scheme); err != nil {
+		return fmt.Errorf("failed to set owner reference: %w", err)
+	}
+
 	// Check if ConfigMap exists
 	existingConfigMap := &corev1.ConfigMap{}
 	err = r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: automation.Namespace}, existingConfigMap)
 	if err != nil && errors.IsNotFound(err) {
-		// ConfigMap doesn't exist, need to create it with owner reference
-		// Set owner reference to HomeAssistant (not to individual automation)
-		ha := &hav1alpha1.HomeAssistant{}
-		haRef := types.NamespacedName{Name: automation.Spec.HomeAssistantRef.Name, Namespace: automation.Namespace}
-		if err := r.Get(ctx, haRef, ha); err != nil {
-			// If HA doesn't exist, we can't create ConfigMap with proper owner reference
-			// This is expected during cleanup/deletion scenarios
-			log.V(1).Info("HomeAssistant not found, skipping ConfigMap creation", "ha", haRef.Name)
-			return nil
-		}
-		if err := controllerutil.SetControllerReference(ha, configMap, r.Scheme); err != nil {
-			return fmt.Errorf("failed to set owner reference: %w", err)
-		}
-
 		// Create new ConfigMap
 		log.Info("Creating automations ConfigMap", "name", configMapName)
 		if err := r.Create(ctx, configMap); err != nil {
@@ -283,22 +288,32 @@ func (r *HomeAssistantAutomationReconciler) reconcileAutomationsConfigMap(
 		return fmt.Errorf("failed to get existing ConfigMap: %w", err)
 	}
 
-	// Compare existing data with new data to avoid unnecessary updates
-	dataChanged := false
-	if existingData, ok := existingConfigMap.Data[automationsYamlKey]; !ok || existingData != configMap.Data[automationsYamlKey] {
-		dataChanged = true
+	// Compare Data, Labels and OwnerReferences to determine if update is needed
+	needsUpdate := false
+	if !reflect.DeepEqual(existingConfigMap.Data, configMap.Data) {
+		needsUpdate = true
+		log.V(1).Info("ConfigMap Data changed")
+	}
+	if !reflect.DeepEqual(existingConfigMap.Labels, configMap.Labels) {
+		needsUpdate = true
+		log.V(1).Info("ConfigMap Labels changed")
+	}
+	if !reflect.DeepEqual(existingConfigMap.OwnerReferences, configMap.OwnerReferences) {
+		needsUpdate = true
+		log.V(1).Info("ConfigMap OwnerReferences changed")
 	}
 
-	// Only update if data actually changed
-	if dataChanged {
+	// Only update if something actually changed
+	if needsUpdate {
 		existingConfigMap.Data = configMap.Data
 		existingConfigMap.Labels = configMap.Labels
-		log.Info("Updating automations ConfigMap (data changed)", "name", configMapName)
+		existingConfigMap.OwnerReferences = configMap.OwnerReferences
+		log.Info("Updating automations ConfigMap", "name", configMapName)
 		if err := r.Update(ctx, existingConfigMap); err != nil {
 			return fmt.Errorf("failed to update ConfigMap: %w", err)
 		}
 	} else {
-		log.V(1).Info("ConfigMap data unchanged, skipping update", "name", configMapName)
+		log.V(1).Info("ConfigMap unchanged, skipping update", "name", configMapName)
 	}
 
 	return nil
@@ -381,10 +396,12 @@ func (r *HomeAssistantAutomationReconciler) automationToYaml(
 		result["initial_state"] = *automation.Spec.InitialState
 	}
 
-	// Enabled - include in hash so toggling triggers reload
+	// Enabled - always include in hash so toggling triggers reload (default: true)
+	enabled := true
 	if automation.Spec.Enabled != nil {
-		result["enabled"] = *automation.Spec.Enabled
+		enabled = *automation.Spec.Enabled
 	}
+	result["enabled"] = enabled
 
 	return result, nil
 }
@@ -411,7 +428,8 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 	}
 
 	// Get API token from bootstrap secret
-	tokenSecretName := ha.Name + "-api-token"
+	// Secret name matches bootstrap controller's naming: ha.Name + "-homeassistant-api-token"
+	tokenSecretName := ha.Name + "-homeassistant-api-token"
 	tokenSecret := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Name: tokenSecretName, Namespace: ha.Namespace}, tokenSecret); err != nil {
 		if errors.IsNotFound(err) {
@@ -430,8 +448,9 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 	}
 
 	// Construct Home Assistant URL
+	// Service name matches the HomeAssistant CR name (see homeassistant_controller.go buildService)
 	haURL := fmt.Sprintf(
-		"http://%s-homeassistant.%s.svc.cluster.local:%d",
+		"http://%s.%s.svc.cluster.local:%d",
 		ha.Name, ha.Namespace, defaultHomeAssistantPort,
 	)
 	haClient := haclient.NewClient(haURL)

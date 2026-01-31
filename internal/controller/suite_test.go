@@ -64,9 +64,13 @@ var _ = BeforeSuite(func() {
 	// +kubebuilder:scaffold:scheme
 
 	By("bootstrapping test environment")
+	// Default to strict CRD checking (fail fast on missing CRDs)
+	// Can be disabled by setting SKIP_MISSING_CRD_ERRORS=true
+	errorIfCRDPathMissing := os.Getenv("SKIP_MISSING_CRD_ERRORS") != "true"
+
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
-		ErrorIfCRDPathMissing: false,
+		ErrorIfCRDPathMissing: errorIfCRDPathMissing,
 	}
 
 	// Retrieve the first found binary directory to allow running tests from IDEs
