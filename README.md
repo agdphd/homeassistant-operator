@@ -36,7 +36,7 @@ The Home Assistant Operator automates the deployment and lifecycle management of
 
 - Kubernetes cluster (v1.24+)
 - kubectl configured to access your cluster
-- For development: Go 1.24+, Docker
+- For development: Go 1.25+, Docker
 
 ### Installation
 

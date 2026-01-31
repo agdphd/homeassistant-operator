@@ -9,9 +9,6 @@ updates:
       time: "23:00"
       timezone: "UTC"
     open-pull-requests-limit: 10
-    labels:
-      - "dependencies"
-      - "go"
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
@@ -25,9 +22,6 @@ updates:
       time: "23:00"
       timezone: "UTC"
     open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "github-actions"
     commit-message:
       prefix: "chore(ci)"
       include: "scope"
@@ -41,9 +35,6 @@ updates:
       time: "23:00"
       timezone: "UTC"
     open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-      - "docker"
     commit-message:
       prefix: "chore(docker)"
       include: "scope"

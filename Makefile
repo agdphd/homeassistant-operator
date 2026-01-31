@@ -125,8 +125,8 @@ setup-test-e2e: ## Set up a k3d cluster for e2e tests (always creates fresh clus
 	@command -v k3d >/dev/null 2>&1 || { echo "k3d is not installed. Install with: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash"; exit 1; }
 	@echo "Ensuring clean k3d cluster state..."
 	@k3d cluster delete $(K3D_CLUSTER_E2E) 2>/dev/null || true
-	@echo "Creating fresh k3d cluster $(K3D_CLUSTER_E2E)..."
-	@k3d cluster create $(K3D_CLUSTER_E2E) --agents 1
+	@echo "Creating fresh k3d cluster $(K3D_CLUSTER_E2E) with enhanced resources..."
+	@k3d cluster create $(K3D_CLUSTER_E2E) --agents 0 --servers-memory 8g
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run e2e tests on k3d cluster
@@ -147,7 +147,7 @@ K3D_CLUSTER ?= ha-operator-test
 .PHONY: k3d-create
 k3d-create: ## Create a k3d cluster for testing
 	@command -v k3d >/dev/null 2>&1 || { echo "k3d is not installed. Install with: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash"; exit 1; }
-	@k3d cluster list | grep -q $(K3D_CLUSTER) && echo "Cluster $(K3D_CLUSTER) already exists" || k3d cluster create $(K3D_CLUSTER) --agents 1
+	@k3d cluster list | grep -q $(K3D_CLUSTER) && echo "Cluster $(K3D_CLUSTER) already exists" || k3d cluster create $(K3D_CLUSTER) --agents 0 --servers-memory 8g
 
 .PHONY: k3d-delete
 k3d-delete: ## Delete the k3d test cluster
@@ -180,6 +180,11 @@ lint-config: golangci-lint ## Verify golangci-lint linter configuration
 security-check: ## Run govulncheck to scan for vulnerabilities
 	@echo "Running govulncheck..."
 	@go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+.PHONY: dupl-check
+dupl-check: ## Check for duplicate code (excluding tests and generated files)
+	@echo "Checking for code duplication..."
+	@golangci-lint run --enable-only=dupl
 
 ##@ Build
 
@@ -269,7 +274,7 @@ CONTROLLER_TOOLS_VERSION ?= v0.18.0
 ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
-GOLANGCI_LINT_VERSION ?= v2.1.0
+GOLANGCI_LINT_VERSION ?= v2.8.0
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.

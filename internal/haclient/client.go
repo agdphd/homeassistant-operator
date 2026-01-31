@@ -198,7 +198,11 @@ func (c *Client) ExchangeAuthCode(ctx context.Context, authCode, clientID string
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		// Connection errors indicate HA not responding - use NotReady type for retry
-		return nil, &Error{Type: ErrorTypeNotReady, Message: "failed to exchange auth code: Home Assistant not responding", Err: err}
+		return nil, &Error{
+			Type:    ErrorTypeNotReady,
+			Message: "failed to exchange auth code: Home Assistant not responding",
+			Err:     err,
+		}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -225,7 +229,11 @@ func (c *Client) ExchangeAuthCode(ctx context.Context, authCode, clientID string
 
 // CreateLongLivedToken creates a long-lived access token via WebSocket API
 // Home Assistant requires WebSocket for creating long-lived tokens
-func (c *Client) CreateLongLivedToken(ctx context.Context, accessToken string, req *LongLivedTokenRequest) (*LongLivedTokenResponse, error) {
+func (c *Client) CreateLongLivedToken(
+	ctx context.Context,
+	accessToken string,
+	req *LongLivedTokenRequest,
+) (*LongLivedTokenResponse, error) {
 	// Convert HTTP URL to WebSocket URL
 	wsURL := strings.Replace(c.baseURL, "http://", "ws://", 1)
 	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
@@ -403,7 +411,11 @@ type BootstrapOptions struct {
 // 6. Exchange auth code for token
 // 7. Create long-lived token (if requested)
 // Returns the long-lived token or empty string if not created
-func (c *Client) PerformBootstrap(ctx context.Context, username, password, ownerName, language string, opts *BootstrapOptions) (string, error) {
+func (c *Client) PerformBootstrap(
+	ctx context.Context,
+	username, password, ownerName, language string,
+	opts *BootstrapOptions,
+) (string, error) {
 	if opts == nil {
 		opts = &BootstrapOptions{}
 	}
@@ -471,7 +483,12 @@ func (c *Client) PerformBootstrap(ctx context.Context, username, password, owner
 // Returns nil if config is valid, error if invalid
 // Requires authenticated API call with long-lived token
 func (c *Client) CheckConfig(ctx context.Context, token string) error {
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/services/homeassistant/check_config", bytes.NewReader([]byte("{}")))
+	httpReq, err := http.NewRequestWithContext(
+		ctx,
+		"POST",
+		c.baseURL+"/api/services/homeassistant/check_config",
+		bytes.NewReader([]byte("{}")),
+	)
 	if err != nil {
 		return &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
 	}
@@ -554,13 +571,26 @@ func (c *Client) CheckConfig(ctx context.Context, token string) error {
 	}
 }
 
-// ReloadCoreConfig triggers a hot-reload of Home Assistant core configuration
-// Returns nil if reload successful, error if failed
-// Requires authenticated API call with long-lived token
-func (c *Client) ReloadCoreConfig(ctx context.Context, token string) error {
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/services/homeassistant/reload_core_config", bytes.NewReader([]byte("{}")))
+// postServiceWithToken sends a POST request to a Home Assistant service
+// endpoint with token authentication
+func (c *Client) postServiceWithToken(
+	ctx context.Context,
+	endpoint string,
+	token string,
+	errorMsg string,
+) error {
+	httpReq, err := http.NewRequestWithContext(
+		ctx,
+		"POST",
+		c.baseURL+endpoint,
+		bytes.NewReader([]byte("{}")),
+	)
 	if err != nil {
-		return &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
+		return &Error{
+			Type:    ErrorTypeHTTP,
+			Message: "failed to create request",
+			Err:     err,
+		}
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+token)
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -568,7 +598,11 @@ func (c *Client) ReloadCoreConfig(ctx context.Context, token string) error {
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return &Error{Type: ErrorTypeHTTP, Message: "failed to reload config", Err: err}
+		return &Error{
+			Type:    ErrorTypeHTTP,
+			Message: errorMsg,
+			Err:     err,
+		}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -576,10 +610,40 @@ func (c *Client) ReloadCoreConfig(ctx context.Context, token string) error {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return &Error{
 			Type:       ErrorTypeHTTP,
-			Message:    fmt.Sprintf("reload failed: %s", string(bodyBytes)),
+			Message:    fmt.Sprintf("%s: %s", errorMsg, string(bodyBytes)),
 			StatusCode: resp.StatusCode,
 		}
 	}
 
 	return nil
+}
+
+// ReloadCoreConfig triggers a hot-reload of Home Assistant core
+// configuration. Returns nil if reload successful, error if failed.
+// Requires authenticated API call with long-lived token.
+func (c *Client) ReloadCoreConfig(
+	ctx context.Context,
+	token string,
+) error {
+	return c.postServiceWithToken(
+		ctx,
+		"/api/services/homeassistant/reload_core_config",
+		token,
+		"failed to reload config",
+	)
+}
+
+// ReloadAutomations triggers a hot-reload of Home Assistant automations.
+// Returns nil if reload successful, error if failed.
+// Requires authenticated API call with long-lived token.
+func (c *Client) ReloadAutomations(
+	ctx context.Context,
+	token string,
+) error {
+	return c.postServiceWithToken(
+		ctx,
+		"/api/services/automation/reload",
+		token,
+		"failed to reload automations",
+	)
 }

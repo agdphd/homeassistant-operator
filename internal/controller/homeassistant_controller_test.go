@@ -1118,7 +1118,8 @@ var _ = Describe("HomeAssistant Controller", func() {
 						break
 					}
 				}
-				g.Expect(hasConfigVolume).To(BeTrue(), "StatefulSet should mount ConfigMap volume with name <ha-name>-configuration")
+				g.Expect(hasConfigVolume).To(BeTrue(),
+					"StatefulSet should mount ConfigMap volume with name <ha-name>-configuration")
 
 				// Check volume mounts
 				container := sts.Spec.Template.Spec.Containers[0]

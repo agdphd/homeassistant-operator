@@ -1364,7 +1364,9 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 				g.Expect(cm.Data["configuration.yaml"]).To(ContainSubstring("automation: []"))
 				// Hash annotation should STILL NOT be set (hot-reload doesn't trigger restart)
 				if cm.Annotations != nil {
-					g.Expect(cm.Annotations).NotTo(HaveKey("ha.homeassistant.io/config-hash"), "Hash annotation should NOT be set for hot-reload")
+					g.Expect(cm.Annotations).NotTo(
+						HaveKey("ha.homeassistant.io/config-hash"),
+						"Hash annotation should NOT be set for hot-reload")
 				}
 			}, timeout, interval).Should(Succeed())
 
@@ -1447,7 +1449,9 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 				g.Expect(cm.Data["configuration.yaml"]).To(ContainSubstring("Home Updated"))
 				// Hash annotation should STILL NOT be set (no reload when autoReload disabled)
 				if cm.Annotations != nil {
-					g.Expect(cm.Annotations).NotTo(HaveKey("ha.homeassistant.io/config-hash"), "Hash annotation should NOT be set when autoReload disabled")
+					g.Expect(cm.Annotations).NotTo(
+						HaveKey("ha.homeassistant.io/config-hash"),
+						"Hash annotation should NOT be set when autoReload disabled")
 				}
 			}, timeout, interval).Should(Succeed())
 
