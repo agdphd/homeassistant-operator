@@ -124,12 +124,22 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 	})
 
 	AfterEach(func() {
-		// Cleanup HomeAssistantAutomation resources
+		// Cleanup HomeAssistantAutomation resources first (before HA)
 		autoList := &hav1alpha1.HomeAssistantAutomationList{}
 		_ = k8sClient.List(ctx, autoList, &client.ListOptions{Namespace: namespace})
 		for _, auto := range autoList.Items {
-			_ = k8sClient.Delete(ctx, &auto)
+			autoToDelete := auto // Create a copy for the closure
+			_ = k8sClient.Delete(ctx, &autoToDelete)
+			// Trigger reconcile to handle finalizer cleanup
+			_, _ = reconcileAutomation(autoToDelete.Name)
 		}
+
+		// Wait for automations to be fully deleted
+		Eventually(func() int {
+			autoList := &hav1alpha1.HomeAssistantAutomationList{}
+			_ = k8sClient.List(ctx, autoList, &client.ListOptions{Namespace: namespace})
+			return len(autoList.Items)
+		}, timeout, interval).Should(Equal(0))
 
 		// Cleanup ConfigMaps
 		cmList := &corev1.ConfigMapList{}
@@ -145,19 +155,12 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			_ = k8sClient.Delete(ctx, &secret)
 		}
 
-		// Cleanup HomeAssistant
+		// Cleanup HomeAssistant last (after automations are gone)
 		haList := &hav1alpha1.HomeAssistantList{}
 		_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
 		for _, ha := range haList.Items {
 			_ = k8sClient.Delete(ctx, &ha)
 		}
-
-		// Wait for automation resources to be deleted
-		Eventually(func() int {
-			autoList := &hav1alpha1.HomeAssistantAutomationList{}
-			_ = k8sClient.List(ctx, autoList, &client.ListOptions{Namespace: namespace})
-			return len(autoList.Items)
-		}, timeout, interval).Should(Equal(0))
 	})
 
 	Context("When validating HomeAssistant reference", func() {
@@ -808,6 +811,11 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			toDelete := &hav1alpha1.HomeAssistantAutomation{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-del-1", Namespace: namespace}, toDelete)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, toDelete)).To(Succeed())
+
+			By("Reconciling to handle finalizer cleanup")
+			_, err = reconcileAutomation("auto-del-1")
+			Expect(err).NotTo(HaveOccurred())
+
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, types.NamespacedName{Name: "auto-del-1", Namespace: namespace}, toDelete)
 				return err != nil
