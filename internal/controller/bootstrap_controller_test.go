@@ -287,7 +287,8 @@ var _ = Describe("Bootstrap Controller", func() {
 				// Should have bootstrap status with error
 				g.Expect(fetchedHA.Status.Bootstrap).NotTo(BeNil())
 				g.Expect(fetchedHA.Status.Bootstrap.Completed).Should(BeFalse())
-				g.Expect(fetchedHA.Status.Bootstrap.Message).Should(ContainSubstring("bootstrap credentials secretRef required when enabled"))
+				g.Expect(fetchedHA.Status.Bootstrap.Message).Should(
+					ContainSubstring("bootstrap credentials secretRef required when enabled"))
 
 				// Check condition
 				condition := meta.FindStatusCondition(fetchedHA.Status.Conditions, "BootstrapReady")
