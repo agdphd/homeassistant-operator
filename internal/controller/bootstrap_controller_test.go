@@ -287,7 +287,7 @@ var _ = Describe("Bootstrap Controller", func() {
 				// Should have bootstrap status with error
 				g.Expect(fetchedHA.Status.Bootstrap).NotTo(BeNil())
 				g.Expect(fetchedHA.Status.Bootstrap.Completed).Should(BeFalse())
-				g.Expect(fetchedHA.Status.Bootstrap.Message).Should(ContainSubstring("secretRef is required"))
+				g.Expect(fetchedHA.Status.Bootstrap.Message).Should(ContainSubstring("bootstrap credentials secretRef required when enabled"))
 
 				// Check condition
 				condition := meta.FindStatusCondition(fetchedHA.Status.Conditions, "BootstrapReady")
@@ -734,7 +734,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			By("Verifying validation fails")
 			err := reconciler.validateBootstrapConfig(ha)
 			Expect(err).Should(HaveOccurred())
-			Expect(err.Error()).Should(ContainSubstring("secretRef is required"))
+			Expect(err.Error()).Should(ContainSubstring("bootstrap credentials secretRef required when enabled"))
 		})
 
 		It("Should fail validation when secretRef is nil", func() {
@@ -759,7 +759,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			By("Verifying validation fails")
 			err := reconciler.validateBootstrapConfig(ha)
 			Expect(err).Should(HaveOccurred())
-			Expect(err.Error()).Should(ContainSubstring("secretRef is required"))
+			Expect(err.Error()).Should(ContainSubstring("bootstrap credentials secretRef required when enabled"))
 		})
 
 		It("Should fail validation when secret name is empty", func() {

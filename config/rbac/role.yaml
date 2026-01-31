@@ -45,7 +45,6 @@ rules:
   - homeassistantautomations
   - homeassistantconfigurations
   - homeassistants
-  - homeassistantsecrets
   verbs:
   - create
   - delete
@@ -74,3 +73,9 @@ rules:
   - get
   - patch
   - update
+- apiGroups:
+  - ha.homeassistant.io
+  resources:
+  - homeassistantsecrets
+  verbs:
+  - '*'
