@@ -99,6 +99,10 @@ var _ = BeforeSuite(func() {
 		cmd = exec.Command("kubectl", "get", "crd", "homeassistantsecrets.ha.homeassistant.io")
 		_, err = utils.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred(), "HomeAssistantSecrets CRD should exist")
+
+		cmd = exec.Command("kubectl", "get", "crd", "homeassistantautomations.ha.homeassistant.io")
+		_, err = utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "HomeAssistantAutomation CRD should exist")
 	}, 30*time.Second, 2*time.Second).Should(Succeed(), "All CRDs should be installed and available")
 
 	By("creating controller namespace")

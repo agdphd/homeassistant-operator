@@ -65,10 +65,10 @@ spec:
                       If not specified, analytics is disabled by default
                     type: boolean
                   apiTokenSecretName:
-                    default: homeassistant-api-token
                     description: |-
                       ApiTokenSecretName is the name of the Secret where the API token will be stored
                       The Secret will have a "token" key containing the long-lived access token
+                      If not specified, defaults to "{homeassistant-name}-homeassistant-api-token"
                     type: string
                   createApiToken:
                     default: true
@@ -198,7 +198,7 @@ spec:
                       Claims lists the names of resources, defined in spec.resourceClaims,
                       that are used by this container.
 
-                      This is an alpha field and requires enabling the
+                      This field depends on the
                       DynamicResourceAllocation feature gate.
 
                       This field is immutable. It can only be set for containers.

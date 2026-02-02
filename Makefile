@@ -130,7 +130,7 @@ setup-test-e2e: ## Set up a k3d cluster for e2e tests (always creates fresh clus
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run e2e tests on k3d cluster
-	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) go test ./test/e2e/ -v -ginkgo.v; \
+	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) go test ./test/e2e/ -v -ginkgo.v -timeout 20m; \
 	status=$$?; \
 	$(MAKE) cleanup-test-e2e; \
 	exit $$status

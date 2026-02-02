@@ -61,7 +61,10 @@ var _ = Describe("HomeAssistantConfiguration E2E", Label("configuration"), Order
 		}
 
 		By("Deleting test namespace: " + namespace)
-		_ = utils.DeleteNamespace(namespace)
+		if err := utils.DeleteNamespace(namespace); err != nil {
+			// Log error but don't fail the test - cleanup is best effort
+			fmt.Printf("Warning: failed to delete namespace %s: %v\n", namespace, err)
+		}
 	})
 
 	Context("ConfigMap Operations", Label("fast"), func() {
