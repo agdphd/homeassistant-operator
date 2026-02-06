@@ -49,7 +49,7 @@ var _ = Describe("HomeAssistantAutomation E2E", Ordered, func() {
 		specReport := CurrentSpecReport()
 		if specReport.Failed() {
 			By("Test failed - collecting debug info")
-			collectAutomationDebugInfo(namespace, haName, configName, automationName)
+			collectAutomationDebugInfo(namespace, haName, automationName)
 		}
 
 		By("Deleting test namespace: " + namespace)
@@ -1271,7 +1271,7 @@ spec:
 })
 
 // collectAutomationDebugInfo collects debug information when automation test fails
-func collectAutomationDebugInfo(namespace, haName, configName, automationName string) {
+func collectAutomationDebugInfo(namespace, haName, automationName string) {
 	fmt.Println("\n=== DEBUG INFO: HomeAssistantAutomation Test Failed ===")
 
 	// Automation CR describe

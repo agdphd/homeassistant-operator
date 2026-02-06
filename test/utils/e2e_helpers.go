@@ -67,7 +67,10 @@ func DeleteNamespace(namespace string) error {
 		// Attempt force delete by removing finalizers
 		fmt.Printf("Warning: namespace %s deletion failed, attempting force delete...\n", namespace)
 		if forceErr := ForceDeleteNamespace(namespace); forceErr != nil {
-			return fmt.Errorf("failed to delete namespace %s (normal delete failed: %v, force delete failed: %v)", namespace, err, forceErr)
+			return fmt.Errorf(
+				"failed to delete namespace %s (normal delete failed: %v, force delete failed: %v)",
+				namespace, err, forceErr,
+			)
 		}
 	}
 	return nil
@@ -77,7 +80,10 @@ func DeleteNamespace(namespace string) error {
 // This should only be used as a last resort when normal deletion hangs.
 func ForceDeleteNamespace(namespace string) error {
 	// First, try to remove finalizers from all resources in the namespace
-	resourceTypes := []string{"homeassistants", "homeassistantconfigurations", "homeassistantsecrets", "homeassistantautomations"}
+	resourceTypes := []string{
+		"homeassistants", "homeassistantconfigurations",
+		"homeassistantsecrets", "homeassistantautomations",
+	}
 
 	for _, resourceType := range resourceTypes {
 		// List all resources of this type
@@ -122,11 +128,17 @@ func ForceDeleteNamespace(namespace string) error {
 //   - pollingInterval: How often to check the condition
 //
 // Returns true if condition matches expected status within timeout, false otherwise.
-func WaitForCondition(resourceType, resourceName, namespace, conditionType, expectedStatus string, timeout, pollingInterval time.Duration) bool {
+func WaitForCondition(
+	resourceType, resourceName, namespace, conditionType, expectedStatus string,
+	timeout, pollingInterval time.Duration,
+) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		jsonpath := fmt.Sprintf("{.status.conditions[?(@.type=='%s')].status}", conditionType)
-		cmd := exec.Command("kubectl", "get", resourceType, resourceName, "-n", namespace, "-o", fmt.Sprintf("jsonpath=%s", jsonpath))
+		cmd := exec.Command(
+			"kubectl", "get", resourceType, resourceName,
+			"-n", namespace, "-o", fmt.Sprintf("jsonpath=%s", jsonpath),
+		)
 		output, err := Run(cmd)
 		if err == nil && strings.TrimSpace(output) == expectedStatus {
 			return true
@@ -145,7 +157,10 @@ func WaitForCondition(resourceType, resourceName, namespace, conditionType, expe
 //
 // Returns the value as string, or empty string if resource not found or jsonpath doesn't match.
 func GetResourceStatus(resourceType, resourceName, namespace, jsonPath string) string {
-	cmd := exec.Command("kubectl", "get", resourceType, resourceName, "-n", namespace, "-o", fmt.Sprintf("jsonpath=%s", jsonPath))
+	cmd := exec.Command(
+		"kubectl", "get", resourceType, resourceName,
+		"-n", namespace, "-o", fmt.Sprintf("jsonpath=%s", jsonPath),
+	)
 	output, err := Run(cmd)
 	if err != nil {
 		return ""

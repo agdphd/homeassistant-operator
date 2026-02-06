@@ -52,7 +52,7 @@ var _ = Describe("HomeAssistantSecrets E2E", Label("secrets"), Ordered, func() {
 		specReport := CurrentSpecReport()
 		if specReport.Failed() {
 			By("Test failed - collecting debug info")
-			collectSecretsDebugInfo(namespace, haName, configName, secretsName)
+			collectSecretsDebugInfo(namespace, haName, secretsName)
 		}
 
 		By("Deleting test namespace: " + namespace)
@@ -63,11 +63,12 @@ var _ = Describe("HomeAssistantSecrets E2E", Label("secrets"), Ordered, func() {
 	})
 
 	Context("Secret Update & AutoRestart", func() {
-		It("should trigger pod restart when source Secret updates (autoRestart: true)", Label("slow", "pod-required"), func() {
-			sourceName := "mqtt-creds"
+		It("should trigger pod restart when source Secret updates (autoRestart: true)",
+			Label("slow", "pod-required"), func() {
+				sourceName := "mqtt-creds"
 
-			By("Creating source K8s Secret")
-			secretYAML := fmt.Sprintf(`apiVersion: v1
+				By("Creating source K8s Secret")
+				secretYAML := fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
   name: %s
@@ -77,10 +78,10 @@ stringData:
   mqtt_user: "old_user"
   mqtt_password: "old_password"
 `, sourceName, namespace)
-			Expect(utils.ApplyYAML(secretYAML, namespace)).To(Succeed())
+				Expect(utils.ApplyYAML(secretYAML, namespace)).To(Succeed())
 
-			By("Creating HomeAssistant CR")
-			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+				By("Creating HomeAssistant CR")
+				haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant
 metadata:
   name: %s
@@ -91,10 +92,10 @@ spec:
     size: "1Gi"
   %s
 `, haName, namespace, utils.GetEnhancedHAResourceRequests())
-			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
+				Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
-			By("Creating HomeAssistantConfiguration CR")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+				By("Creating HomeAssistantConfiguration CR")
+				configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantConfiguration
 metadata:
   name: %s
@@ -107,10 +108,10 @@ spec:
       name: Home
     default_config:
 `, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
+				Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
-			By("Creating HomeAssistantSecrets CR with autoRestart: true")
-			haSecretsYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+				By("Creating HomeAssistantSecrets CR with autoRestart: true")
+				haSecretsYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantSecrets
 metadata:
   name: %s
@@ -122,64 +123,64 @@ spec:
   secretRefs:
     - name: %s
 `, secretsName, namespace, haName, sourceName)
-			Expect(utils.ApplyYAML(haSecretsYAML, namespace)).To(Succeed())
+				Expect(utils.ApplyYAML(haSecretsYAML, namespace)).To(Succeed())
 
-			By("Waiting for HA Pod to be Ready")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
-				g.Expect(output).To(Equal("Running"))
-			}, utils.HAPodReadyTimeout, 10*time.Second).Should(Succeed())
+				By("Waiting for HA Pod to be Ready")
+				Eventually(func(g Gomega) {
+					output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
+					g.Expect(output).To(Equal("Running"))
+				}, utils.HAPodReadyTimeout, 10*time.Second).Should(Succeed())
 
-			By("Capturing initial pod UID and secretsHash")
-			var oldPodUID string
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
-				g.Expect(output).NotTo(BeEmpty())
-				oldPodUID = output
-			}, utils.ResourceTimeout, 2*time.Second).Should(Succeed())
+				By("Capturing initial pod UID and secretsHash")
+				var oldPodUID string
+				Eventually(func(g Gomega) {
+					output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
+					g.Expect(output).NotTo(BeEmpty())
+					oldPodUID = output
+				}, utils.ResourceTimeout, 2*time.Second).Should(Succeed())
 
-			var oldSecretsHash string
-			Eventually(func(g Gomega) {
-				output := utils.GetResourceStatus("hasecrets", secretsName, namespace, "{.status.secretsHash}")
-				g.Expect(output).NotTo(BeEmpty())
-				oldSecretsHash = output
-			}, utils.StatusUpdateTimeout, 2*time.Second).Should(Succeed())
+				var oldSecretsHash string
+				Eventually(func(g Gomega) {
+					output := utils.GetResourceStatus("hasecrets", secretsName, namespace, "{.status.secretsHash}")
+					g.Expect(output).NotTo(BeEmpty())
+					oldSecretsHash = output
+				}, utils.StatusUpdateTimeout, 2*time.Second).Should(Succeed())
 
-			By("Updating source Secret")
-			Expect(utils.PatchResource("secret", sourceName, namespace, "json",
-				`[{"op":"replace","path":"/data/mqtt_user","value":"bmV3X3VzZXI="}]`)).To(Succeed())
+				By("Updating source Secret")
+				Expect(utils.PatchResource("secret", sourceName, namespace, "json",
+					`[{"op":"replace","path":"/data/mqtt_user","value":"bmV3X3VzZXI="}]`)).To(Succeed())
 
-			By("Verifying StatefulSet annotation changed (secrets-hash)")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl(
-					"get", "statefulset", haName, "-n", namespace,
-					"-o", "jsonpath={.spec.template.metadata.annotations.ha\\.homeassistant\\.io/secrets-hash}",
-				)
-				g.Expect(output).NotTo(BeEmpty())
-				g.Expect(output).NotTo(Equal(oldSecretsHash))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
+				By("Verifying StatefulSet annotation changed (secrets-hash)")
+				Eventually(func(g Gomega) {
+					output := utils.Kubectl(
+						"get", "statefulset", haName, "-n", namespace,
+						"-o", "jsonpath={.spec.template.metadata.annotations.ha\\.homeassistant\\.io/secrets-hash}",
+					)
+					g.Expect(output).NotTo(BeEmpty())
+					g.Expect(output).NotTo(Equal(oldSecretsHash))
+				}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
 
-			By("Verifying generated Secret contains new value")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl(
-					"get", "secret", haName+"-generated-secrets", "-n", namespace,
-					"-o", "jsonpath={.data.secrets\\.yaml}",
-				)
-				g.Expect(output).NotTo(BeEmpty())
-			}, utils.ResourceTimeout, 2*time.Second).Should(Succeed())
+				By("Verifying generated Secret contains new value")
+				Eventually(func(g Gomega) {
+					output := utils.Kubectl(
+						"get", "secret", haName+"-generated-secrets", "-n", namespace,
+						"-o", "jsonpath={.data.secrets\\.yaml}",
+					)
+					g.Expect(output).NotTo(BeEmpty())
+				}, utils.ResourceTimeout, 2*time.Second).Should(Succeed())
 
-			By("Verifying pod UID changed (rolling restart)")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
-				g.Expect(output).NotTo(Equal(oldPodUID))
-			}, utils.RestartTimeout, 10*time.Second).Should(Succeed())
+				By("Verifying pod UID changed (rolling restart)")
+				Eventually(func(g Gomega) {
+					output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
+					g.Expect(output).NotTo(Equal(oldPodUID))
+				}, utils.RestartTimeout, 10*time.Second).Should(Succeed())
 
-			By("Verifying status.secretsHash changed")
-			Eventually(func(g Gomega) {
-				output := utils.GetResourceStatus("hasecrets", secretsName, namespace, "{.status.secretsHash}")
-				g.Expect(output).NotTo(Equal(oldSecretsHash))
-			}, utils.StatusUpdateTimeout, 2*time.Second).Should(Succeed())
-		})
+				By("Verifying status.secretsHash changed")
+				Eventually(func(g Gomega) {
+					output := utils.GetResourceStatus("hasecrets", secretsName, namespace, "{.status.secretsHash}")
+					g.Expect(output).NotTo(Equal(oldSecretsHash))
+				}, utils.StatusUpdateTimeout, 2*time.Second).Should(Succeed())
+			})
 
 		It("should NOT trigger pod restart when autoRestart=false", Label("slow", "pod-required"), func() {
 			sourceName := "mqtt-creds-noauto"
@@ -1016,11 +1017,12 @@ spec:
 			}, utils.ResourceTimeout, 2*time.Second).Should(Succeed())
 		})
 
-		It("should mount Secret when HomeAssistantSecrets is created after HA startup", Label("slow", "pod-required"), func() {
-			sourceName := "late-secret"
+		It("should mount Secret when HomeAssistantSecrets is created after HA startup",
+			Label("slow", "pod-required"), func() {
+				sourceName := "late-secret"
 
-			By("Creating HomeAssistant CR")
-			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+				By("Creating HomeAssistant CR")
+				haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant
 metadata:
   name: %s
@@ -1031,10 +1033,10 @@ spec:
     size: "1Gi"
   %s
 `, haName, namespace, utils.GetEnhancedHAResourceRequests())
-			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
+				Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
-			By("Creating HomeAssistantConfiguration CR (without Secrets)")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+				By("Creating HomeAssistantConfiguration CR (without Secrets)")
+				configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantConfiguration
 metadata:
   name: %s
@@ -1045,21 +1047,21 @@ spec:
   configuration: |
     default_config:
 `, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
+				Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
-			By("Waiting for StatefulSet without ha-secrets volume")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "statefulset", haName, "-n", namespace)
-				g.Expect(output).NotTo(BeEmpty())
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
+				By("Waiting for StatefulSet without ha-secrets volume")
+				Eventually(func(g Gomega) {
+					output := utils.Kubectl("get", "statefulset", haName, "-n", namespace)
+					g.Expect(output).NotTo(BeEmpty())
+				}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
 
-			By("Verifying ha-secrets volume does NOT exist initially")
-			output := utils.Kubectl("get", "statefulset", haName, "-n", namespace,
-				"-o", "jsonpath={.spec.template.spec.volumes[?(@.name=='ha-secrets')].name}")
-			Expect(output).To(BeEmpty())
+				By("Verifying ha-secrets volume does NOT exist initially")
+				output := utils.Kubectl("get", "statefulset", haName, "-n", namespace,
+					"-o", "jsonpath={.spec.template.spec.volumes[?(@.name=='ha-secrets')].name}")
+				Expect(output).To(BeEmpty())
 
-			By("Creating source Secret")
-			secretYAML := fmt.Sprintf(`apiVersion: v1
+				By("Creating source Secret")
+				secretYAML := fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
   name: %s
@@ -1068,10 +1070,10 @@ type: Opaque
 stringData:
   late_key: "late_value"
 `, sourceName, namespace)
-			Expect(utils.ApplyYAML(secretYAML, namespace)).To(Succeed())
+				Expect(utils.ApplyYAML(secretYAML, namespace)).To(Succeed())
 
-			By("Creating HomeAssistantSecrets CR")
-			haSecretsYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+				By("Creating HomeAssistantSecrets CR")
+				haSecretsYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantSecrets
 metadata:
   name: %s
@@ -1082,26 +1084,26 @@ spec:
   secretRefs:
     - name: %s
 `, secretsName, namespace, haName, sourceName)
-			Expect(utils.ApplyYAML(haSecretsYAML, namespace)).To(Succeed())
+				Expect(utils.ApplyYAML(haSecretsYAML, namespace)).To(Succeed())
 
-			By("Verifying generated Secret created")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "secret", haName+"-generated-secrets", "-n", namespace)
-				g.Expect(output).NotTo(BeEmpty())
-			}, utils.ResourceTimeout, 2*time.Second).Should(Succeed())
+				By("Verifying generated Secret created")
+				Eventually(func(g Gomega) {
+					output := utils.Kubectl("get", "secret", haName+"-generated-secrets", "-n", namespace)
+					g.Expect(output).NotTo(BeEmpty())
+				}, utils.ResourceTimeout, 2*time.Second).Should(Succeed())
 
-			By("Verifying StatefulSet now has ha-secrets volume")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "statefulset", haName, "-n", namespace,
-					"-o", "jsonpath={.spec.template.spec.volumes[?(@.name=='ha-secrets')].name}")
-				g.Expect(output).To(Equal("ha-secrets"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-		})
+				By("Verifying StatefulSet now has ha-secrets volume")
+				Eventually(func(g Gomega) {
+					output := utils.Kubectl("get", "statefulset", haName, "-n", namespace,
+						"-o", "jsonpath={.spec.template.spec.volumes[?(@.name=='ha-secrets')].name}")
+					g.Expect(output).To(Equal("ha-secrets"))
+				}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
+			})
 	})
 })
 
 // collectSecretsDebugInfo gathers debug information for HomeAssistantSecrets tests on failure.
-func collectSecretsDebugInfo(namespace, haName, configName, secretsName string) {
+func collectSecretsDebugInfo(namespace, haName, secretsName string) {
 	writeDebug := func(format string, args ...any) {
 		_, _ = fmt.Fprintf(GinkgoWriter, format, args...)
 	}

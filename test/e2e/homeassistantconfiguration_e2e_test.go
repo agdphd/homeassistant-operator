@@ -364,7 +364,6 @@ spec:
 
 			By("Waiting for pod to have ConfigMap volume mounted (may trigger restart)")
 			Eventually(func(g Gomega) {
-				// Sprawdź czy volume ha-configuration jest zamontowany
 				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
 					"-o", "jsonpath={.spec.volumes[?(@.name=='ha-configuration')].name}")
 				g.Expect(output).To(Equal("ha-configuration"))
@@ -375,7 +374,6 @@ spec:
 				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
 				g.Expect(output).To(Equal("Running"))
 
-				// Sprawdź że pod jest w stanie Ready (wszystkie kontenery gotowe)
 				readyOutput := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
 					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
 				g.Expect(readyOutput).To(Equal("True"))

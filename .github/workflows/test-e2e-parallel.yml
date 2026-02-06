@@ -143,11 +143,13 @@ jobs:
           # All tests use Ginkgo CLI with parallelization
           make ginkgo
           echo "Running ${{ matrix.name }} tests with Ginkgo procs=${{ matrix.procs }}"
+          # Set Ginkgo timeout 1 min less than job timeout to allow graceful cleanup
+          GINKGO_TIMEOUT=$(( ${{ matrix.timeout }} - 1 ))
           ./bin/ginkgo run \
             --label-filter="${{ matrix.label }}" \
             --procs=${{ matrix.procs }} \
             -v \
-            --timeout=${{ matrix.timeout }}m \
+            --timeout=${GINKGO_TIMEOUT}m \
             ./test/e2e/
 
       - name: Collect controller logs on failure
