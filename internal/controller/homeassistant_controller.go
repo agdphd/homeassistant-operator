@@ -585,8 +585,9 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:  "home-assistant",
-							Image: fmt.Sprintf("%s:%s", image, version),
+							Name:            "home-assistant",
+							Image:           fmt.Sprintf("%s:%s", image, version),
+							ImagePullPolicy: corev1.PullIfNotPresent,
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "http",

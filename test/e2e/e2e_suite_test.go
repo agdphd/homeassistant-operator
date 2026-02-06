@@ -53,7 +53,9 @@ func TestE2E(t *testing.T) {
 	RunSpecs(t, "e2e suite")
 }
 
-var _ = BeforeSuite(func() {
+// SynchronizedBeforeSuite ensures setup runs only ONCE across all parallel processes
+var _ = SynchronizedBeforeSuite(func() []byte {
+	// This runs ONCE in process 1 only - do ALL setup here to avoid race conditions
 	By("building the manager(Operator) image")
 	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
 	_, err := utils.Run(cmd)
@@ -122,10 +124,21 @@ var _ = BeforeSuite(func() {
 		g.Expect(err).NotTo(HaveOccurred())
 		g.Expect(output).To(Equal("Running"))
 	}, utils.ControllerPodReadyTimeout, 5*time.Second).Should(Succeed())
+
+	return nil // No data to share between processes
+}, func(data []byte) {
+	// This runs in ALL processes after process 1 completes
+	// No setup needed here - everything is done in the first function
+	// All processes can now run tests against the shared cluster setup
 })
 
-var _ = AfterSuite(func() {
-	// Shared teardown for all E2E tests: Undeploy controller and uninstall CRDs
+// SynchronizedAfterSuite ensures cleanup runs only ONCE after all parallel processes complete
+var _ = SynchronizedAfterSuite(func() {
+	// This runs in EACH process after its tests complete
+	// Keep empty or add per-process cleanup if needed
+}, func() {
+	// This runs ONCE in process 1 AFTER all processes complete
+	// Do ALL cleanup here to avoid race conditions
 	By("undeploying the controller-manager")
 	cmd := exec.Command("make", "undeploy")
 	_, _ = utils.Run(cmd)

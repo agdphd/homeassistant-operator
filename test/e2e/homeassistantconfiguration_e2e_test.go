@@ -67,7 +67,7 @@ var _ = Describe("HomeAssistantConfiguration E2E", Label("configuration"), Order
 		}
 	})
 
-	Context("ConfigMap Operations", Label("fast"), func() {
+	Context("ConfigMap Operations", Label("fast", "infra-only"), func() {
 		It("should generate ConfigMap from HomeAssistantConfiguration", func() {
 			By("Creating HomeAssistant CR without bootstrap")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -190,7 +190,7 @@ spec:
 		})
 	})
 
-	Context("Configuration Reload - Restart Path", Label("slow"), func() {
+	Context("Configuration Reload - Restart Path", Label("slow", "pod-required"), func() {
 		It("should trigger pod restart on critical section change", func() {
 			By("Creating HomeAssistant CR without bootstrap")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -289,7 +289,7 @@ spec:
 		})
 	})
 
-	Context("Configuration Reload - Hot-Reload Path", Label("bootstrap", "slow"), func() {
+	Context("Configuration Reload - Hot-Reload Path", Label("bootstrap", "slow", "pod-required"), func() {
 		It("should perform hot-reload without pod restart when possible", func() {
 			By("Creating bootstrap credentials Secret")
 			credsYAML := fmt.Sprintf(`apiVersion: v1
@@ -445,7 +445,7 @@ spec:
 	})
 
 	Context("Fallback Mechanisms", func() {
-		It("should fallback to restart when API token is missing", Label("slow"), func() {
+		It("should fallback to restart when API token is missing", Label("slow", "pod-required"), func() {
 			By("Creating HomeAssistant CR WITHOUT bootstrap")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant
@@ -552,7 +552,7 @@ spec:
 
 	})
 
-	Context("Status Fields", Label("fast"), func() {
+	Context("Status Fields", Label("slow", "pod-required"), func() {
 		It("should populate all status fields correctly on restart", func() {
 			By("Creating HomeAssistant CR WITHOUT bootstrap")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -565,7 +565,7 @@ spec:
   storage:
     size: "1Gi"
   %s
-`, haName, namespace, utils.GetDefaultHAResourceRequests())
+`, haName, namespace, utils.GetEnhancedHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration with initial timezone")

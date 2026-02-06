@@ -63,7 +63,7 @@ var _ = Describe("HomeAssistantSecrets E2E", Label("secrets"), Ordered, func() {
 	})
 
 	Context("Secret Update & AutoRestart", func() {
-		It("should trigger pod restart when source Secret updates (autoRestart: true)", Label("slow"), func() {
+		It("should trigger pod restart when source Secret updates (autoRestart: true)", Label("slow", "pod-required"), func() {
 			sourceName := "mqtt-creds"
 
 			By("Creating source K8s Secret")
@@ -181,7 +181,7 @@ spec:
 			}, utils.StatusUpdateTimeout, 2*time.Second).Should(Succeed())
 		})
 
-		It("should NOT trigger pod restart when autoRestart=false", Label("slow"), func() {
+		It("should NOT trigger pod restart when autoRestart=false", Label("slow", "pod-required"), func() {
 			sourceName := "mqtt-creds-noauto"
 
 			By("Creating source K8s Secret")
@@ -307,7 +307,7 @@ spec:
 		})
 	})
 
-	Context("Multiple Secrets Aggregation", Label("fast"), func() {
+	Context("Multiple Secrets Aggregation", Label("fast", "infra-only"), func() {
 		It("should aggregate multiple Secrets into one secrets.yaml", func() {
 			By("Creating multiple source Secrets")
 			secret1YAML := fmt.Sprintf(`apiVersion: v1
@@ -593,8 +593,8 @@ spec:
 		})
 	})
 
-	Context("Secrets + Configuration Integration", Label("fast"), func() {
-		It("should mount both ConfigMap and Secret volumes when both exist", func() {
+	Context("Secrets + Configuration Integration", func() {
+		It("should mount both ConfigMap and Secret volumes when both exist", Label("fast", "infra-only"), func() {
 			By("Creating source Secret")
 			secretYAML := fmt.Sprintf(`apiVersion: v1
 kind: Secret
@@ -681,7 +681,7 @@ spec:
 			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
 		})
 
-		It("should trigger single restart when both Secrets and Configuration change", Label("slow"), func() {
+		It("should trigger single restart when both Secrets and Configuration change", Label("slow", "pod-required"), func() {
 			sourceName := "mqtt-dual"
 
 			By("Creating source Secret")
@@ -799,7 +799,7 @@ spec:
 		})
 	})
 
-	Context("Hash Stability & Idempotency", Label("fast"), func() {
+	Context("Hash Stability & Idempotency", Label("slow", "pod-required"), func() {
 		It("should maintain stable hash when no changes occur (idempotency)", func() {
 			sourceName := "stable-secret"
 
@@ -928,8 +928,8 @@ spec:
 		})
 	})
 
-	Context("Lifecycle & Cleanup", Label("fast"), func() {
-		It("should delete generated Secret when HomeAssistantSecrets is deleted", func() {
+	Context("Lifecycle & Cleanup", func() {
+		It("should delete generated Secret when HomeAssistantSecrets is deleted", Label("fast", "infra-only"), func() {
 			sourceName := "cleanup-secret"
 
 			By("Creating source Secret")
@@ -1016,7 +1016,7 @@ spec:
 			}, utils.ResourceTimeout, 2*time.Second).Should(Succeed())
 		})
 
-		It("should mount Secret when HomeAssistantSecrets is created after HA startup", Label("slow"), func() {
+		It("should mount Secret when HomeAssistantSecrets is created after HA startup", Label("slow", "pod-required"), func() {
 			sourceName := "late-secret"
 
 			By("Creating HomeAssistant CR")

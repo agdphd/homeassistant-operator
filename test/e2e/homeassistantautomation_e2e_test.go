@@ -59,7 +59,7 @@ var _ = Describe("HomeAssistantAutomation E2E", Ordered, func() {
 		}
 	})
 
-	Context("Basic Automation Lifecycle", Label("automation", "fast"), func() {
+	Context("Basic Automation Lifecycle", Label("automation", "fast", "infra-only"), func() {
 		It("should create automation and generate ConfigMap", func() {
 			By("Creating HomeAssistant CR")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -463,7 +463,7 @@ spec:
 		})
 	})
 
-	Context("Finalizer & Deletion", Label("automation", "fast"), func() {
+	Context("Finalizer & Deletion", Label("automation", "fast", "infra-only"), func() {
 		It("should update ConfigMap when deleting one of multiple automations", func() {
 			auto1Name := "keep-auto1-" + utils.RandomString(6)
 			auto2Name := "delete-auto-" + utils.RandomString(6)
@@ -707,7 +707,7 @@ spec:
 		})
 	})
 
-	Context("Hot-Reload via REST API", Label("automation", "bootstrap", "slow"), func() {
+	Context("Hot-Reload via REST API", Label("automation", "bootstrap", "slow", "pod-required"), func() {
 		It("should hot-reload automation without pod restart when API token available", func() {
 			By("Creating credentials Secret for bootstrap")
 			credentialsSecretName := "bootstrap-creds-" + utils.RandomString(6)
@@ -990,7 +990,7 @@ spec:
 		})
 	})
 
-	Context("Enable/Disable Toggle", Label("automation", "fast"), func() {
+	Context("Enable/Disable Toggle", Label("automation", "fast", "infra-only"), func() {
 		It("should toggle automation between enabled and disabled states", func() {
 			By("Creating HomeAssistant CR")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -1094,7 +1094,7 @@ spec:
 		})
 	})
 
-	Context("Automation Spec Fields", Label("automation", "fast"), func() {
+	Context("Automation Spec Fields", Label("automation", "fast", "infra-only"), func() {
 		It("should correctly serialize all spec fields to ConfigMap YAML", func() {
 			By("Creating HomeAssistant CR")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1

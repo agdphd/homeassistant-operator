@@ -119,18 +119,30 @@ test: manifests generate fmt vet setup-envtest ## Run unit tests.
 
 # E2E tests use k3d (recommended for k3s-like target environments)
 K3D_CLUSTER_E2E ?= homeassistant-operator-test-e2e
+K3D_MEMORY_E2E ?= 12g
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a k3d cluster for e2e tests (always creates fresh cluster)
 	@command -v k3d >/dev/null 2>&1 || { echo "k3d is not installed. Install with: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash"; exit 1; }
 	@echo "Ensuring clean k3d cluster state..."
 	@k3d cluster delete $(K3D_CLUSTER_E2E) 2>/dev/null || true
-	@echo "Creating fresh k3d cluster $(K3D_CLUSTER_E2E) with enhanced resources..."
-	@k3d cluster create $(K3D_CLUSTER_E2E) --agents 0 --servers-memory 8g
+	@echo "Creating fresh k3d cluster $(K3D_CLUSTER_E2E) with $(K3D_MEMORY_E2E) memory..."
+	@k3d cluster create $(K3D_CLUSTER_E2E) --agents 0 --servers-memory $(K3D_MEMORY_E2E)
+	@echo "Pre-pulling Home Assistant image to speed up tests..."
+	@docker pull ghcr.io/home-assistant/home-assistant:stable
+	@echo "Importing Home Assistant image into k3d cluster..."
+	@k3d image import ghcr.io/home-assistant/home-assistant:stable -c $(K3D_CLUSTER_E2E)
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ## Run e2e tests on k3d cluster
-	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) go test ./test/e2e/ -v -ginkgo.v -timeout 20m; \
+test-e2e: setup-test-e2e manifests generate fmt vet ginkgo ## Run ALL E2E tests with 4× parallelization (~15 min, 12-15× faster than sequential)
+	@echo "Running ALL E2E tests with 4× parallelization..."
+	@echo "Expected time: ~15 min (all 54 specs, baseline: ~180-225 min)"
+	@echo "ℹ️  Resource requirements: 4 × 1Gi limits + 2.5GB overhead = ~6.5GB"
+	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) $(GINKGO) run \
+		--procs=4 \
+		-v \
+		--timeout=45m \
+		./test/e2e/ | tee test-e2e.log; \
 	status=$$?; \
 	$(MAKE) cleanup-test-e2e; \
 	exit $$status
@@ -143,11 +155,12 @@ cleanup-test-e2e: ## Tear down the k3d cluster used for e2e tests
 ##@ k3d Testing (recommended for k3s target environments)
 
 K3D_CLUSTER ?= ha-operator-test
+K3D_MEMORY ?= 12g
 
 .PHONY: k3d-create
 k3d-create: ## Create a k3d cluster for testing
 	@command -v k3d >/dev/null 2>&1 || { echo "k3d is not installed. Install with: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash"; exit 1; }
-	@k3d cluster list | grep -q $(K3D_CLUSTER) && echo "Cluster $(K3D_CLUSTER) already exists" || k3d cluster create $(K3D_CLUSTER) --agents 0 --servers-memory 8g
+	@k3d cluster list | grep -q $(K3D_CLUSTER) && echo "Cluster $(K3D_CLUSTER) already exists" || k3d cluster create $(K3D_CLUSTER) --agents 0 --servers-memory $(K3D_MEMORY)
 
 .PHONY: k3d-delete
 k3d-delete: ## Delete the k3d test cluster
@@ -266,6 +279,7 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+GINKGO ?= $(LOCALBIN)/ginkgo
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.6.0
@@ -275,6 +289,7 @@ ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
 GOLANGCI_LINT_VERSION ?= v2.8.0
+GINKGO_VERSION ?= v2.27.5
 
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
@@ -303,6 +318,11 @@ $(ENVTEST): $(LOCALBIN)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+
+.PHONY: ginkgo
+ginkgo: $(GINKGO) ## Download ginkgo CLI locally if necessary.
+$(GINKGO): $(LOCALBIN)
+	$(call go-install-tool,$(GINKGO),github.com/onsi/ginkgo/v2/ginkgo,$(GINKGO_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary
