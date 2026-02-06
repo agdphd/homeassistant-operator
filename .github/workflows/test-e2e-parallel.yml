@@ -102,7 +102,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: bin/ginkgo*
-          key: ginkgo-${{ hashFiles('go.mod') }}
+          key: ginkgo-${{ hashFiles('go.mod', 'Makefile') }}
           restore-keys: |
             ginkgo-
 
