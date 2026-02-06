@@ -957,6 +957,10 @@ spec:
 				g.Expect(status).To(Equal("True"))
 			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
 
+			By("Capturing initial lastReloadTime before update")
+			initialReloadTime := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
+				"-o", "jsonpath={.status.lastReloadTime}")
+
 			By("Updating automation")
 			patchCmd := exec.Command("kubectl", "patch", "haauto", automationName, "-n", namespace,
 				"--type", "json", "-p", `[{"op":"replace","path":"/spec/alias","value":"Updated No Reload"}]`)
@@ -971,12 +975,11 @@ spec:
 				g.Expect(output).To(ContainSubstring("Updated No Reload"))
 			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
 
-			By("Verifying lastReloadTime is NOT set (or empty)")
+			By("Verifying lastReloadTime remains unchanged (autoReload: false)")
 			Consistently(func(g Gomega) {
 				reloadTime := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
 					"-o", "jsonpath={.status.lastReloadTime}")
-				// Should be empty or not change
-				g.Expect(reloadTime).To(Or(BeEmpty(), Not(ContainSubstring("2026"))))
+				g.Expect(reloadTime).To(Equal(initialReloadTime))
 			}, 15*time.Second, 3*time.Second).Should(Succeed())
 
 			By("Verifying pod UID not changed")

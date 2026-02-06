@@ -117,37 +117,6 @@ func ForceDeleteNamespace(namespace string) error {
 	return err
 }
 
-// WaitForCondition polls a Kubernetes resource for a specific condition status.
-// Parameters:
-//   - resourceType: The resource type (e.g., "homeassistant", "haconfig", "pod")
-//   - resourceName: The name of the resource instance
-//   - namespace: The namespace where the resource exists
-//   - conditionType: The condition type to check (e.g., "Ready", "Available")
-//   - expectedStatus: The expected status value (e.g., "True", "False", "Unknown")
-//   - timeout: Maximum time to wait for the condition
-//   - pollingInterval: How often to check the condition
-//
-// Returns true if condition matches expected status within timeout, false otherwise.
-func WaitForCondition(
-	resourceType, resourceName, namespace, conditionType, expectedStatus string,
-	timeout, pollingInterval time.Duration,
-) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		jsonpath := fmt.Sprintf("{.status.conditions[?(@.type=='%s')].status}", conditionType)
-		cmd := exec.Command(
-			"kubectl", "get", resourceType, resourceName,
-			"-n", namespace, "-o", fmt.Sprintf("jsonpath=%s", jsonpath),
-		)
-		output, err := Run(cmd)
-		if err == nil && strings.TrimSpace(output) == expectedStatus {
-			return true
-		}
-		time.Sleep(pollingInterval)
-	}
-	return false
-}
-
 // GetResourceStatus retrieves a specific status field from a Kubernetes resource using JSONPath.
 // Parameters:
 //   - resourceType: The resource type (e.g., "homeassistant", "configmap", "secret")
