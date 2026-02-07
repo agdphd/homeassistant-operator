@@ -712,6 +712,30 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 		return nil
 	}
 
+	// Check if Home Assistant Service is ready before attempting hot-reload
+	if !r.isHomeAssistantServiceReady(ctx, ha) {
+		log.Info("Home Assistant Service not ready yet, cannot perform hot-reload")
+
+		// If user explicitly requested hot-reload strategy, fail instead of falling back
+		if strategy == string(hav1alpha1.ConfigurationReloadStrategyHotReload) {
+			config.Status.LastError = "Hot-reload strategy requested but Service not ready (pod not ready)"
+			return fmt.Errorf("hot-reload strategy requires ready Service but pod is not ready yet")
+		}
+
+		// Auto strategy can fallback to restart
+		log.Info("Service not ready, falling back to restart")
+		config.Status.LastError = "Service not ready - falling back to restart"
+
+		// Update ConfigMap annotation to trigger restart via HomeAssistant Controller
+		if err := r.updateConfigMapHashAnnotation(ctx, config, newHash); err != nil {
+			return fmt.Errorf("failed to update ConfigMap hash for restart fallback: %w", err)
+		}
+
+		config.Status.LastReloadMethod = reloadMethodRestart
+		log.Info("Configuration reload: restart (fallback - Service not ready)", "hash", newHash)
+		return nil
+	}
+
 	// Attempt hot-reload
 	if err := r.performHotReload(ctx, haURL, token); err != nil {
 		// If user explicitly requested hot-reload strategy, fail instead of falling back
@@ -911,4 +935,36 @@ func (r *HomeAssistantConfigurationReconciler) validateHomeAssistantRef(
 		return nil, err
 	}
 	return ha, nil
+}
+
+// isHomeAssistantServiceReady checks if the HomeAssistant Service has ready endpoints
+// Returns true if service endpoints are available, false otherwise
+func (r *HomeAssistantConfigurationReconciler) isHomeAssistantServiceReady(
+	ctx context.Context,
+	ha *hav1alpha1.HomeAssistant,
+) bool {
+	log := logf.FromContext(ctx)
+
+	// Check Service Endpoints to see if pod is ready
+	endpoints := &corev1.Endpoints{}
+	if err := r.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, endpoints); err != nil {
+		log.V(1).Info("Failed to get Service endpoints", "error", err)
+		return false
+	}
+
+	// Check if there are any ready addresses
+	if len(endpoints.Subsets) == 0 {
+		log.V(1).Info("Service endpoints have no subsets")
+		return false
+	}
+
+	for _, subset := range endpoints.Subsets {
+		if len(subset.Addresses) > 0 {
+			log.V(1).Info("Service has ready endpoints", "count", len(subset.Addresses))
+			return true
+		}
+	}
+
+	log.V(1).Info("Service endpoints have no ready addresses")
+	return false
 }

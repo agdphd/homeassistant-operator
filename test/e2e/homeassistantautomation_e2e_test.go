@@ -776,12 +776,16 @@ spec:
 				g.Expect(bootstrapStatus).To(Equal("true"))
 			}, utils.BootstrapTimeout, 5*time.Second).Should(Succeed())
 
-			By("Waiting for HA pod to be ready")
+			By("Waiting for HA pod to be fully ready")
 			podName := haName + "-0"
 			Eventually(func(g Gomega) {
 				phase := utils.Kubectl("get", "pod", podName, "-n", namespace,
 					"-o", "jsonpath={.status.phase}")
 				g.Expect(phase).To(Equal("Running"))
+
+				ready := utils.Kubectl("get", "pod", podName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(ready).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, 5*time.Second).Should(Succeed())
 
 			By("Capturing pod UID before automation update")
@@ -924,11 +928,16 @@ spec:
 				g.Expect(bootstrapStatus).To(Equal("true"))
 			}, utils.BootstrapTimeout, 5*time.Second).Should(Succeed())
 
+			By("Waiting for HA pod to be fully ready")
 			podName := haName + "-0"
 			Eventually(func(g Gomega) {
 				phase := utils.Kubectl("get", "pod", podName, "-n", namespace,
 					"-o", "jsonpath={.status.phase}")
 				g.Expect(phase).To(Equal("Running"))
+
+				ready := utils.Kubectl("get", "pod", podName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(ready).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, 5*time.Second).Should(Succeed())
 
 			By("Creating automation with autoReload: false")

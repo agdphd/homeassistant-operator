@@ -227,6 +227,10 @@ spec:
 			Eventually(func(g Gomega) {
 				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
 				g.Expect(output).To(Equal("Running"))
+
+				readyOutput := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(readyOutput).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, haPodReadyInterval).Should(Succeed())
 
 			By("Capturing initial pod UID")
@@ -478,6 +482,10 @@ spec:
 			Eventually(func(g Gomega) {
 				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
 				g.Expect(output).To(Equal("Running"))
+
+				readyOutput := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(readyOutput).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, haPodReadyInterval).Should(Succeed())
 
 			By("Updating HomeAssistantConfiguration to use force hot-reload strategy")
@@ -588,6 +596,10 @@ spec:
 			Eventually(func(g Gomega) {
 				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
 				g.Expect(output).To(Equal("Running"))
+
+				readyOutput := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(readyOutput).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, haPodReadyInterval).Should(Succeed())
 
 			By("Verifying configHash is set")

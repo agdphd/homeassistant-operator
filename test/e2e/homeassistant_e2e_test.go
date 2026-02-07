@@ -99,6 +99,10 @@ spec:
 				phase := utils.Kubectl("get", "pod", podName, "-n", namespace,
 					"-o", "jsonpath={.status.phase}")
 				g.Expect(phase).To(Equal("Running"))
+
+				readyOutput := utils.Kubectl("get", "pod", podName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(readyOutput).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, 10*time.Second).Should(Succeed())
 
 			By("Capturing initial pod UID")
@@ -184,6 +188,10 @@ spec:
 				phase := utils.Kubectl("get", "pod", podName, "-n", namespace,
 					"-o", "jsonpath={.status.phase}")
 				g.Expect(phase).To(Equal("Running"))
+
+				readyOutput := utils.Kubectl("get", "pod", podName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(readyOutput).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, 10*time.Second).Should(Succeed())
 
 			By("Capturing initial pod UID")
@@ -335,6 +343,10 @@ spec:
 				phase := utils.Kubectl("get", "pod", podName, "-n", namespace,
 					"-o", "jsonpath={.status.phase}")
 				g.Expect(phase).To(Equal("Running"))
+
+				readyOutput := utils.Kubectl("get", "pod", podName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(readyOutput).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, 10*time.Second).Should(Succeed())
 
 			By("Capturing initial pod UID")
@@ -446,6 +458,10 @@ spec:
 				phase := utils.Kubectl("get", "pod", podName, "-n", namespace,
 					"-o", "jsonpath={.status.phase}")
 				g.Expect(phase).To(Equal("Running"))
+
+				readyOutput := utils.Kubectl("get", "pod", podName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(readyOutput).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, 10*time.Second).Should(Succeed())
 
 			By("Waiting for bootstrap to complete")
@@ -524,6 +540,10 @@ spec:
 				phase := utils.Kubectl("get", "pod", podName, "-n", namespace,
 					"-o", "jsonpath={.status.phase}")
 				g.Expect(phase).To(Equal("Running"))
+
+				readyOutput := utils.Kubectl("get", "pod", podName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(readyOutput).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, 10*time.Second).Should(Succeed())
 
 			By("Verifying bootstrap not completed")

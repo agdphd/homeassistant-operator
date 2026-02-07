@@ -129,6 +129,10 @@ spec:
 				Eventually(func(g Gomega) {
 					output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
 					g.Expect(output).To(Equal("Running"))
+
+					readyOutput := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+					g.Expect(readyOutput).To(Equal("True"))
 				}, utils.HAPodReadyTimeout, 10*time.Second).Should(Succeed())
 
 				By("Capturing initial pod UID and secretsHash")
@@ -747,6 +751,10 @@ spec:
 			Eventually(func(g Gomega) {
 				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
 				g.Expect(output).To(Equal("Running"))
+
+				readyOutput := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(readyOutput).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, 10*time.Second).Should(Succeed())
 
 			By("Capturing initial pod UID")
