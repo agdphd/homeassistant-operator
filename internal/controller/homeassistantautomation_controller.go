@@ -451,8 +451,8 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 	if !r.isHomeAssistantServiceReady(ctx, ha) {
 		log.Info("Home Assistant Service not ready yet, skipping hot-reload (will retry on next reconcile)")
 		automation.Status.LastError = "Service not ready - waiting for pod readiness"
-		// Return nil to avoid error and requeue - controller will retry automatically
-		return nil
+		// Return error to prevent updating AutomationHash until reload succeeds
+		return fmt.Errorf("home assistant service not ready - retrying hot-reload")
 	}
 
 	// Construct Home Assistant URL
@@ -577,32 +577,10 @@ func (r *HomeAssistantAutomationReconciler) validateHomeAssistantRef(
 
 // isHomeAssistantServiceReady checks if the HomeAssistant Service has ready endpoints
 // Returns true if service endpoints are available, false otherwise
+// Uses the shared EndpointSlice-based helper to avoid deprecated Endpoints API
 func (r *HomeAssistantAutomationReconciler) isHomeAssistantServiceReady(
 	ctx context.Context,
 	ha *hav1alpha1.HomeAssistant,
 ) bool {
-	log := logf.FromContext(ctx)
-
-	// Check Service Endpoints to see if pod is ready
-	endpoints := &corev1.Endpoints{}
-	if err := r.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, endpoints); err != nil {
-		log.V(1).Info("Failed to get Service endpoints", "error", err)
-		return false
-	}
-
-	// Check if there are any ready addresses
-	if len(endpoints.Subsets) == 0 {
-		log.V(1).Info("Service endpoints have no subsets")
-		return false
-	}
-
-	for _, subset := range endpoints.Subsets {
-		if len(subset.Addresses) > 0 {
-			log.V(1).Info("Service has ready endpoints", "count", len(subset.Addresses))
-			return true
-		}
-	}
-
-	log.V(1).Info("Service endpoints have no ready addresses")
-	return false
+	return isServiceReadyFromEndpointSlices(ctx, r.Client, ha.Name, ha.Namespace)
 }

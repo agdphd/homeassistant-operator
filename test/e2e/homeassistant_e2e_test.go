@@ -799,69 +799,113 @@ spec:
 
 // collectHADebugInfo collects debug information when a HomeAssistant test fails
 func collectHADebugInfo(namespace, haName, configName string) {
-	fmt.Println("\n=== DEBUG INFO: HomeAssistant Test Failed ===")
+	writeDebug := func(format string, args ...any) {
+		_, _ = fmt.Fprintf(GinkgoWriter, format, args...)
+	}
+
+	writeDebug("\n=== DEBUG INFO: HomeAssistant Test Failed ===\n")
 
 	// HomeAssistant CR describe
-	fmt.Println("\n--- HomeAssistant describe ---")
+	writeDebug("\n--- HomeAssistant describe ---\n")
 	descCmd := exec.Command("kubectl", "describe", "ha", haName, "-n", namespace)
-	output, _ := descCmd.CombinedOutput()
-	fmt.Println(string(output))
+	output, err := utils.Run(descCmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
 	// HomeAssistant status
-	fmt.Println("\n--- HomeAssistant status ---")
+	writeDebug("\n--- HomeAssistant status ---\n")
 	statusCmd := exec.Command("kubectl", "get", "ha", haName, "-n", namespace, "-o", "yaml")
-	output, _ = statusCmd.CombinedOutput()
-	fmt.Println(string(output))
+	output, err = utils.Run(statusCmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
 	// HomeAssistantConfiguration describe
-	fmt.Println("\n--- HomeAssistantConfiguration describe ---")
+	writeDebug("\n--- HomeAssistantConfiguration describe ---\n")
 	configDescCmd := exec.Command("kubectl", "describe", "haconfig", configName, "-n", namespace)
-	output, _ = configDescCmd.CombinedOutput()
-	fmt.Println(string(output))
+	output, err = utils.Run(configDescCmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
 	// StatefulSet
-	fmt.Println("\n--- StatefulSet ---")
+	writeDebug("\n--- StatefulSet ---\n")
 	stsCmd := exec.Command("kubectl", "get", "statefulset", haName, "-n", namespace, "-o", "yaml")
-	output, _ = stsCmd.CombinedOutput()
-	fmt.Println(string(output))
+	output, err = utils.Run(stsCmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
 	// Pods
-	fmt.Println("\n--- Pods ---")
+	writeDebug("\n--- Pods ---\n")
 	podsCmd := exec.Command("kubectl", "get", "pods", "-n", namespace, "-o", "wide")
-	output, _ = podsCmd.CombinedOutput()
-	fmt.Println(string(output))
+	output, err = utils.Run(podsCmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
 	// Pod logs
-	fmt.Println("\n--- HA Pod logs (last 50 lines) ---")
+	writeDebug("\n--- HA Pod logs (last 50 lines) ---\n")
 	podName := haName + "-0"
 	podLogsCmd := exec.Command("kubectl", "logs", podName, "-n", namespace, "--tail=50")
-	output, _ = podLogsCmd.CombinedOutput()
-	fmt.Println(string(output))
+	output, err = utils.Run(podLogsCmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
 	// Services
-	fmt.Println("\n--- Services ---")
+	writeDebug("\n--- Services ---\n")
 	svcCmd := exec.Command("kubectl", "get", "services", "-n", namespace, "-o", "wide")
-	output, _ = svcCmd.CombinedOutput()
-	fmt.Println(string(output))
+	output, err = utils.Run(svcCmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
 	// PVCs
-	fmt.Println("\n--- PVCs ---")
+	writeDebug("\n--- PVCs ---\n")
 	pvcCmd := exec.Command("kubectl", "get", "pvc", "-n", namespace, "-o", "wide")
-	output, _ = pvcCmd.CombinedOutput()
-	fmt.Println(string(output))
+	output, err = utils.Run(pvcCmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
 	// Events
-	fmt.Println("\n--- Events ---")
+	writeDebug("\n--- Events ---\n")
 	eventsCmd := exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
-	output, _ = eventsCmd.CombinedOutput()
-	fmt.Println(string(output))
+	output, err = utils.Run(eventsCmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
 	// Operator logs (last 50 lines)
-	fmt.Println("\n--- Operator logs (last 50 lines) ---")
+	writeDebug("\n--- Operator logs (last 50 lines) ---\n")
 	logsCmd := exec.Command("kubectl", "logs", "-n", "homeassistant-operator-system",
 		"-l", "control-plane=controller-manager", "--tail=50")
-	output, _ = logsCmd.CombinedOutput()
-	fmt.Println(string(output))
+	output, err = utils.Run(logsCmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
-	fmt.Println("\n=== END DEBUG INFO ===")
+	writeDebug("\n=== END DEBUG INFO ===\n")
 }

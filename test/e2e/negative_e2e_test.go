@@ -891,7 +891,7 @@ spec:
 
 			By("Waiting for Service to exist")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "service", haName+"-homeassistant", "-n", namespace)
+				output := utils.Kubectl("get", "service", haName, "-n", namespace)
 				g.Expect(output).NotTo(BeEmpty())
 			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
 
@@ -925,7 +925,7 @@ spec:
 
 			By("Verifying Service deleted")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "service", haName+"-homeassistant", "-n", namespace, "--ignore-not-found")
+				output := utils.Kubectl("get", "service", haName, "-n", namespace, "--ignore-not-found")
 				g.Expect(output).To(BeEmpty())
 			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
 
