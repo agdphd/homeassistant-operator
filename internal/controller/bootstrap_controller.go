@@ -361,15 +361,40 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 		"This typically happens when HA was manually configured before bootstrap ran.")
 
 	// Check if we already tried deleting the pod (prevent infinite loop)
-	// We use pod creation time as a proxy: if pod is very new (< 5 min), we probably just deleted it
+	// Use annotation on HomeAssistant CR to track deletion attempts
+	const bootstrapRetryAttemptedKey = "ha.homeassistant.io/bootstrap-retry-attempted"
+
+	if ha.ObjectMeta.Annotations != nil && ha.ObjectMeta.Annotations[bootstrapRetryAttemptedKey] == "true" {
+		// Already attempted pod deletion - give up to prevent loop
+		log.Info("Bootstrap retry already attempted (annotation present), not retrying deletion to prevent loop")
+		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
+			"Onboarding completed manually, API token requested but cannot be created. "+
+				"Options: (1) disable createApiToken, (2) create Secret manually, or (3) delete PVC to start fresh.",
+			false, false)
+	}
+
+	// Mark that we're attempting deletion by setting annotation
+	if ha.ObjectMeta.Annotations == nil {
+		ha.ObjectMeta.Annotations = make(map[string]string)
+	}
+	ha.ObjectMeta.Annotations[bootstrapRetryAttemptedKey] = "true"
+	if err := r.Update(ctx, ha); err != nil {
+		log.Error(err, "Failed to set bootstrap retry annotation")
+		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
+			fmt.Sprintf("Failed to mark retry attempt: %v", err),
+			false, false)
+	}
+	log.Info("Set bootstrap retry annotation on HomeAssistant CR")
+
+	// Get pod for deletion
 	podName := ha.Name + "-0"
 	pod := &corev1.Pod{}
 	podKey := types.NamespacedName{Name: podName, Namespace: ha.Namespace}
 	if err := r.Get(ctx, podKey, pod); err != nil {
 		if !errors.IsNotFound(err) {
-			log.Error(err, "Failed to get pod for retry check")
+			log.Error(err, "Failed to get pod for deletion")
 			return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
-				fmt.Sprintf("Failed to check pod: %v", err),
+				fmt.Sprintf("Failed to get pod: %v", err),
 				false, false)
 		}
 		// Pod doesn't exist - wait for StatefulSet to recreate it
@@ -379,19 +404,7 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 			false, false)
 	}
 
-	// Check if pod was created recently (within last 5 minutes) - if so, we already tried deletion
-	podAge := time.Since(pod.CreationTimestamp.Time)
-	if podAge < 5*time.Minute {
-		// Pod is fresh, we probably already tried deletion - give up to prevent loop
-		log.Info("Pod was recently created, not retrying deletion to prevent loop",
-			"podAge", podAge.String())
-		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
-			"Onboarding completed manually, API token requested but cannot be created. "+
-				"Options: (1) disable createApiToken, (2) create Secret manually, or (3) delete PVC to start fresh.",
-			false, false)
-	}
-
-	// Pod is old enough - safe to delete for retry
+	// Delete the pod to force fresh start
 	log.Info("Deleting pod to force fresh start and retry bootstrap", "pod", podName)
 	if err := r.Delete(ctx, pod); err != nil {
 		log.Error(err, "Failed to delete pod for fresh bootstrap")
