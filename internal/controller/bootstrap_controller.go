@@ -354,17 +354,56 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 		)
 	}
 
-	// Secret doesn't exist - we need to create it
+	// Secret doesn't exist - onboarding was completed manually before bootstrap ran
 	// Since onboarding is done, we can't use CreateUser (it would fail).
-	// The best approach is to inform the user and skip token creation.
+	// Solution: Delete the HA pod ONCE to force fresh start and allow bootstrap to run properly
 	log.Info("Onboarding already completed but no API token Secret exists. " +
-		"This typically happens when HA was manually configured before bootstrap ran. " +
-		"Marking bootstrap as completed without API token.")
+		"This typically happens when HA was manually configured before bootstrap ran.")
 
-	return r.updateBootstrapStatus(ctx, ha, reasonBootstrapAlreadyDone,
-		"Onboarding already completed. API token Secret not created (manual onboarding detected). "+
-			"Create Secret manually or delete HA pod to retry bootstrap.",
-		true, false)
+	// Check if we already tried deleting the pod (prevent infinite loop)
+	// We use pod creation time as a proxy: if pod is very new (< 5 min), we probably just deleted it
+	podName := ha.Name + "-0"
+	pod := &corev1.Pod{}
+	podKey := types.NamespacedName{Name: podName, Namespace: ha.Namespace}
+	if err := r.Get(ctx, podKey, pod); err != nil {
+		if !errors.IsNotFound(err) {
+			log.Error(err, "Failed to get pod for retry check")
+			return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
+				fmt.Sprintf("Failed to check pod: %v", err),
+				false, false)
+		}
+		// Pod doesn't exist - wait for StatefulSet to recreate it
+		log.Info("Pod not found, waiting for recreation")
+		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapInProgress,
+			"Waiting for pod recreation",
+			false, false)
+	}
+
+	// Check if pod was created recently (within last 5 minutes) - if so, we already tried deletion
+	podAge := time.Since(pod.CreationTimestamp.Time)
+	if podAge < 5*time.Minute {
+		// Pod is fresh, we probably already tried deletion - give up to prevent loop
+		log.Info("Pod was recently created, not retrying deletion to prevent loop",
+			"podAge", podAge.String())
+		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
+			"Onboarding completed manually, API token requested but cannot be created. "+
+				"Options: (1) disable createApiToken, (2) create Secret manually, or (3) delete PVC to start fresh.",
+			false, false)
+	}
+
+	// Pod is old enough - safe to delete for retry
+	log.Info("Deleting pod to force fresh start and retry bootstrap", "pod", podName)
+	if err := r.Delete(ctx, pod); err != nil {
+		log.Error(err, "Failed to delete pod for fresh bootstrap")
+		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
+			fmt.Sprintf("Failed to delete pod: %v", err),
+			false, false)
+	}
+	log.Info("Deleted pod successfully", "pod", podName)
+
+	return r.updateBootstrapStatus(ctx, ha, reasonBootstrapInProgress,
+		"Deleted pod to force fresh start - bootstrap will retry when pod recreates",
+		false, false)
 }
 
 // updateBootstrapStatus updates the bootstrap status and returns appropriate
