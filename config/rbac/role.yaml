@@ -40,6 +40,14 @@ rules:
   - update
   - watch
 - apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - ha.homeassistant.io
   resources:
   - homeassistantautomations
