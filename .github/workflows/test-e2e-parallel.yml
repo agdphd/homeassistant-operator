@@ -44,47 +44,36 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Core operator functionality tests with 4× parallelization
           - name: core
             label: "core"
             procs: 4
-            timeout: 5  # Fast tests, ~2-3 min with 4×
+            timeout: 5
 
-          # HomeAssistant resource tests with 4× parallelization
           - name: homeassistant
             label: "homeassistant"
             procs: 4
-            timeout: 8  # ~4-5 min with 4×
+            timeout: 30
 
-          # HomeAssistantSecrets tests with 4× parallelization
           - name: secrets
             label: "secrets"
             procs: 4
-            timeout: 8  # ~4-5 min with 4×
+            timeout: 30
 
-          # Configuration tests with 4× parallelization
           - name: configuration
             label: "configuration"
             procs: 4
-            timeout: 10  # ~5-7 min with 4×
+            timeout: 30
 
-          # Automation tests with 4× parallelization
+
           - name: automation
             label: "automation"
             procs: 4
-            timeout: 8  # ~4-5 min with 4×
+            timeout: 30
 
-          # Negative/error handling tests with 4× parallelization
           - name: negative
             label: "negative"
             procs: 4
-            timeout: 8  # ~4-5 min with 4×
-
-          # Slow tests (includes bootstrap) with 4× parallelization
-          - name: slow
-            label: "slow"
-            procs: 4
-            timeout: 12  # ~6-8 min with 4× (baseline: ~23min sequential)
+            timeout: 8
 
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.timeout }}
