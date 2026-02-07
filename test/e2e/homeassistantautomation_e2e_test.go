@@ -1284,45 +1284,75 @@ spec:
 
 // collectAutomationDebugInfo collects debug information when automation test fails
 func collectAutomationDebugInfo(namespace, haName, automationName string) {
-	fmt.Println("\n=== DEBUG INFO: HomeAssistantAutomation Test Failed ===")
+	// Helper function for best-effort logging to GinkgoWriter
+	// Ignores write errors since debug output is non-critical
+	writeDebug := func(format string, args ...any) {
+		_, _ = fmt.Fprintf(GinkgoWriter, format, args...) // best-effort logging; ignore write errors
+	}
+
+	writeDebug("\n=== DEBUG INFO: HomeAssistantAutomation Test Failed ===\n")
 
 	// Automation CR describe
-	fmt.Println("\n--- HomeAssistantAutomation describe ---")
-	descCmd := exec.Command("kubectl", "describe", "haauto", automationName, "-n", namespace)
-	output, _ := descCmd.CombinedOutput()
-	fmt.Println(string(output))
+	writeDebug("\n--- HomeAssistantAutomation describe ---\n")
+	cmd := exec.Command("kubectl", "describe", "haauto", automationName, "-n", namespace)
+	output, err := utils.Run(cmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
 	// Automation status
-	fmt.Println("\n--- HomeAssistantAutomation status ---")
-	statusCmd := exec.Command("kubectl", "get", "haauto", automationName, "-n", namespace, "-o", "yaml")
-	output, _ = statusCmd.CombinedOutput()
-	fmt.Println(string(output))
+	writeDebug("\n--- HomeAssistantAutomation status ---\n")
+	cmd = exec.Command("kubectl", "get", "haauto", automationName, "-n", namespace, "-o", "yaml")
+	output, err = utils.Run(cmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
 	// ConfigMap content
-	fmt.Println("\n--- Automations ConfigMap ---")
+	writeDebug("\n--- Automations ConfigMap ---\n")
 	configMapName := haName + "-automations"
-	cmCmd := exec.Command("kubectl", "get", "configmap", configMapName, "-n", namespace, "-o", "yaml")
-	output, _ = cmCmd.CombinedOutput()
-	fmt.Println(string(output))
+	cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", namespace, "-o", "yaml")
+	output, err = utils.Run(cmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
 	// HomeAssistant CR
-	fmt.Println("\n--- HomeAssistant CR ---")
-	haCmd := exec.Command("kubectl", "get", "ha", haName, "-n", namespace, "-o", "yaml")
-	output, _ = haCmd.CombinedOutput()
-	fmt.Println(string(output))
+	writeDebug("\n--- HomeAssistant CR ---\n")
+	cmd = exec.Command("kubectl", "get", "ha", haName, "-n", namespace, "-o", "yaml")
+	output, err = utils.Run(cmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
 	// Events
-	fmt.Println("\n--- Events ---")
-	eventsCmd := exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
-	output, _ = eventsCmd.CombinedOutput()
-	fmt.Println(string(output))
+	writeDebug("\n--- Events ---\n")
+	cmd = exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
+	output, err = utils.Run(cmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
 	// Operator logs (last 50 lines)
-	fmt.Println("\n--- Operator logs (last 50 lines) ---")
-	logsCmd := exec.Command("kubectl", "logs", "-n", "homeassistant-operator-system",
+	writeDebug("\n--- Operator logs (last 50 lines) ---\n")
+	cmd = exec.Command("kubectl", "logs", "-n", "homeassistant-operator-system",
 		"-l", "control-plane=controller-manager", "--tail=50")
-	output, _ = logsCmd.CombinedOutput()
-	fmt.Println(string(output))
+	output, err = utils.Run(cmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	} else {
+		writeDebug("Error: %v\n", err)
+	}
 
-	fmt.Println("\n=== END DEBUG INFO ===")
+	writeDebug("\n=== END DEBUG INFO ===\n")
 }
