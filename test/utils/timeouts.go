@@ -24,14 +24,16 @@ const (
 	// - Database initialization
 	// - Integration discovery
 	// Increased for CI environments with limited resources (GitHub Actions: 4 CPU / 16 GB RAM)
-	HAPodReadyTimeout = 12 * time.Minute
+	// Further increased to 20 minutes for E2E tests with slower startup times
+	HAPodReadyTimeout = 20 * time.Minute
 
 	// BootstrapTimeout is the timeout for complete bootstrap process including:
 	// - HA startup (see HAPodReadyTimeout)
 	// - Onboarding workflow
 	// - API token generation
 	// Increased for CI environments with limited resources
-	BootstrapTimeout = 15 * time.Minute
+	// Increased to 25 minutes to account for HAPodReadyTimeout increase
+	BootstrapTimeout = 25 * time.Minute
 
 	// HotReloadTimeout is the timeout for hot-reload operations via REST API.
 	// Should be fast as it's just an HTTP call to reload config.

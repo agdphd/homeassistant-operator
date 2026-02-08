@@ -28,7 +28,7 @@ The Home Assistant Operator automates the deployment and lifecycle management of
 | `HomeAssistant` | Alpha | Core Home Assistant deployment |
 | `HomeAssistantSecrets` | Alpha | Declarative secrets management |
 | `HomeAssistantConfiguration` | Alpha | Declarative configuration with hot-reload |
-
+| `HomeAssistantAutomation` | Alpha | Declarative automation management with hot-reload |
 
 ## Quick Start
 
@@ -73,15 +73,6 @@ kubectl delete -f https://raw.githubusercontent.com/przemekhys/homeassistant-ope
 # Remove operator
 kubectl delete -f https://raw.githubusercontent.com/przemekhys/homeassistant-operator/main/dist/install.yaml
 ```
-
-#### Example Configurations
-
-See complete examples in [config/samples/](config/samples/):
-
-- **[ha_v1alpha1_homeassistant_with_config.yaml](config/samples/ha_v1alpha1_homeassistant_with_config.yaml)** - Basic configuration with `auto` strategy (recommended)
-- **[haconfig_hot_reload_strategy.yaml](config/samples/haconfig_hot_reload_strategy.yaml)** - Force hot-reload strategy
-- **[haconfig_restart_strategy.yaml](config/samples/haconfig_restart_strategy.yaml)** - Force restart strategy
-- **[complete_example_with_secrets.yaml](config/samples/complete_example_with_secrets.yaml)** - Complete example with secrets management
 
 
 ## Development

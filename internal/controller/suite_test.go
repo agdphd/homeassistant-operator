@@ -66,7 +66,8 @@ var _ = BeforeSuite(func() {
 	By("bootstrapping test environment")
 	// Default to strict CRD checking (fail fast on missing CRDs)
 	// Can be disabled by setting SKIP_MISSING_CRD_ERRORS=true
-	errorIfCRDPathMissing := os.Getenv("SKIP_MISSING_CRD_ERRORS") != "true"
+	const trueValue = "true"
+	errorIfCRDPathMissing := os.Getenv("SKIP_MISSING_CRD_ERRORS") != trueValue
 
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},

@@ -19,8 +19,10 @@ package controller
 import (
 	"context"
 
+	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
 )
@@ -37,4 +39,55 @@ func getHomeAssistant(
 		return nil, err
 	}
 	return ha, nil
+}
+
+// isServiceReadyFromEndpointSlices checks if a Service has ready endpoints using EndpointSlice API.
+// Returns true if at least one ready endpoint address is found, false otherwise.
+// This replaces deprecated corev1.Endpoints usage.
+func isServiceReadyFromEndpointSlices(
+	ctx context.Context,
+	c client.Client,
+	serviceName string,
+	namespace string,
+) bool {
+	log := logf.FromContext(ctx)
+
+	// List EndpointSlices for this service
+	// EndpointSlices are labeled with kubernetes.io/service-name
+	endpointSliceList := &discoveryv1.EndpointSliceList{}
+	listOpts := []client.ListOption{
+		client.InNamespace(namespace),
+		client.MatchingLabels{
+			discoveryv1.LabelServiceName: serviceName,
+		},
+	}
+
+	if err := c.List(ctx, endpointSliceList, listOpts...); err != nil {
+		log.V(1).Info("Failed to list EndpointSlices", "error", err)
+		return false
+	}
+
+	if len(endpointSliceList.Items) == 0 {
+		log.V(1).Info("No EndpointSlices found for service")
+		return false
+	}
+
+	// Check if any endpoint is ready
+	for _, endpointSlice := range endpointSliceList.Items {
+		for _, endpoint := range endpointSlice.Endpoints {
+			// Check if endpoint is ready (conditions.ready == true)
+			if endpoint.Conditions.Ready != nil && *endpoint.Conditions.Ready {
+				// Check if endpoint has addresses
+				if len(endpoint.Addresses) > 0 {
+					log.V(1).Info("Service has ready endpoints",
+						"endpointSlice", endpointSlice.Name,
+						"addresses", len(endpoint.Addresses))
+					return true
+				}
+			}
+		}
+	}
+
+	log.V(1).Info("Service has no ready endpoints")
+	return false
 }

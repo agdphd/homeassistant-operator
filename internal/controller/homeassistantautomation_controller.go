@@ -69,6 +69,7 @@ type HomeAssistantAutomationReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -447,6 +448,14 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 		return nil
 	}
 
+	// Check if Home Assistant Service is ready before attempting hot-reload
+	if !r.isHomeAssistantServiceReady(ctx, ha) {
+		log.Info("Home Assistant Service not ready yet, skipping hot-reload (will retry on next reconcile)")
+		automation.Status.LastError = "Service not ready - waiting for pod readiness"
+		// Return error to prevent updating AutomationHash until reload succeeds
+		return fmt.Errorf("home assistant service not ready - retrying hot-reload")
+	}
+
 	// Construct Home Assistant URL
 	// Service name matches the HomeAssistant CR name (see homeassistant_controller.go buildService)
 	haURL := fmt.Sprintf(
@@ -565,4 +574,14 @@ func (r *HomeAssistantAutomationReconciler) validateHomeAssistantRef(
 		return nil, err
 	}
 	return ha, nil
+}
+
+// isHomeAssistantServiceReady checks if the HomeAssistant Service has ready endpoints
+// Returns true if service endpoints are available, false otherwise
+// Uses the shared EndpointSlice-based helper to avoid deprecated Endpoints API
+func (r *HomeAssistantAutomationReconciler) isHomeAssistantServiceReady(
+	ctx context.Context,
+	ha *hav1alpha1.HomeAssistant,
+) bool {
+	return isServiceReadyFromEndpointSlices(ctx, r.Client, ha.Name, ha.Namespace)
 }
