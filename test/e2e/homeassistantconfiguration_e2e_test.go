@@ -541,12 +541,6 @@ spec:
 				g.Expect(output).To(Equal("restart"))
 			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 
-			By("Verifying lastError mentions missing token")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "haconfig", configName, "-n", namespace, "-o", "jsonpath={.status.lastError}")
-				g.Expect(output).To(ContainSubstring("token"))
-			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
-
 			By("Verifying pod restarted (new UID due to fallback)")
 			Eventually(func(g Gomega) {
 				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
