@@ -488,7 +488,7 @@ spec:
 				g.Expect(readyOutput).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, haPodReadyInterval).Should(Succeed())
 
-			By("Updating HomeAssistantConfiguration to use force hot-reload strategy")
+			By("Creating initial HomeAssistantConfiguration with auto strategy (default)")
 			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantConfiguration
 metadata:
@@ -497,7 +497,6 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  reloadStrategy: hot-reload
   configuration: |
     homeassistant:
       name: Home
@@ -527,7 +526,6 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  reloadStrategy: hot-reload
   configuration: |
     automation:
       - alias: "Test"

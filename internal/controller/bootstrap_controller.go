@@ -362,9 +362,12 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 
 	// Check if we already tried deleting the pod (prevent infinite loop)
 	// Use annotation on HomeAssistant CR to track deletion attempts
-	const bootstrapRetryAttemptedKey = "ha.homeassistant.io/bootstrap-retry-attempted"
+	const (
+		bootstrapRetryAttemptedKey = "ha.homeassistant.io/bootstrap-retry-attempted"
+		trueValue                  = "true"
+	)
 
-	if ha.ObjectMeta.Annotations != nil && ha.ObjectMeta.Annotations[bootstrapRetryAttemptedKey] == "true" {
+	if ha.Annotations != nil && ha.Annotations[bootstrapRetryAttemptedKey] == trueValue {
 		// Already attempted pod deletion - give up to prevent loop
 		log.Info("Bootstrap retry already attempted (annotation present), not retrying deletion to prevent loop")
 		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
@@ -374,10 +377,10 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 	}
 
 	// Mark that we're attempting deletion by setting annotation
-	if ha.ObjectMeta.Annotations == nil {
-		ha.ObjectMeta.Annotations = make(map[string]string)
+	if ha.Annotations == nil {
+		ha.Annotations = make(map[string]string)
 	}
-	ha.ObjectMeta.Annotations[bootstrapRetryAttemptedKey] = "true"
+	ha.Annotations[bootstrapRetryAttemptedKey] = trueValue
 	if err := r.Update(ctx, ha); err != nil {
 		log.Error(err, "Failed to set bootstrap retry annotation")
 		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
