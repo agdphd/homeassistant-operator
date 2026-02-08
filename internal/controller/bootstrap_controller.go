@@ -376,19 +376,6 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 			false, false)
 	}
 
-	// Mark that we're attempting deletion by setting annotation
-	if ha.Annotations == nil {
-		ha.Annotations = make(map[string]string)
-	}
-	ha.Annotations[bootstrapRetryAttemptedKey] = trueValue
-	if err := r.Update(ctx, ha); err != nil {
-		log.Error(err, "Failed to set bootstrap retry annotation")
-		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
-			fmt.Sprintf("Failed to mark retry attempt: %v", err),
-			false, false)
-	}
-	log.Info("Set bootstrap retry annotation on HomeAssistant CR")
-
 	// Get pod for deletion
 	podName := ha.Name + "-0"
 	pod := &corev1.Pod{}
@@ -416,6 +403,20 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 			false, false)
 	}
 	log.Info("Deleted pod successfully", "pod", podName)
+
+	// Mark that we've attempted deletion by setting annotation
+	// (Only set after successful deletion to allow retry on transient delete failures)
+	if ha.Annotations == nil {
+		ha.Annotations = make(map[string]string)
+	}
+	ha.Annotations[bootstrapRetryAttemptedKey] = trueValue
+	if err := r.Update(ctx, ha); err != nil {
+		log.Error(err, "Failed to set bootstrap retry annotation after pod deletion")
+		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
+			fmt.Sprintf("Pod deleted but failed to mark retry attempt: %v", err),
+			false, false)
+	}
+	log.Info("Set bootstrap retry annotation after successful pod deletion")
 
 	return r.updateBootstrapStatus(ctx, ha, reasonBootstrapInProgress,
 		"Deleted pod to force fresh start - bootstrap will retry when pod recreates",
