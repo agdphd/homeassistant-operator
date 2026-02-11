@@ -407,6 +407,7 @@ func (r *HomeAssistantAutomationReconciler) automationToYaml(
 }
 
 // performAutomationReload triggers hot-reload of automations via Home Assistant REST API
+// nolint:dupl // Similar to performSceneReload by design - common hot-reload pattern
 func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 	ctx context.Context,
 	automation *hav1alpha1.HomeAssistantAutomation,

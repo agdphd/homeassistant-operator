@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+
+- **HomeAssistantAutomation CRD**: Declarative automation management with hot-reload capabilities
+  - Full automation definition via CRD with triggers, conditions, and actions
+  - Uses `runtime.RawExtension` for flexible YAML compatibility with Home Assistant syntax
+  - Aggregates multiple automation CRs into single ConfigMap (`<name>-automations`)
+  - Hot-reload via REST API (`/api/services/automation/reload`) with automatic fallback to pod restart
+  - Finalizer-based deletion: regenerates ConfigMap without removed automation before CR deletion
+  - Enable/disable without deletion via `spec.enabled` field
+  - Execution modes: `single`, `restart`, `queued`, `parallel`
+  - Short names: `haautomation`, `haauto`
+
+- **HomeAssistantScene CRD**: Declarative scene management for Home Assistant
+  - Aggregation pattern - multiple CR instances → single `scenes.yaml`
+  - Hot-reload via REST API (`/api/services/scene/reload`) for zero-downtime updates
+  - Entity validation with pattern regex (`domain.object_id`)
+  - Flexible entity attributes support via `runtime.RawExtension`
+  - Short names: `hascene`, `hasc`
+  - Status tracking: Ready, LastActivated, LastReloadTime
+  - Finalizer-based cleanup - regenerates ConfigMap without deleted scene
+  - Auto-reload control via `spec.autoReload` (default: true)
+- **HAClient Extension**: Added `ReloadScenes()` method for scene hot-reload
+
+
 ## [0.3.0] - 2026-01-27
 
 ### Added
@@ -79,6 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Primary: k3s on Raspberry Pi 4/5 (ARM64)
 - Also supported: Any Kubernetes cluster (AMD64/ARM64)
 
+[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.3.0
 [0.2.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.2.0
 [0.1.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.1.0

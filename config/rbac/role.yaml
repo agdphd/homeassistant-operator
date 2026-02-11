@@ -45,6 +45,7 @@ rules:
   - homeassistantautomations
   - homeassistantconfigurations
   - homeassistants
+  - homeassistantscenes
   verbs:
   - create
   - delete
@@ -59,6 +60,7 @@ rules:
   - homeassistantautomations/finalizers
   - homeassistantconfigurations/finalizers
   - homeassistants/finalizers
+  - homeassistantscenes/finalizers
   - homeassistantsecrets/finalizers
   verbs:
   - update
@@ -68,6 +70,7 @@ rules:
   - homeassistantautomations/status
   - homeassistantconfigurations/status
   - homeassistants/status
+  - homeassistantscenes/status
   - homeassistantsecrets/status
   verbs:
   - get
