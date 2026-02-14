@@ -78,21 +78,25 @@ jobs:
           # Automation tests - fast path (no bootstrap)
           - name: automation-fast
             label: "automation && fast"
+            procs: 4
             timeout: 20
 
           # Automation tests - slow path (with bootstrap/hot-reload)
           - name: automation-slow
             label: "automation && slow"
+            procs: 4
             timeout: 45
 
           # Scene tests - fast path (no bootstrap)
           - name: scene-fast
             label: "scene && fast"
+            procs: 4
             timeout: 20
 
           # Scene tests - slow path (with bootstrap/hot-reload)
           - name: scene-slow
             label: "scene && slow"
+            procs: 4
             timeout: 45
 
     runs-on: ubuntu-latest
