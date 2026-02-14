@@ -140,6 +140,13 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return r.updateStatusFailed(ctx, ha, err)
 	}
 
+	// Ensure automations and scenes ConfigMaps exist (empty if no CRs yet)
+	// This prevents Kubernetes from creating directories instead of files when mounting with subPath
+	if err := r.ensureAutomationsAndScenesConfigMaps(ctx, ha); err != nil {
+		log.Error(err, "Failed to ensure automations/scenes ConfigMaps")
+		return r.updateStatusFailed(ctx, ha, err)
+	}
+
 	// Reconcile StatefulSet
 	if err := r.reconcileStatefulSet(ctx, ha); err != nil {
 		log.Error(err, "Failed to reconcile StatefulSet")
@@ -230,6 +237,71 @@ func (r *HomeAssistantReconciler) buildPVC(ha *hav1alpha1.HomeAssistant, name st
 	}
 
 	return pvc
+}
+
+// ensureAutomationsAndScenesConfigMaps ensures that empty ConfigMaps exist for automations.yaml and scenes.yaml
+// This prevents Kubernetes from creating empty directories when mounting with subPath + Optional: true
+// The ConfigMaps will be populated later by HomeAssistantAutomation and HomeAssistantScene controllers
+func (r *HomeAssistantReconciler) ensureAutomationsAndScenesConfigMaps(
+	ctx context.Context, ha *hav1alpha1.HomeAssistant,
+) error {
+	log := logf.FromContext(ctx)
+
+	// Ensure automations ConfigMap exists
+	automationsConfigMapName := ha.Name + "-automations"
+	automationsConfigMap := &corev1.ConfigMap{}
+	err := r.Get(ctx, types.NamespacedName{Name: automationsConfigMapName, Namespace: ha.Namespace}, automationsConfigMap)
+	if err != nil && errors.IsNotFound(err) {
+		// Create empty ConfigMap with empty list
+		automationsConfigMap = &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      automationsConfigMapName,
+				Namespace: ha.Namespace,
+				Labels:    r.labelsForHomeAssistant(ha),
+			},
+			Data: map[string]string{
+				"automations.yaml": "[]",
+			},
+		}
+		if err := controllerutil.SetControllerReference(ha, automationsConfigMap, r.Scheme); err != nil {
+			return fmt.Errorf("failed to set owner reference for automations ConfigMap: %w", err)
+		}
+		log.Info("Creating empty automations ConfigMap", "ConfigMap.Name", automationsConfigMapName)
+		if err := r.Create(ctx, automationsConfigMap); err != nil {
+			return fmt.Errorf("failed to create automations ConfigMap: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("failed to get automations ConfigMap: %w", err)
+	}
+
+	// Ensure scenes ConfigMap exists
+	scenesConfigMapName := ha.Name + "-scenes"
+	scenesConfigMap := &corev1.ConfigMap{}
+	err = r.Get(ctx, types.NamespacedName{Name: scenesConfigMapName, Namespace: ha.Namespace}, scenesConfigMap)
+	if err != nil && errors.IsNotFound(err) {
+		// Create empty ConfigMap with empty list
+		scenesConfigMap = &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      scenesConfigMapName,
+				Namespace: ha.Namespace,
+				Labels:    r.labelsForHomeAssistant(ha),
+			},
+			Data: map[string]string{
+				"scenes.yaml": "[]",
+			},
+		}
+		if err := controllerutil.SetControllerReference(ha, scenesConfigMap, r.Scheme); err != nil {
+			return fmt.Errorf("failed to set owner reference for scenes ConfigMap: %w", err)
+		}
+		log.Info("Creating empty scenes ConfigMap", "ConfigMap.Name", scenesConfigMapName)
+		if err := r.Create(ctx, scenesConfigMap); err != nil {
+			return fmt.Errorf("failed to create scenes ConfigMap: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("failed to get scenes ConfigMap: %w", err)
+	}
+
+	return nil
 }
 
 // reconcileStatefulSet ensures the StatefulSet exists and is up to date
@@ -550,6 +622,46 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 			SubPath:   "secrets.yaml",
 		})
 	}
+
+	// Add ConfigMap volume for automations.yaml
+	// ConfigMap is always created by ensureAutomationsAndScenesConfigMaps()
+	// Empty ConfigMap contains "[]" - will be populated by HomeAssistantAutomation controller
+	automationsConfigMapName := ha.Name + "-automations"
+	volumes = append(volumes, corev1.Volume{
+		Name: "ha-automations",
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: automationsConfigMapName,
+				},
+			},
+		},
+	})
+	volumeMounts = append(volumeMounts, corev1.VolumeMount{
+		Name:      "ha-automations",
+		MountPath: "/config/automations.yaml",
+		SubPath:   "automations.yaml",
+	})
+
+	// Add ConfigMap volume for scenes.yaml
+	// ConfigMap is always created by ensureAutomationsAndScenesConfigMaps()
+	// Empty ConfigMap contains "[]" - will be populated by HomeAssistantScene controller
+	scenesConfigMapName := ha.Name + "-scenes"
+	volumes = append(volumes, corev1.Volume{
+		Name: "ha-scenes",
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: scenesConfigMapName,
+				},
+			},
+		},
+	})
+	volumeMounts = append(volumeMounts, corev1.VolumeMount{
+		Name:      "ha-scenes",
+		MountPath: "/config/scenes.yaml",
+		SubPath:   "scenes.yaml",
+	})
 
 	// Preserve existing pod template annotations from current StatefulSet
 	// This is critical to avoid infinite reconciliation loops when config hash annotations exist

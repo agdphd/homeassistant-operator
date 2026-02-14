@@ -242,6 +242,11 @@ spec:
                   LastError contains the error message from the last failed operation
                   Cleared when operation succeeds
                 type: string
+              lastReloadMethod:
+                description: |-
+                  LastReloadMethod indicates how the last reload was performed
+                  Possible values: "hot-reload", "restart", "none"
+                type: string
               lastReloadTime:
                 description: LastReloadTime is the timestamp of the last successful
                   reload

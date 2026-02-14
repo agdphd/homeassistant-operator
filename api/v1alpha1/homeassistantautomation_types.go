@@ -162,6 +162,11 @@ type HomeAssistantAutomationStatus struct {
 	// +optional
 	LastError string `json:"lastError,omitempty"`
 
+	// LastReloadMethod indicates how the last reload was performed
+	// Possible values: "hot-reload", "restart", "none"
+	// +optional
+	LastReloadMethod string `json:"lastReloadMethod,omitempty"`
+
 	// ObservedGeneration reflects the generation of the most recently observed HomeAssistantAutomation
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

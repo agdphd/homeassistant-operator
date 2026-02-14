@@ -50,14 +50,8 @@ const (
 	reasonConfigurationGenerated = "ConfigurationGenerated"
 	reasonConfigurationNotFound  = "ConfigurationNotFound"
 	reasonInvalidConfig          = "InvalidConfiguration"
-
-	// Reload method names for status tracking
-	reloadMethodRestart   = "restart"
-	reloadMethodHotReload = "hot-reload"
-	reloadMethodNone      = "none"
-
-	// Default port for Home Assistant
-	defaultHomeAssistantPort = 8123
+	// Note: reloadMethodRestart, reloadMethodHotReload, reloadMethodNone,
+	// and defaultHomeAssistantPort are defined in constants.go
 )
 
 // Critical sections that always require pod restart

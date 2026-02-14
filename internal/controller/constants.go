@@ -23,4 +23,15 @@ const (
 	// configHashAnnotationKey - Used by both HomeAssistant and
 	// HomeAssistantConfiguration controllers
 	configHashAnnotationKey = "ha.homeassistant.io/config-hash"
+
+	// Reload method names for status tracking
+	// Used by Configuration and Automation controllers
+	reloadMethodRestart   = "restart"
+	reloadMethodHotReload = "hot-reload"
+	reloadMethodNone      = "none"
+
+	// Home Assistant defaults
+	// Used across multiple controllers
+	defaultHomeAssistantPort = 8123
+	apiTokenSecretSuffix     = "-api-token"
 )

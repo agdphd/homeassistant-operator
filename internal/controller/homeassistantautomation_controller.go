@@ -54,6 +54,8 @@ const (
 	reasonInvalidAutomation   = "InvalidAutomation"
 	reasonReloadSucceeded     = "ReloadSucceeded"
 	reasonReloadFailed        = "ReloadFailed"
+	// Note: reloadMethodRestart, reloadMethodHotReload, reloadMethodNone,
+	// defaultHomeAssistantPort, and apiTokenSecretSuffix are defined in constants.go
 )
 
 // HomeAssistantAutomationReconciler reconciles a HomeAssistantAutomation object
@@ -117,8 +119,9 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 			log.Error(err, "Failed to add finalizer")
 			return ctrl.Result{}, err
 		}
-		// Continue with reconciliation after adding finalizer
-		log.V(1).Info("Finalizer added, continuing reconciliation")
+		// Return after adding finalizer to allow Kubernetes to trigger a new reconciliation
+		log.V(1).Info("Finalizer added, waiting for next reconciliation")
+		return ctrl.Result{}, nil
 	}
 
 	// Validate HomeAssistant reference exists
@@ -128,7 +131,8 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 	}
 	ha, err := r.validateHomeAssistantRef(ctx, haRef, automation)
 	if err != nil {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		// Requeue quickly to retry validation
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	// Calculate hash of the automation
@@ -156,7 +160,10 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 
 	// Perform hot-reload if enabled and hash changed
 	if automation.Status.AutomationHash != automationHash {
-		if err := r.performAutomationReload(ctx, automation, ha, automationHash); err != nil {
+		log.Info("Automation hash changed, triggering hot-reload",
+			"oldHash", automation.Status.AutomationHash,
+			"newHash", automationHash)
+		if err := r.performAutomationReload(ctx, automation, ha); err != nil {
 			log.Error(err, "Failed to reload automation")
 			meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
 				Type:               conditionTypeReady,
@@ -168,6 +175,8 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 			_ = r.Status().Update(ctx, automation)
 			return ctrl.Result{}, err
 		}
+	} else {
+		log.V(1).Info("Automation hash unchanged, skipping hot-reload", "hash", automationHash)
 	}
 
 	// Update status
@@ -312,6 +321,8 @@ func (r *HomeAssistantAutomationReconciler) reconcileAutomationsConfigMap(
 		if err := r.Update(ctx, existingConfigMap); err != nil {
 			return fmt.Errorf("failed to update ConfigMap: %w", err)
 		}
+		// Note: Hot-reload is handled in Reconcile() after hash comparison
+		// This avoids duplicate reload calls when multiple automations change
 	} else {
 		log.V(1).Info("ConfigMap unchanged, skipping update", "name", configMapName)
 	}
@@ -341,7 +352,7 @@ func (r *HomeAssistantAutomationReconciler) automationToYaml(
 		result["description"] = automation.Spec.Description
 	}
 
-	// Triggers
+	// Triggers (Home Assistant expects singular "trigger" key)
 	triggers := make([]interface{}, 0, len(automation.Spec.Triggers))
 	for _, trigger := range automation.Spec.Triggers {
 		var triggerMap interface{}
@@ -350,9 +361,9 @@ func (r *HomeAssistantAutomationReconciler) automationToYaml(
 		}
 		triggers = append(triggers, triggerMap)
 	}
-	result["triggers"] = triggers
+	result["trigger"] = triggers
 
-	// Conditions (optional)
+	// Conditions (optional, Home Assistant expects singular "condition" key)
 	if len(automation.Spec.Conditions) > 0 {
 		conditions := make([]interface{}, 0, len(automation.Spec.Conditions))
 		for _, condition := range automation.Spec.Conditions {
@@ -362,10 +373,10 @@ func (r *HomeAssistantAutomationReconciler) automationToYaml(
 			}
 			conditions = append(conditions, conditionMap)
 		}
-		result["conditions"] = conditions
+		result["condition"] = conditions
 	}
 
-	// Actions
+	// Actions (Home Assistant expects singular "action" key)
 	actions := make([]interface{}, 0, len(automation.Spec.Actions))
 	for _, action := range automation.Spec.Actions {
 		var actionMap interface{}
@@ -374,7 +385,7 @@ func (r *HomeAssistantAutomationReconciler) automationToYaml(
 		}
 		actions = append(actions, actionMap)
 	}
-	result["actions"] = actions
+	result["action"] = actions
 
 	// Mode
 	if automation.Spec.Mode != "" {
@@ -404,72 +415,6 @@ func (r *HomeAssistantAutomationReconciler) automationToYaml(
 	result["enabled"] = enabled
 
 	return result, nil
-}
-
-// performAutomationReload triggers hot-reload of automations via Home Assistant REST API
-// nolint:dupl // Similar to performSceneReload by design - common hot-reload pattern
-func (r *HomeAssistantAutomationReconciler) performAutomationReload(
-	ctx context.Context,
-	automation *hav1alpha1.HomeAssistantAutomation,
-	ha *hav1alpha1.HomeAssistant,
-	newHash string,
-) error {
-	log := logf.FromContext(ctx)
-
-	// Check if autoReload is enabled
-	autoReload := true
-	if automation.Spec.AutoReload != nil {
-		autoReload = *automation.Spec.AutoReload
-	}
-
-	if !autoReload {
-		log.Info("AutoReload disabled, skipping reload", "name", automation.Name)
-		automation.Status.LastError = ""
-		return nil
-	}
-
-	// Get API token from bootstrap secret
-	// Secret name matches bootstrap controller's naming: ha.Name + "-homeassistant-api-token"
-	tokenSecretName := ha.Name + "-homeassistant-api-token"
-	tokenSecret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: tokenSecretName, Namespace: ha.Namespace}, tokenSecret); err != nil {
-		if errors.IsNotFound(err) {
-			log.Info("API token not available, skipping hot-reload")
-			automation.Status.LastError = "API token not found - bootstrap may not be configured"
-			return nil
-		}
-		return fmt.Errorf("failed to get API token secret: %w", err)
-	}
-
-	token := string(tokenSecret.Data["token"])
-	if token == "" {
-		log.Info("API token empty, skipping hot-reload")
-		automation.Status.LastError = "API token is empty"
-		return nil
-	}
-
-	// Construct Home Assistant URL
-	// Service name matches the HomeAssistant CR name (see homeassistant_controller.go buildService)
-	haURL := fmt.Sprintf(
-		"http://%s.%s.svc.cluster.local:%d",
-		ha.Name, ha.Namespace, defaultHomeAssistantPort,
-	)
-	haClient := haclient.NewClient(haURL)
-
-	// Call automation reload endpoint
-	log.Info("Triggering automation hot-reload", "url", haURL)
-	if err := haClient.ReloadAutomations(ctx, token); err != nil {
-		automation.Status.LastError = fmt.Sprintf("Hot-reload failed: %v", err)
-		return fmt.Errorf("failed to reload automations via API: %w", err)
-	}
-
-	// Update status on success
-	now := metav1.Now()
-	automation.Status.LastReloadTime = &now
-	automation.Status.LastError = ""
-
-	log.Info("Automation hot-reload successful", "name", automation.Name, "hash", newHash)
-	return nil
 }
 
 // calculateAutomationHash computes SHA256 hash of the automation spec
@@ -566,4 +511,159 @@ func (r *HomeAssistantAutomationReconciler) validateHomeAssistantRef(
 		return nil, err
 	}
 	return ha, nil
+}
+
+// getApiToken retrieves the Home Assistant API token from Secret
+func (r *HomeAssistantAutomationReconciler) getApiToken(
+	ctx context.Context, ha *hav1alpha1.HomeAssistant,
+) (string, error) {
+	log := logf.FromContext(ctx)
+
+	// Get token secret name from HA status (set by bootstrap controller)
+	// Check if Bootstrap status is initialized
+	if ha.Status.Bootstrap == nil {
+		log.V(1).Info("Bootstrap status not initialized, API token not available")
+		return "", fmt.Errorf("bootstrap not configured")
+	}
+
+	tokenSecretName := ha.Status.Bootstrap.ApiTokenSecretName
+	if tokenSecretName == "" {
+		// Fallback: bootstrap may not be configured yet
+		log.V(1).Info("API token secret name not in status, bootstrap may not be complete")
+		return "", fmt.Errorf("API token secret name not available in HomeAssistant status")
+	}
+
+	tokenSecret := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: tokenSecretName, Namespace: ha.Namespace}, tokenSecret)
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			log.V(1).Info("API token secret not found, cannot perform hot-reload", "secret", tokenSecretName)
+			return "", err
+		}
+		return "", err
+	}
+
+	tokenBytes, ok := tokenSecret.Data["token"]
+	if !ok {
+		log.Error(fmt.Errorf("missing token key"), "API token secret missing key", "secret", tokenSecretName)
+		return "", fmt.Errorf("API token secret missing key 'token'")
+	}
+
+	return string(tokenBytes), nil
+}
+
+// buildHomeAssistantURL builds the internal cluster URL for Home Assistant service
+func (r *HomeAssistantAutomationReconciler) buildHomeAssistantURL(ha *hav1alpha1.HomeAssistant) string {
+	// Use internal Kubernetes service DNS name
+	// Format: <service-name>.<namespace>.svc.cluster.local:<port>
+	serviceName := ha.Name
+	port := defaultHomeAssistantPort
+	if ha.Spec.Service != nil && ha.Spec.Service.Port != 0 {
+		port = int(ha.Spec.Service.Port)
+	}
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", serviceName, ha.Namespace, port)
+}
+
+// performHotReloadAutomations attempts to hot-reload automations via HA REST API
+// Retries with fixed interval to handle kubelet ConfigMap sync delay
+func (r *HomeAssistantAutomationReconciler) performHotReloadAutomations(
+	ctx context.Context, haURL, token string,
+) error {
+	log := logf.FromContext(ctx)
+
+	haClient := haclient.NewClient(haURL)
+
+	log.Info("Attempting to hot-reload automations via REST API")
+
+	// Poll until reload succeeds
+	// Kubelet syncFrequency is typically 60s, so we need generous timeout
+	const maxRetries = 20 // 20 * 5s = 100s max wait
+	const retryInterval = 5 * time.Second
+
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			log.V(1).Info("Waiting before retry", "attempt", attempt+1, "interval", retryInterval)
+			time.Sleep(retryInterval)
+		}
+
+		// Try to reload automations
+		if err := haClient.ReloadAutomations(ctx, token); err != nil {
+			lastErr = err
+			log.V(1).Info("Failed to reload automations, will retry", "attempt", attempt+1, "error", err.Error())
+			continue
+		}
+
+		// Success
+		waitTime := time.Duration(attempt) * retryInterval
+		log.Info("Automations hot-reload successful", "attempts", attempt+1, "totalWaitTime", waitTime)
+		return nil
+	}
+
+	log.Error(lastErr,
+		"Automations hot-reload failed after retries",
+		"maxRetries", maxRetries)
+	return fmt.Errorf("timeout waiting for automations reload: %w", lastErr)
+}
+
+// performAutomationReload executes reload based on autoReload setting
+//
+//nolint:unparam // Always returns nil intentionally - errors are logged but don't fail reconciliation
+func (r *HomeAssistantAutomationReconciler) performAutomationReload(
+	ctx context.Context,
+	automation *hav1alpha1.HomeAssistantAutomation,
+	ha *hav1alpha1.HomeAssistant,
+) error {
+	log := logf.FromContext(ctx)
+
+	// Safe access to Bootstrap status
+	var bootstrapSecretName string
+	if ha.Status.Bootstrap != nil {
+		bootstrapSecretName = ha.Status.Bootstrap.ApiTokenSecretName
+	}
+
+	log.Info("performAutomationReload called",
+		"automation", automation.Name,
+		"ha", ha.Name,
+		"bootstrapSecretName", bootstrapSecretName)
+
+	// Check if autoReload is disabled
+	if automation.Spec.AutoReload != nil && !*automation.Spec.AutoReload {
+		log.Info("AutoReload disabled, skipping reload")
+		automation.Status.LastReloadMethod = reloadMethodNone
+		return nil
+	}
+
+	// Get API token for hot-reload
+	token, tokenErr := r.getApiToken(ctx, ha)
+	if tokenErr != nil {
+		log.Error(tokenErr, "API token not found - bootstrap may not be configured",
+			"expectedSecretName", bootstrapSecretName)
+		automation.Status.LastError = "API token not found - bootstrap may not be configured"
+		// Don't fail reconciliation - just skip hot-reload
+		// The automation is still added to ConfigMap
+		return nil
+	}
+
+	// Build Home Assistant URL
+	haURL := r.buildHomeAssistantURL(ha)
+	log.Info("Attempting hot-reload", "url", haURL)
+
+	// Attempt hot-reload
+	if err := r.performHotReloadAutomations(ctx, haURL, token); err != nil {
+		log.Error(err, "Hot-reload failed")
+		automation.Status.LastError = fmt.Sprintf("Hot-reload failed: %v", err)
+		// Don't fail reconciliation - automation is in ConfigMap
+		// It will be loaded on next HA restart
+		return nil
+	}
+
+	// Hot-reload succeeded
+	now := metav1.Now()
+	automation.Status.LastReloadTime = &now
+	automation.Status.LastReloadMethod = reloadMethodHotReload
+	automation.Status.LastError = ""
+	log.Info("Automation hot-reload successful")
+	return nil
 }
