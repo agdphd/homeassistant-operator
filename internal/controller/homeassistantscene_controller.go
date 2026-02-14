@@ -153,18 +153,9 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	// Perform hot-reload if enabled and hash changed
 	if scene.Status.SceneHash != sceneHash {
-		if err := r.performSceneReload(ctx, scene, ha, sceneHash); err != nil {
-			log.Error(err, "Failed to reload scene")
-			meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
-				Type:               conditionTypeReady,
-				Status:             metav1.ConditionFalse,
-				Reason:             "ReloadFailed",
-				Message:            err.Error(),
-				ObservedGeneration: scene.Generation,
-			})
-			_ = r.Status().Update(ctx, scene)
-			return ctrl.Result{}, err
-		}
+		// Fire-and-forget: performSceneReload always returns nil
+		// Sets Status.LastError/LastReloadTime internally
+		_ = r.performSceneReload(ctx, scene, ha, sceneHash)
 	}
 
 	// Update status
@@ -364,7 +355,8 @@ func (r *HomeAssistantSceneReconciler) sceneToYaml(
 }
 
 // performSceneReload triggers hot-reload of scenes via Home Assistant REST API
-// nolint:dupl // Similar to performAutomationReload by design - common hot-reload pattern
+//
+//nolint:dupl,unparam // dupl: Similar to performAutomationReload by design; unparam: Always returns nil intentionally
 func (r *HomeAssistantSceneReconciler) performSceneReload(
 	ctx context.Context,
 	scene *hav1alpha1.HomeAssistantScene,

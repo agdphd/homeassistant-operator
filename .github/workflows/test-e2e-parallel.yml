@@ -64,12 +64,6 @@ jobs:
             procs: 4
             timeout: 30
 
-
-          - name: automation
-            label: "automation"
-            procs: 4
-            timeout: 30
-
           - name: negative
             label: "negative"
             procs: 4

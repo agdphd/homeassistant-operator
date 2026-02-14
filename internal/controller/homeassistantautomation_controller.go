@@ -164,18 +164,9 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 		log.Info("Automation hash changed, triggering hot-reload",
 			"oldHash", automation.Status.AutomationHash,
 			"newHash", automationHash)
-		if err := r.performAutomationReload(ctx, automation, ha); err != nil {
-			log.Error(err, "Failed to reload automation")
-			meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
-				Type:               conditionTypeReady,
-				Status:             metav1.ConditionFalse,
-				Reason:             reasonReloadFailed,
-				Message:            err.Error(),
-				ObservedGeneration: automation.Generation,
-			})
-			_ = r.Status().Update(ctx, automation)
-			return ctrl.Result{}, err
-		}
+		// Fire-and-forget: performAutomationReload always returns nil
+		// Sets Status.LastError/LastReloadTime/LastReloadMethod internally
+		_ = r.performAutomationReload(ctx, automation, ha)
 	} else {
 		log.V(1).Info("Automation hash unchanged, skipping hot-reload", "hash", automationHash)
 	}
