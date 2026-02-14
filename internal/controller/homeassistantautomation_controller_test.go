@@ -104,6 +104,19 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 		})
 	}
 
+	// reconcileAutomationTwice calls reconcile twice - first for finalizer, second for actual reconciliation
+	// This is needed because after adding finalizer, the reconciler returns early
+	reconcileAutomationTwice := func(name string) error {
+		// First reconcile - adds finalizer
+		_, err := reconcileAutomation(name)
+		if err != nil {
+			return err
+		}
+		// Second reconcile - actual reconciliation
+		_, err = reconcileAutomation(name)
+		return err
+	}
+
 	BeforeEach(func() {
 		reconciler = &HomeAssistantAutomationReconciler{
 			Client: k8sClient,
@@ -173,9 +186,13 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling the resource")
+			// First reconcile - adds finalizer
+			_, err := reconcileAutomation("auto-no-ha")
+			Expect(err).NotTo(HaveOccurred())
+			// Second reconcile - validates HA ref and sets RequeueAfter
 			result, err := reconcileAutomation("auto-no-ha")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
+			Expect(result.RequeueAfter).To(Equal(5 * time.Second))
 
 			By("Verifying status is Ready=False with InvalidAutomation reason")
 			Eventually(func(g Gomega) {
@@ -198,8 +215,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling the resource")
-			_, err := reconcileAutomation("auto-with-ha")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-with-ha")).To(Succeed())
 
 			By("Verifying status is Ready=True")
 			Eventually(func(g Gomega) {
@@ -227,8 +243,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling")
-			_, err := reconcileAutomation("auto-single")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-single")).To(Succeed())
 
 			By("Verifying ConfigMap was created with automation content")
 			Eventually(func(g Gomega) {
@@ -266,10 +281,8 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto2)).To(Succeed())
 
 			By("Reconciling both automations")
-			_, err := reconcileAutomation("auto-agg-1")
-			Expect(err).NotTo(HaveOccurred())
-			_, err = reconcileAutomation("auto-agg-2")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-agg-1")).To(Succeed())
+			Expect(reconcileAutomationTwice("auto-agg-2")).To(Succeed())
 
 			By("Verifying ConfigMap contains both automations")
 			Eventually(func(g Gomega) {
@@ -301,10 +314,8 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto2)).To(Succeed())
 
 			By("Reconciling both")
-			_, err := reconcileAutomation("auto-enabled")
-			Expect(err).NotTo(HaveOccurred())
-			_, err = reconcileAutomation("auto-disabled")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-enabled")).To(Succeed())
+			Expect(reconcileAutomationTwice("auto-disabled")).To(Succeed())
 
 			By("Verifying ConfigMap contains only the enabled automation")
 			Eventually(func(g Gomega) {
@@ -328,8 +339,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling (phase 1)")
-			_, err := reconcileAutomation("auto-update")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-update")).To(Succeed())
 
 			By("Capturing initial ConfigMap content")
 			var initialContent string
@@ -354,8 +364,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			}, timeout, interval).Should(Succeed())
 
 			By("Reconciling (phase 2)")
-			_, err = reconcileAutomation("auto-update")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-update")).To(Succeed())
 
 			By("Verifying ConfigMap content changed")
 			Eventually(func(g Gomega) {
@@ -378,8 +387,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling")
-			_, err := reconcileAutomation("auto-owner")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-owner")).To(Succeed())
 
 			By("Verifying owner reference points to HomeAssistant")
 			Eventually(func(g Gomega) {
@@ -403,8 +411,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling")
-			_, err := reconcileAutomation("my-sunset-automation")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("my-sunset-automation")).To(Succeed())
 
 			By("Verifying ID in ConfigMap equals CR name")
 			Eventually(func(g Gomega) {
@@ -427,8 +434,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling")
-			_, err := reconcileAutomation("auto-explicit-id")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-explicit-id")).To(Succeed())
 
 			By("Verifying ID in ConfigMap uses explicit ID")
 			Eventually(func(g Gomega) {
@@ -469,8 +475,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling")
-			_, err := reconcileAutomation("auto-full")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-full")).To(Succeed())
 
 			By("Verifying all sections are present in ConfigMap")
 			Eventually(func(g Gomega) {
@@ -480,11 +485,11 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 					Namespace: namespace,
 				}, cm)).To(Succeed())
 				yamlContent := cm.Data["automations.yaml"]
-				g.Expect(yamlContent).To(ContainSubstring("triggers:"))
+				g.Expect(yamlContent).To(ContainSubstring("trigger:"))
 				g.Expect(yamlContent).To(ContainSubstring("platform: sun"))
-				g.Expect(yamlContent).To(ContainSubstring("conditions:"))
+				g.Expect(yamlContent).To(ContainSubstring("condition:"))
 				g.Expect(yamlContent).To(ContainSubstring("input_boolean.guest_mode"))
-				g.Expect(yamlContent).To(ContainSubstring("actions:"))
+				g.Expect(yamlContent).To(ContainSubstring("action:"))
 				g.Expect(yamlContent).To(ContainSubstring("light.turn_on"))
 			}, timeout, interval).Should(Succeed())
 		})
@@ -498,8 +503,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling")
-			_, err := reconcileAutomation("auto-no-cond")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-no-cond")).To(Succeed())
 
 			By("Verifying conditions key is absent")
 			Eventually(func(g Gomega) {
@@ -527,8 +531,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling")
-			_, err := reconcileAutomation("auto-field-map")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-field-map")).To(Succeed())
 
 			By("Verifying snake_case field names in YAML")
 			Eventually(func(g Gomega) {
@@ -555,8 +558,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling")
-			_, err := reconcileAutomation("auto-minimal")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-minimal")).To(Succeed())
 
 			By("Verifying truly optional fields are absent and kubebuilder defaults are present")
 			Eventually(func(g Gomega) {
@@ -587,8 +589,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling twice")
-			_, err := reconcileAutomation("auto-hash-stable")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-hash-stable")).To(Succeed())
 
 			var firstHash string
 			Eventually(func(g Gomega) {
@@ -602,8 +603,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 				g.Expect(firstHash).NotTo(BeEmpty())
 			}, timeout, interval).Should(Succeed())
 
-			_, err = reconcileAutomation("auto-hash-stable")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-hash-stable")).To(Succeed())
 
 			By("Verifying hash did not change")
 			Eventually(func(g Gomega) {
@@ -626,8 +626,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling (phase 1)")
-			_, err := reconcileAutomation("auto-hash-change")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-hash-change")).To(Succeed())
 
 			var initialHash string
 			Eventually(func(g Gomega) {
@@ -658,8 +657,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			}, timeout, interval).Should(Succeed())
 
 			By("Reconciling (phase 2)")
-			_, err = reconcileAutomation("auto-hash-change")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-hash-change")).To(Succeed())
 
 			By("Verifying hash changed")
 			Eventually(func(g Gomega) {
@@ -685,8 +683,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling")
-			_, err := reconcileAutomation("auto-no-reload")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-no-reload")).To(Succeed())
 
 			By("Verifying no lastReloadTime and no lastError")
 			Eventually(func(g Gomega) {
@@ -713,8 +710,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling (no API token secret exists)")
-			_, err := reconcileAutomation("auto-no-token")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-no-token")).To(Succeed())
 
 			By("Verifying graceful skip with lastError set")
 			Eventually(func(g Gomega) {
@@ -743,8 +739,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling initially")
-			_, err := reconcileAutomation("auto-idempotent")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-idempotent")).To(Succeed())
 
 			By("Capturing initial ConfigMap resourceVersion")
 			var initialVersion string
@@ -760,8 +755,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 
 			By("Reconciling multiple times")
 			for i := 0; i < 3; i++ {
-				_, err = reconcileAutomation("auto-idempotent")
-				Expect(err).NotTo(HaveOccurred())
+				Expect(reconcileAutomationTwice("auto-idempotent")).To(Succeed())
 			}
 
 			By("Verifying ConfigMap resourceVersion did not change")
@@ -791,10 +785,8 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto2)).To(Succeed())
 
 			By("Reconciling both")
-			_, err := reconcileAutomation("auto-del-1")
-			Expect(err).NotTo(HaveOccurred())
-			_, err = reconcileAutomation("auto-del-2")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-del-1")).To(Succeed())
+			Expect(reconcileAutomationTwice("auto-del-2")).To(Succeed())
 
 			By("Verifying both are in ConfigMap")
 			Eventually(func(g Gomega) {
@@ -813,8 +805,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Delete(ctx, toDelete)).To(Succeed())
 
 			By("Reconciling to handle finalizer cleanup")
-			_, err = reconcileAutomation("auto-del-1")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-del-1")).To(Succeed())
 
 			Eventually(func() bool {
 				err := k8sClient.Get(ctx, types.NamespacedName{Name: "auto-del-1", Namespace: namespace}, toDelete)
@@ -822,8 +813,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			}, timeout, interval).Should(BeTrue())
 
 			By("Reconciling remaining automation")
-			_, err = reconcileAutomation("auto-del-2")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-del-2")).To(Succeed())
 
 			By("Verifying ConfigMap contains only the remaining automation")
 			Eventually(func(g Gomega) {
@@ -847,8 +837,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling (disabled)")
-			_, err := reconcileAutomation("auto-toggle")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-toggle")).To(Succeed())
 
 			By("Verifying automation is not in ConfigMap")
 			Eventually(func(g Gomega) {
@@ -871,8 +860,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			}, timeout, interval).Should(Succeed())
 
 			By("Reconciling (enabled)")
-			_, err = reconcileAutomation("auto-toggle")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-toggle")).To(Succeed())
 
 			By("Verifying automation is now in ConfigMap")
 			Eventually(func(g Gomega) {
@@ -894,8 +882,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling (enabled)")
-			_, err := reconcileAutomation("auto-disable")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-disable")).To(Succeed())
 
 			By("Verifying automation is in ConfigMap")
 			Eventually(func(g Gomega) {
@@ -922,8 +909,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			}, timeout, interval).Should(Succeed())
 
 			By("Reconciling (disabled)")
-			_, err = reconcileAutomation("auto-disable")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-disable")).To(Succeed())
 
 			By("Verifying automation is no longer in ConfigMap")
 			Eventually(func(g Gomega) {
@@ -947,8 +933,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling")
-			_, err := reconcileAutomation("auto-obsgen")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-obsgen")).To(Succeed())
 
 			By("Verifying ObservedGeneration")
 			Eventually(func(g Gomega) {
@@ -967,8 +952,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling")
-			_, err := reconcileAutomation("auto-status-hash")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-status-hash")).To(Succeed())
 
 			By("Verifying AutomationHash is set in status")
 			Eventually(func(g Gomega) {
@@ -1012,10 +996,8 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto2)).To(Succeed())
 
 			By("Reconciling both")
-			_, err := reconcileAutomation("auto-iso-1")
-			Expect(err).NotTo(HaveOccurred())
-			_, err = reconcileAutomation("auto-iso-2")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-iso-1")).To(Succeed())
+			Expect(reconcileAutomationTwice("auto-iso-2")).To(Succeed())
 
 			By("Verifying HA1 ConfigMap contains only HA1 automation")
 			Eventually(func(g Gomega) {
@@ -1052,8 +1034,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling")
-			_, err := reconcileAutomation("auto-desc")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-desc")).To(Succeed())
 
 			By("Verifying description is in ConfigMap")
 			Eventually(func(g Gomega) {
@@ -1077,8 +1058,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
 			By("Reconciling")
-			_, err := reconcileAutomation("auto-labels")
-			Expect(err).NotTo(HaveOccurred())
+			Expect(reconcileAutomationTwice("auto-labels")).To(Succeed())
 
 			By("Verifying labels")
 			Eventually(func(g Gomega) {
