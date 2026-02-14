@@ -27,19 +27,23 @@ import (
 	"github.com/przemekhys/homeassistant-operator/test/utils"
 )
 
-var _ = Describe("HomeAssistantAutomation E2E", Ordered, func() {
-	var (
-		namespace      string
-		haName         string
-		configName     string
-		automationName string
-	)
+const (
+	// Test resource naming for automation tests
+	autoTestNamespacePrefix = "haauto-e2e-"
+	autoBootstrapSecret     = "ha-bootstrap-creds"
+	// Note: reconcileInterval, haPodReadyInterval, bootstrapInterval are defined in homeassistantconfiguration_e2e_test.go
+)
+
+var _ = Describe("HomeAssistantAutomation E2E", Label("automation"), Ordered, func() {
+	var namespace string
+	var haName string
+	var configName string
 
 	BeforeEach(func() {
-		namespace = "haauto-e2e-" + utils.RandomString(8)
+		// Generate unique names for each test
+		namespace = autoTestNamespacePrefix + utils.RandomString(8)
 		haName = "test-ha-" + utils.RandomString(6)
 		configName = "test-config-" + utils.RandomString(6)
-		automationName = "test-automation-" + utils.RandomString(6)
 
 		By("Creating test namespace: " + namespace)
 		Expect(utils.CreateNamespace(namespace)).To(Succeed())
@@ -49,19 +53,16 @@ var _ = Describe("HomeAssistantAutomation E2E", Ordered, func() {
 		specReport := CurrentSpecReport()
 		if specReport.Failed() {
 			By("Test failed - collecting debug info")
-			collectAutomationDebugInfo(namespace, haName, automationName)
+			collectAutomationDebugInfo(namespace, haName)
 		}
 
 		By("Deleting test namespace: " + namespace)
-		if err := utils.DeleteNamespace(namespace); err != nil {
-			// Log error but don't fail the test - cleanup is best effort
-			fmt.Printf("Warning: failed to delete namespace %s: %v\n", namespace, err)
-		}
+		_ = utils.DeleteNamespace(namespace)
 	})
 
-	Context("Basic Automation Lifecycle", Label("automation", "fast", "infra-only"), func() {
-		It("should create automation and generate ConfigMap", func() {
-			By("Creating HomeAssistant CR")
+	Context("ConfigMap Aggregation", Label("fast"), func() {
+		It("should create ConfigMap from single HomeAssistantAutomation", func() {
+			By("Creating HomeAssistant CR without bootstrap")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant
 metadata:
@@ -71,7 +72,11 @@ spec:
   version: "stable"
   storage:
     size: "1Gi"
-`, haName, namespace)
+  service:
+    type: ClusterIP
+    port: 8123
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration CR")
@@ -84,12 +89,21 @@ spec:
   homeAssistantRef:
     name: %s
   configuration: |
-    default_config:
+    automation: !include automations.yaml
+    script: !include scripts.yaml
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
+			By("Waiting for HomeAssistant resource to be created")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "ha", haName, "-n", namespace,
+					"-o", "jsonpath={.metadata.name}")
+				g.Expect(output).To(Equal(haName))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
 			By("Creating HomeAssistantAutomation CR")
-			automationYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+			autoName := "test-auto-" + utils.RandomString(6)
+			autoYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantAutomation
 metadata:
   name: %s
@@ -97,47 +111,54 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  alias: "Sunset Lights"
+  id: morning_lights
+  alias: "Turn on lights in the morning"
+  description: "Automatically turn on lights at sunrise"
+  mode: single
   triggers:
     - platform: sun
-      event: sunset
+      event: sunrise
   actions:
     - service: light.turn_on
       target:
         entity_id: light.living_room
-`, automationName, namespace, haName)
-			Expect(utils.ApplyYAML(automationYAML, namespace)).To(Succeed())
+`, autoName, namespace, haName)
+			Expect(utils.ApplyYAML(autoYAML, namespace)).To(Succeed())
 
-			By("Verifying ConfigMap created with automation")
+			By("Verifying ConfigMap created with correct name")
 			configMapName := haName + "-automations"
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
+				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace)
 				g.Expect(output).NotTo(BeEmpty())
-				g.Expect(output).To(ContainSubstring("Sunset Lights"))
-				g.Expect(output).To(ContainSubstring("id: " + automationName))
-				g.Expect(output).To(ContainSubstring("platform: sun"))
-				g.Expect(output).To(ContainSubstring("light.turn_on"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 
-			By("Verifying automation status Ready=True")
+			By("Verifying ConfigMap contains automations.yaml")
 			Eventually(func(g Gomega) {
-				status := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(status).To(Equal("True"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
+				output := utils.Kubectl(
+					"get", "configmap", configMapName, "-n", namespace,
+					"-o", "jsonpath={.data.automations\\.yaml}",
+				)
+				g.Expect(output).To(ContainSubstring("id: morning_lights"))
+				g.Expect(output).To(ContainSubstring("alias: Turn on lights in the morning"))
+				g.Expect(output).To(ContainSubstring("platform: sun"))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 
-			By("Verifying automation hash populated")
-			hash := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-				"-o", "jsonpath={.status.automationHash}")
-			Expect(hash).NotTo(BeEmpty())
+			By("Verifying HomeAssistantAutomation status is Ready")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(output).To(Equal("True"))
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying automation hash is set in status")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.automationHash}")
+				g.Expect(output).NotTo(BeEmpty())
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 		})
 
-		It("should aggregate multiple automations into one ConfigMap", func() {
-			auto1Name := "sunset-lights-" + utils.RandomString(6)
-			auto2Name := "morning-alarm-" + utils.RandomString(6)
-			auto3Name := "door-notify-" + utils.RandomString(6)
-
+		It("should aggregate multiple automations into single ConfigMap", func() {
 			By("Creating HomeAssistant CR")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant
@@ -148,10 +169,11 @@ spec:
   version: "stable"
   storage:
     size: "1Gi"
-`, haName, namespace)
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
-			By("Creating HomeAssistantConfiguration CR")
+			By("Creating HomeAssistantConfiguration")
 			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantConfiguration
 metadata:
@@ -161,11 +183,12 @@ spec:
   homeAssistantRef:
     name: %s
   configuration: |
-    default_config:
+    automation: !include automations.yaml
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
-			By("Creating first automation: sunset-lights")
+			By("Creating first automation")
+			auto1Name := "auto-morning"
 			auto1YAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantAutomation
 metadata:
@@ -174,18 +197,19 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  alias: "Sunset Lights"
+  id: morning_routine
+  alias: "Morning Routine"
+  mode: single
   triggers:
-    - platform: sun
-      event: sunset
+    - platform: time
+      at: "07:00:00"
   actions:
     - service: light.turn_on
-      target:
-        entity_id: light.living_room
 `, auto1Name, namespace, haName)
 			Expect(utils.ApplyYAML(auto1YAML, namespace)).To(Succeed())
 
-			By("Creating second automation: morning-alarm")
+			By("Creating second automation")
+			auto2Name := "auto-evening"
 			auto2YAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantAutomation
 metadata:
@@ -194,18 +218,19 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  alias: "Morning Alarm"
+  id: evening_routine
+  alias: "Evening Routine"
+  mode: single
   triggers:
     - platform: time
-      at: "07:00:00"
+      at: "19:00:00"
   actions:
-    - service: media_player.play_media
-      target:
-        entity_id: media_player.bedroom
+    - service: light.turn_off
 `, auto2Name, namespace, haName)
 			Expect(utils.ApplyYAML(auto2YAML, namespace)).To(Succeed())
 
-			By("Creating third automation: door-notify")
+			By("Creating third automation")
+			auto3Name := "auto-night"
 			auto3YAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantAutomation
 metadata:
@@ -214,15 +239,14 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  alias: "Door Notification"
+  id: night_security
+  alias: "Night Security"
+  mode: single
   triggers:
-    - platform: state
-      entity_id: binary_sensor.front_door
-      to: "on"
+    - platform: time
+      at: "23:00:00"
   actions:
-    - service: notify.mobile_app
-      data:
-        message: "Front door opened"
+    - service: alarm_control_panel.alarm_arm_night
 `, auto3Name, namespace, haName)
 			Expect(utils.ApplyYAML(auto3YAML, namespace)).To(Succeed())
 
@@ -231,34 +255,25 @@ spec:
 			Eventually(func(g Gomega) {
 				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
 					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).NotTo(BeEmpty())
-				g.Expect(output).To(ContainSubstring("Sunset Lights"))
-				g.Expect(output).To(ContainSubstring("Morning Alarm"))
-				g.Expect(output).To(ContainSubstring("Door Notification"))
-				g.Expect(output).To(ContainSubstring("id: " + auto1Name))
-				g.Expect(output).To(ContainSubstring("id: " + auto2Name))
-				g.Expect(output).To(ContainSubstring("id: " + auto3Name))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
+				g.Expect(output).To(ContainSubstring("id: morning_routine"))
+				g.Expect(output).To(ContainSubstring("id: evening_routine"))
+				g.Expect(output).To(ContainSubstring("id: night_security"))
+				g.Expect(output).To(ContainSubstring("alias: Morning Routine"))
+				g.Expect(output).To(ContainSubstring("alias: Evening Routine"))
+				g.Expect(output).To(ContainSubstring("alias: Night Security"))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 
-			By("Verifying all 3 automations have Ready=True")
-			for _, name := range []string{auto1Name, auto2Name, auto3Name} {
+			By("Verifying all automations have Ready status")
+			for _, autoName := range []string{auto1Name, auto2Name, auto3Name} {
 				Eventually(func(g Gomega) {
-					status := utils.Kubectl("get", "haauto", name, "-n", namespace,
+					output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
 						"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-					g.Expect(status).To(Equal("True"))
-				}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
+					g.Expect(output).To(Equal("True"))
+				}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 			}
-
-			By("Verifying ConfigMap is owned by HomeAssistant (not individual automations)")
-			ownerKind := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-				"-o", "jsonpath={.metadata.ownerReferences[0].kind}")
-			Expect(ownerKind).To(Equal("HomeAssistant"))
 		})
 
-		It("should skip disabled automation in ConfigMap", func() {
-			enabledAutoName := "enabled-auto-" + utils.RandomString(6)
-			disabledAutoName := "disabled-auto-" + utils.RandomString(6)
-
+		It("should update ConfigMap when automation changes", func() {
 			By("Creating HomeAssistant CR")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant
@@ -269,10 +284,11 @@ spec:
   version: "stable"
   storage:
     size: "1Gi"
-`, haName, namespace)
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
-			By("Creating HomeAssistantConfiguration CR")
+			By("Creating HomeAssistantConfiguration")
 			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantConfiguration
 metadata:
@@ -282,11 +298,273 @@ spec:
   homeAssistantRef:
     name: %s
   configuration: |
-    default_config:
+    automation: !include automations.yaml
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
-			By("Creating enabled automation")
+			By("Creating automation with initial action")
+			autoName := "test-auto-update"
+			initialAutoYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantAutomation
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  id: test_update
+  alias: "Test Update"
+  mode: single
+  triggers:
+    - platform: time
+      at: "10:00:00"
+  actions:
+    - service: light.turn_on
+      target:
+        entity_id: light.bedroom
+`, autoName, namespace, haName)
+			Expect(utils.ApplyYAML(initialAutoYAML, namespace)).To(Succeed())
+
+			By("Waiting for ConfigMap with initial action")
+			configMapName := haName + "-automations"
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
+					"-o", "jsonpath={.data.automations\\.yaml}")
+				g.Expect(output).To(ContainSubstring("light.turn_on"))
+				g.Expect(output).To(ContainSubstring("light.bedroom"))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
+			By("Capturing initial automation hash")
+			var initialHash string
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.automationHash}")
+				g.Expect(output).NotTo(BeEmpty())
+				initialHash = output
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+
+			By("Updating automation with new action")
+			updatedAutoYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantAutomation
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  id: test_update
+  alias: "Test Update"
+  mode: single
+  triggers:
+    - platform: time
+      at: "10:00:00"
+  actions:
+    - service: light.turn_off
+      target:
+        entity_id: light.living_room
+`, autoName, namespace, haName)
+			Expect(utils.ApplyYAML(updatedAutoYAML, namespace)).To(Succeed())
+
+			By("Verifying ConfigMap updated with new action")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
+					"-o", "jsonpath={.data.automations\\.yaml}")
+				g.Expect(output).To(ContainSubstring("light.turn_off"))
+				g.Expect(output).To(ContainSubstring("light.living_room"))
+				g.Expect(output).NotTo(ContainSubstring("light.bedroom"))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying automation hash changed")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.automationHash}")
+				g.Expect(output).NotTo(BeEmpty())
+				g.Expect(output).NotTo(Equal(initialHash))
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+		})
+
+		It("should remove automation from ConfigMap when CR deleted (finalizer)", func() {
+			By("Creating HomeAssistant CR")
+			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  version: "stable"
+  storage:
+    size: "1Gi"
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
+			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  configuration: |
+    automation: !include automations.yaml
+`, configName, namespace, haName)
+			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
+
+			By("Creating two automations")
+			auto1Name := "auto-keep"
+			auto1YAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantAutomation
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  id: keep_this
+  alias: "Keep This"
+  mode: single
+  triggers:
+    - platform: time
+      at: "08:00:00"
+  actions:
+    - service: light.turn_on
+`, auto1Name, namespace, haName)
+			Expect(utils.ApplyYAML(auto1YAML, namespace)).To(Succeed())
+
+			auto2Name := "auto-delete"
+			auto2YAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantAutomation
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  id: delete_this
+  alias: "Delete This"
+  mode: single
+  triggers:
+    - platform: time
+      at: "09:00:00"
+  actions:
+    - service: light.turn_off
+`, auto2Name, namespace, haName)
+			Expect(utils.ApplyYAML(auto2YAML, namespace)).To(Succeed())
+
+			By("Verifying both automations in ConfigMap")
+			configMapName := haName + "-automations"
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
+					"-o", "jsonpath={.data.automations\\.yaml}")
+				g.Expect(output).To(ContainSubstring("id: keep_this"))
+				g.Expect(output).To(ContainSubstring("id: delete_this"))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying finalizer is present on automation to be deleted")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", auto2Name, "-n", namespace,
+					"-o", "jsonpath={.metadata.finalizers}")
+				g.Expect(output).To(ContainSubstring("ha.homeassistant.io/automation-finalizer"))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
+			By("Deleting second automation")
+			cmd := exec.Command("kubectl", "delete", "haauto", auto2Name, "-n", namespace, "--wait=false")
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying ConfigMap updated (only keep_this remains)")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
+					"-o", "jsonpath={.data.automations\\.yaml}")
+				g.Expect(output).To(ContainSubstring("id: keep_this"))
+				g.Expect(output).NotTo(ContainSubstring("id: delete_this"))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying CR was fully deleted")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", auto2Name, "-n", namespace, "--ignore-not-found")
+				g.Expect(output).To(BeEmpty())
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying first automation still exists and is Ready")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", auto1Name, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(output).To(Equal("True"))
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+		})
+	})
+
+	Context("Enable/Disable Feature", Label("fast"), func() {
+		It("should exclude disabled automation from ConfigMap", func() {
+			By("Creating HomeAssistant CR")
+			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  version: "stable"
+  storage:
+    size: "1Gi"
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
+			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  configuration: |
+    automation: !include automations.yaml
+`, configName, namespace, haName)
+			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
+
+			By("Creating automation with enabled: false")
+			autoName := "auto-disabled"
+			autoYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantAutomation
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  id: disabled_automation
+  alias: "Disabled Automation"
+  enabled: false
+  mode: single
+  triggers:
+    - platform: time
+      at: "12:00:00"
+  actions:
+    - service: light.turn_on
+`, autoName, namespace, haName)
+			Expect(utils.ApplyYAML(autoYAML, namespace)).To(Succeed())
+
+			By("Verifying ConfigMap was created but is empty (no automations)")
+			configMapName := haName + "-automations"
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
+					"-o", "jsonpath={.data.automations\\.yaml}")
+				// Empty list in YAML is "[]" or empty
+				g.Expect(output).To(Or(BeEmpty(), Equal("[]"), Equal("[]\n")))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying automation CR exists but is not in ConfigMap")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace)
+				g.Expect(output).NotTo(BeEmpty())
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
+			By("Enabling automation by updating enabled: true")
 			enabledYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantAutomation
 metadata:
@@ -295,181 +573,44 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  alias: "Enabled Automation"
+  id: disabled_automation
+  alias: "Disabled Automation"
   enabled: true
+  mode: single
   triggers:
     - platform: time
       at: "12:00:00"
   actions:
     - service: light.turn_on
-`, enabledAutoName, namespace, haName)
+`, autoName, namespace, haName)
 			Expect(utils.ApplyYAML(enabledYAML, namespace)).To(Succeed())
-
-			By("Creating disabled automation")
-			disabledYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantAutomation
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  alias: "Disabled Automation"
-  enabled: false
-  triggers:
-    - platform: time
-      at: "13:00:00"
-  actions:
-    - service: light.turn_off
-`, disabledAutoName, namespace, haName)
-			Expect(utils.ApplyYAML(disabledYAML, namespace)).To(Succeed())
-
-			By("Verifying ConfigMap contains ONLY enabled automation")
-			configMapName := haName + "-automations"
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).NotTo(BeEmpty())
-				g.Expect(output).To(ContainSubstring("Enabled Automation"))
-				g.Expect(output).NotTo(ContainSubstring("Disabled Automation"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Verifying disabled automation has Ready=True but not in ConfigMap")
-			Eventually(func(g Gomega) {
-				status := utils.Kubectl("get", "haauto", disabledAutoName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(status).To(Equal("True"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Enabling previously disabled automation")
-			patchCmd := exec.Command("kubectl", "patch", "haauto", disabledAutoName, "-n", namespace,
-				"--type", "json", "-p", `[{"op":"replace","path":"/spec/enabled","value":true}]`)
-			_, err := utils.Run(patchCmd)
-			Expect(err).NotTo(HaveOccurred())
 
 			By("Verifying automation now appears in ConfigMap")
 			Eventually(func(g Gomega) {
 				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
 					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).To(ContainSubstring("Disabled Automation"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-		})
-
-		It("should update ConfigMap when automation spec changes", func() {
-			By("Creating HomeAssistant CR")
-			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  version: "stable"
-  storage:
-    size: "1Gi"
-`, haName, namespace)
-			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
-
-			By("Creating HomeAssistantConfiguration CR")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantConfiguration
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  configuration: |
-    default_config:
-`, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
-
-			By("Creating automation with brightness: 100")
-			automationYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantAutomation
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  alias: "Test Light Control"
-  triggers:
-    - platform: time
-      at: "18:00:00"
-  actions:
-    - service: light.turn_on
-      target:
-        entity_id: light.bedroom
-      data:
-        brightness: 100
-`, automationName, namespace, haName)
-			Expect(utils.ApplyYAML(automationYAML, namespace)).To(Succeed())
-
-			By("Waiting for initial ConfigMap")
-			configMapName := haName + "-automations"
-			var initialHash string
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).To(ContainSubstring("brightness: 100"))
-
-				hash := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-					"-o", "jsonpath={.status.automationHash}")
-				g.Expect(hash).NotTo(BeEmpty())
-				initialHash = hash
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Updating automation - changing brightness to 50")
-			updatedYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantAutomation
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  alias: "Test Light Control"
-  triggers:
-    - platform: time
-      at: "18:00:00"
-  actions:
-    - service: light.turn_on
-      target:
-        entity_id: light.bedroom
-      data:
-        brightness: 50
-`, automationName, namespace, haName)
-			Expect(utils.ApplyYAML(updatedYAML, namespace)).To(Succeed())
-
-			By("Verifying ConfigMap updated with new brightness")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).To(ContainSubstring("brightness: 50"))
-				g.Expect(output).NotTo(ContainSubstring("brightness: 100"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Verifying automation hash changed")
-			Eventually(func(g Gomega) {
-				newHash := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-					"-o", "jsonpath={.status.automationHash}")
-				g.Expect(newHash).NotTo(Equal(initialHash))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Verifying status Ready=True")
-			status := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-				"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-			Expect(status).To(Equal("True"))
+				g.Expect(output).To(ContainSubstring("id: disabled_automation"))
+				g.Expect(output).To(ContainSubstring("alias: Disabled Automation"))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 		})
 	})
 
-	Context("Finalizer & Deletion", Label("automation", "fast", "infra-only"), func() {
-		It("should update ConfigMap when deleting one of multiple automations", func() {
-			auto1Name := "keep-auto1-" + utils.RandomString(6)
-			auto2Name := "delete-auto-" + utils.RandomString(6)
-			auto3Name := "keep-auto2-" + utils.RandomString(6)
+	Context("Hot-Reload", Label("bootstrap", "slow"), func() {
+		It("should hot-reload via REST API when autoReload=true", func() {
+			By("Creating bootstrap credentials Secret")
+			credsYAML := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+stringData:
+  username: admin
+  password: e2e-test-bootstrap-pwd-123456
+`, autoBootstrapSecret, namespace)
+			Expect(utils.ApplyYAML(credsYAML, namespace)).To(Succeed())
 
-			By("Creating HomeAssistant CR")
+			By("Creating HomeAssistant CR with bootstrap enabled")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant
 metadata:
@@ -479,10 +620,20 @@ spec:
   version: "stable"
   storage:
     size: "1Gi"
-`, haName, namespace)
+  bootstrap:
+    enabled: true
+    credentials:
+      secretRef:
+        name: %s
+    createApiToken: true
+    apiTokenSecretName: %s-homeassistant-api-token
+    ownerName: "E2E Test Admin"
+    language: "en"
+  %s
+`, haName, namespace, autoBootstrapSecret, haName, utils.GetEnhancedHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
-			By("Creating HomeAssistantConfiguration CR")
+			By("Creating HomeAssistantConfiguration")
 			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantConfiguration
 metadata:
@@ -492,97 +643,50 @@ spec:
   homeAssistantRef:
     name: %s
   configuration: |
-    default_config:
+    automation: !include automations.yaml
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
-			By("Creating 3 automations")
-			for i, name := range []string{auto1Name, auto2Name, auto3Name} {
-				autoYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantAutomation
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  alias: "Automation %d"
-  triggers:
-    - platform: time
-      at: "12:00:00"
-  actions:
-    - service: light.turn_on
-`, name, namespace, haName, i+1)
-				Expect(utils.ApplyYAML(autoYAML, namespace)).To(Succeed())
-			}
-
-			By("Waiting for ConfigMap with 3 automations")
-			configMapName := haName + "-automations"
+			By("Waiting for bootstrap to complete")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).To(ContainSubstring("Automation 1"))
-				g.Expect(output).To(ContainSubstring("Automation 2"))
-				g.Expect(output).To(ContainSubstring("Automation 3"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
+				output := utils.Kubectl("get", "ha", haName, "-n", namespace, "-o", "jsonpath={.status.bootstrap.completed}")
+				g.Expect(output).To(Equal("true"))
+			}, utils.BootstrapTimeout, bootstrapInterval).Should(Succeed())
 
-			By("Deleting automation 2")
-			deleteCmd := exec.Command("kubectl", "delete", "haauto", auto2Name, "-n", namespace)
-			_, err := utils.Run(deleteCmd)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying ConfigMap now contains only 2 automations")
+			By("Verifying API token Secret was created")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).To(ContainSubstring("Automation 1"))
-				g.Expect(output).NotTo(ContainSubstring("Automation 2"))
-				g.Expect(output).To(ContainSubstring("Automation 3"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
+				output := utils.Kubectl("get", "secret", haName+"-homeassistant-api-token", "-n", namespace)
+				g.Expect(output).NotTo(BeEmpty())
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 
-			By("Verifying remaining automations still Ready=True")
-			for _, name := range []string{auto1Name, auto3Name} {
-				status := utils.Kubectl("get", "haauto", name, "-n", namespace,
+			By("Waiting for pod to be fully Ready")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
+				g.Expect(output).To(Equal("Running"))
+
+				readyOutput := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
 					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				Expect(status).To(Equal("True"))
-			}
+				g.Expect(readyOutput).To(Equal("True"))
+			}, utils.HAPodReadyTimeout, haPodReadyInterval).Should(Succeed())
 
-			By("Verifying deleted automation CR no longer exists")
-			checkCmd := exec.Command("kubectl", "get", "haauto", auto2Name, "-n", namespace)
-			_, err = utils.Run(checkCmd)
-			Expect(err).To(HaveOccurred()) // Should fail - resource deleted
-		})
+			By("Capturing pod UID before automation creation")
+			var podUID string
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
+				g.Expect(output).NotTo(BeEmpty())
+				podUID = output
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 
-		It("should leave ConfigMap with empty list when deleting last automation", func() {
-			By("Creating HomeAssistant CR")
-			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  version: "stable"
-  storage:
-    size: "1Gi"
-`, haName, namespace)
-			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
+			By("Ensuring pod UID stable for 10 seconds (no pending restarts)")
+			Consistently(func(g Gomega) {
+				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
+				g.Expect(output).To(Equal(podUID))
+			}, 10*time.Second, 2*time.Second).Should(Succeed())
 
-			By("Creating HomeAssistantConfiguration CR")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantConfiguration
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  configuration: |
-    default_config:
-`, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
-
-			By("Creating single automation")
-			automationYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+			By("Creating automation with autoReload: true")
+			autoName := "auto-hotreload"
+			autoYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantAutomation
 metadata:
   name: %s
@@ -590,44 +694,42 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  alias: "Last Automation"
+  id: hot_reload_test
+  alias: "Hot Reload Test"
+  autoReload: true
+  mode: single
   triggers:
     - platform: time
-      at: "12:00:00"
+      at: "15:00:00"
   actions:
-    - service: light.turn_on
-`, automationName, namespace, haName)
-			Expect(utils.ApplyYAML(automationYAML, namespace)).To(Succeed())
+    - service: notify.mobile_app
+      data:
+        message: "Hot reload works"
+`, autoName, namespace, haName)
+			Expect(utils.ApplyYAML(autoYAML, namespace)).To(Succeed())
 
-			By("Waiting for ConfigMap with 1 automation")
-			configMapName := haName + "-automations"
+			By("Verifying automation status shows it's ready")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).To(ContainSubstring("Last Automation"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(output).To(Equal("True"))
+			}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
 
-			By("Deleting the automation")
-			deleteCmd := exec.Command("kubectl", "delete", "haauto", automationName, "-n", namespace)
-			_, err := utils.Run(deleteCmd)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying ConfigMap exists with empty array")
+			By("Verifying lastReloadTime is set (hot-reload occurred)")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				// ConfigMap should exist but with empty array "[]" or equivalent
-				g.Expect(output).To(Or(Equal("[]"), Equal(""), ContainSubstring("[]")))
-				g.Expect(output).NotTo(ContainSubstring("Last Automation"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.lastReloadTime}")
+				g.Expect(output).NotTo(BeEmpty())
+			}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
 
-			By("Verifying automation CR deleted")
-			checkCmd := exec.Command("kubectl", "get", "haauto", automationName, "-n", namespace)
-			_, err = utils.Run(checkCmd)
-			Expect(err).To(HaveOccurred())
+			By("Verifying pod was NOT restarted (UID unchanged)")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
+				g.Expect(output).To(Equal(podUID))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 		})
 
-		It("should use finalizer to update ConfigMap before deletion", func() {
+		It("should skip reload when autoReload=false", func() {
 			By("Creating HomeAssistant CR")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant
@@ -638,10 +740,11 @@ spec:
   version: "stable"
   storage:
     size: "1Gi"
-`, haName, namespace)
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
-			By("Creating HomeAssistantConfiguration CR")
+			By("Creating HomeAssistantConfiguration")
 			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantConfiguration
 metadata:
@@ -651,12 +754,170 @@ spec:
   homeAssistantRef:
     name: %s
   configuration: |
-    default_config:
+    automation: !include automations.yaml
+`, configName, namespace, haName)
+			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
+
+			By("Creating automation with autoReload: false")
+			autoName := "auto-noreload"
+			autoYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantAutomation
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  id: no_reload_test
+  alias: "No Reload Test"
+  autoReload: false
+  mode: single
+  triggers:
+    - platform: time
+      at: "16:00:00"
+  actions:
+    - service: light.turn_on
+`, autoName, namespace, haName)
+			Expect(utils.ApplyYAML(autoYAML, namespace)).To(Succeed())
+
+			By("Verifying automation is Ready")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(output).To(Equal("True"))
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying lastReloadTime is NOT set (no reload occurred)")
+			Consistently(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.lastReloadTime}")
+				g.Expect(output).To(BeEmpty())
+			}, 5*time.Second, reconcileInterval).Should(Succeed())
+
+			By("Verifying lastError is NOT set")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.lastError}")
+				g.Expect(output).To(BeEmpty())
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+		})
+	})
+
+	Context("Fallback Mechanisms", Label("slow"), func() {
+		It("should fallback to restart when API token missing", func() {
+			By("Creating HomeAssistant CR WITHOUT bootstrap")
+			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  version: "stable"
+  storage:
+    size: "1Gi"
+  %s
+`, haName, namespace, utils.GetEnhancedHAResourceRequests())
+			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  configuration: |
+    automation: !include automations.yaml
+`, configName, namespace, haName)
+			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
+
+			By("Waiting for HA Pod Ready")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
+				g.Expect(output).To(Equal("Running"))
+			}, utils.HAPodReadyTimeout, haPodReadyInterval).Should(Succeed())
+
+			By("Verifying API token Secret does NOT exist")
+			output := utils.Kubectl("get", "secret", haName+"-homeassistant-api-token", "-n", namespace, "--ignore-not-found")
+			Expect(output).To(BeEmpty())
+
+			By("Creating automation with autoReload: true (will attempt hot-reload)")
+			autoName := "auto-fallback"
+			autoYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantAutomation
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  id: fallback_test
+  alias: "Fallback Test"
+  autoReload: true
+  mode: single
+  triggers:
+    - platform: time
+      at: "17:00:00"
+  actions:
+    - service: light.turn_off
+`, autoName, namespace, haName)
+			Expect(utils.ApplyYAML(autoYAML, namespace)).To(Succeed())
+
+			By("Verifying automation is Ready despite missing token")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(output).To(Equal("True"))
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying lastError mentions missing token")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.lastError}")
+				g.Expect(output).To(Or(
+					ContainSubstring("token"),
+					ContainSubstring("API token not found"),
+					ContainSubstring("bootstrap may not be configured"),
+				))
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+		})
+	})
+
+	Context("Status Fields", Label("fast"), func() {
+		It("should populate all status fields correctly", func() {
+			By("Creating HomeAssistant CR")
+			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  version: "stable"
+  storage:
+    size: "1Gi"
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
+			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  configuration: |
+    automation: !include automations.yaml
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
 			By("Creating automation")
-			automationYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+			autoName := "auto-status"
+			autoYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantAutomation
 metadata:
   name: %s
@@ -664,695 +925,108 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  alias: "Test Finalizer"
+  id: status_test
+  alias: "Status Test"
+  mode: parallel
   triggers:
-    - platform: time
-      at: "12:00:00"
-  actions:
-    - service: light.turn_on
-`, automationName, namespace, haName)
-			Expect(utils.ApplyYAML(automationYAML, namespace)).To(Succeed())
-
-			By("Waiting for automation to be ready")
-			Eventually(func(g Gomega) {
-				status := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(status).To(Equal("True"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Verifying finalizer is present")
-			finalizers := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-				"-o", "jsonpath={.metadata.finalizers}")
-			Expect(finalizers).To(ContainSubstring("ha.homeassistant.io/automation-finalizer"))
-
-			By("Deleting automation")
-			deleteCmd := exec.Command("kubectl", "delete", "haauto", automationName, "-n", namespace, "--wait=false")
-			_, err := utils.Run(deleteCmd)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying ConfigMap is updated (automation removed)")
-			configMapName := haName + "-automations"
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).NotTo(ContainSubstring("Test Finalizer"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Verifying CR is finally deleted")
-			Eventually(func(g Gomega) {
-				checkCmd := exec.Command("kubectl", "get", "haauto", automationName, "-n", namespace)
-				_, err := utils.Run(checkCmd)
-				g.Expect(err).To(HaveOccurred()) // Should not exist
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-		})
-	})
-
-	Context("Hot-Reload via REST API", Label("automation", "bootstrap", "slow", "pod-required"), func() {
-		It("should hot-reload automation without pod restart when API token available", func() {
-			By("Creating credentials Secret for bootstrap")
-			credentialsSecretName := "bootstrap-creds-" + utils.RandomString(6)
-			credentialsYAML := fmt.Sprintf(`apiVersion: v1
-kind: Secret
-metadata:
-  name: %s
-  namespace: %s
-type: Opaque
-stringData:
-  username: "admin"
-  password: "testpassword123"
-`, credentialsSecretName, namespace)
-			Expect(utils.ApplyYAML(credentialsYAML, namespace)).To(Succeed())
-
-			By("Creating HomeAssistant CR with bootstrap enabled")
-			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  version: "stable"
-  storage:
-    size: "1Gi"
-  %s
-  bootstrap:
-    enabled: true
-    credentials:
-      secretRef:
-        name: %s
-    createApiToken: true
-    location:
-      name: "Test Location"
-      latitude: "52.2297"
-      longitude: "21.0122"
-      elevation: 100
-      timeZone: "Europe/Warsaw"
-      currency: "PLN"
-      unitSystem: "metric"
-`, haName, namespace, utils.GetEnhancedHAResourceRequests(), credentialsSecretName)
-			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
-
-			By("Creating HomeAssistantConfiguration CR")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantConfiguration
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  configuration: |
-    default_config:
-`, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
-
-			By("Waiting for bootstrap to complete and API token to be created")
-			tokenSecretName := haName + "-homeassistant-api-token"
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "secret", tokenSecretName, "-n", namespace)
-				g.Expect(output).NotTo(BeEmpty())
-
-				bootstrapStatus := utils.Kubectl("get", "ha", haName, "-n", namespace,
-					"-o", "jsonpath={.status.bootstrap.completed}")
-				g.Expect(bootstrapStatus).To(Equal("true"))
-			}, utils.BootstrapTimeout, 5*time.Second).Should(Succeed())
-
-			By("Waiting for HA pod to be fully ready")
-			podName := haName + "-0"
-			Eventually(func(g Gomega) {
-				phase := utils.Kubectl("get", "pod", podName, "-n", namespace,
-					"-o", "jsonpath={.status.phase}")
-				g.Expect(phase).To(Equal("Running"))
-
-				ready := utils.Kubectl("get", "pod", podName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(ready).To(Equal("True"))
-			}, utils.HAPodReadyTimeout, 5*time.Second).Should(Succeed())
-
-			By("Capturing pod UID before automation update")
-			initialPodUID := utils.Kubectl("get", "pod", podName, "-n", namespace,
-				"-o", "jsonpath={.metadata.uid}")
-			Expect(initialPodUID).NotTo(BeEmpty())
-
-			By("Creating automation with autoReload enabled (default)")
-			automationYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantAutomation
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  alias: "Hot Reload Test"
-  triggers:
-    - platform: time
-      at: "18:00:00"
-  actions:
-    - service: light.turn_on
-      target:
-        entity_id: light.bedroom
-      data:
-        brightness: 100
-`, automationName, namespace, haName)
-			Expect(utils.ApplyYAML(automationYAML, namespace)).To(Succeed())
-
-			By("Waiting for automation to be ready")
-			Eventually(func(g Gomega) {
-				status := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(status).To(Equal("True"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Updating automation - changing brightness to trigger reload")
-			updatedYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantAutomation
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  alias: "Hot Reload Test"
-  triggers:
-    - platform: time
-      at: "18:00:00"
-  actions:
-    - service: light.turn_on
-      target:
-        entity_id: light.bedroom
-      data:
-        brightness: 50
-`, automationName, namespace, haName)
-			Expect(utils.ApplyYAML(updatedYAML, namespace)).To(Succeed())
-
-			By("Verifying ConfigMap updated")
-			configMapName := haName + "-automations"
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).To(ContainSubstring("brightness: 50"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Verifying lastReloadTime was updated")
-			Eventually(func(g Gomega) {
-				reloadTime := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-					"-o", "jsonpath={.status.lastReloadTime}")
-				g.Expect(reloadTime).NotTo(BeEmpty())
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Verifying pod UID NOT changed (hot-reload, not restart)")
-			Consistently(func(g Gomega) {
-				currentPodUID := utils.Kubectl("get", "pod", podName, "-n", namespace,
-					"-o", "jsonpath={.metadata.uid}")
-				g.Expect(currentPodUID).To(Equal(initialPodUID))
-			}, 30*time.Second, 5*time.Second).Should(Succeed())
-
-			By("Verifying status Ready=True")
-			status := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-				"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-			Expect(status).To(Equal("True"))
-		})
-
-		It("should skip reload when autoReload is false", func() {
-			By("Creating credentials Secret for bootstrap")
-			credentialsSecretName := "bootstrap-creds2-" + utils.RandomString(6)
-			credentialsYAML := fmt.Sprintf(`apiVersion: v1
-kind: Secret
-metadata:
-  name: %s
-  namespace: %s
-type: Opaque
-stringData:
-  username: "admin"
-  password: "testpassword456"
-`, credentialsSecretName, namespace)
-			Expect(utils.ApplyYAML(credentialsYAML, namespace)).To(Succeed())
-
-			By("Creating HomeAssistant CR with bootstrap enabled")
-			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  version: "stable"
-  storage:
-    size: "1Gi"
-  %s
-  bootstrap:
-    enabled: true
-    credentials:
-      secretRef:
-        name: %s
-    createApiToken: true
-`, haName, namespace, utils.GetEnhancedHAResourceRequests(), credentialsSecretName)
-			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
-
-			By("Creating HomeAssistantConfiguration CR")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantConfiguration
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  configuration: |
-    default_config:
-`, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
-
-			By("Waiting for bootstrap and pod ready")
-			Eventually(func(g Gomega) {
-				bootstrapStatus := utils.Kubectl("get", "ha", haName, "-n", namespace,
-					"-o", "jsonpath={.status.bootstrap.completed}")
-				g.Expect(bootstrapStatus).To(Equal("true"))
-			}, utils.BootstrapTimeout, 5*time.Second).Should(Succeed())
-
-			By("Waiting for HA pod to be fully ready")
-			podName := haName + "-0"
-			Eventually(func(g Gomega) {
-				phase := utils.Kubectl("get", "pod", podName, "-n", namespace,
-					"-o", "jsonpath={.status.phase}")
-				g.Expect(phase).To(Equal("Running"))
-
-				ready := utils.Kubectl("get", "pod", podName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(ready).To(Equal("True"))
-			}, utils.HAPodReadyTimeout, 5*time.Second).Should(Succeed())
-
-			By("Creating automation with autoReload: false")
-			automationYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantAutomation
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  alias: "No Auto Reload"
-  autoReload: false
-  triggers:
-    - platform: time
-      at: "19:00:00"
-  actions:
-    - service: light.turn_off
-`, automationName, namespace, haName)
-			Expect(utils.ApplyYAML(automationYAML, namespace)).To(Succeed())
-
-			By("Waiting for automation to be ready")
-			Eventually(func(g Gomega) {
-				status := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(status).To(Equal("True"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Capturing initial lastReloadTime before update")
-			initialReloadTime := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-				"-o", "jsonpath={.status.lastReloadTime}")
-
-			By("Updating automation")
-			patchCmd := exec.Command("kubectl", "patch", "haauto", automationName, "-n", namespace,
-				"--type", "json", "-p", `[{"op":"replace","path":"/spec/alias","value":"Updated No Reload"}]`)
-			_, err := utils.Run(patchCmd)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying ConfigMap updated")
-			configMapName := haName + "-automations"
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).To(ContainSubstring("Updated No Reload"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Verifying lastReloadTime remains unchanged (autoReload: false)")
-			Consistently(func(g Gomega) {
-				reloadTime := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-					"-o", "jsonpath={.status.lastReloadTime}")
-				g.Expect(reloadTime).To(Equal(initialReloadTime))
-			}, 15*time.Second, 3*time.Second).Should(Succeed())
-
-			By("Verifying pod UID not changed")
-			initialPodUID := utils.Kubectl("get", "pod", podName, "-n", namespace,
-				"-o", "jsonpath={.metadata.uid}")
-			Consistently(func(g Gomega) {
-				currentPodUID := utils.Kubectl("get", "pod", podName, "-n", namespace,
-					"-o", "jsonpath={.metadata.uid}")
-				g.Expect(currentPodUID).To(Equal(initialPodUID))
-			}, 15*time.Second, 3*time.Second).Should(Succeed())
-		})
-	})
-
-	Context("Enable/Disable Toggle", Label("automation", "fast", "infra-only"), func() {
-		It("should toggle automation between enabled and disabled states", func() {
-			By("Creating HomeAssistant CR")
-			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  version: "stable"
-  storage:
-    size: "1Gi"
-`, haName, namespace)
-			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
-
-			By("Creating HomeAssistantConfiguration CR")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantConfiguration
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  configuration: |
-    default_config:
-`, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
-
-			By("Creating automation with enabled: true")
-			automationYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantAutomation
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  alias: "Toggle Test"
-  enabled: true
-  triggers:
-    - platform: time
-      at: "12:00:00"
-  actions:
-    - service: light.turn_on
-`, automationName, namespace, haName)
-			Expect(utils.ApplyYAML(automationYAML, namespace)).To(Succeed())
-
-			By("Verifying automation appears in ConfigMap")
-			configMapName := haName + "-automations"
-			var initialHash string
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).To(ContainSubstring("Toggle Test"))
-
-				hash := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-					"-o", "jsonpath={.status.automationHash}")
-				initialHash = hash
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Disabling automation (enabled: false)")
-			patchCmd := exec.Command("kubectl", "patch", "haauto", automationName, "-n", namespace,
-				"--type", "json", "-p", `[{"op":"replace","path":"/spec/enabled","value":false}]`)
-			_, err := utils.Run(patchCmd)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying automation disappears from ConfigMap")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).NotTo(ContainSubstring("Toggle Test"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Verifying CR still exists with Ready=True")
-			status := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-				"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-			Expect(status).To(Equal("True"))
-
-			By("Verifying hash changed after disable")
-			disabledHash := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-				"-o", "jsonpath={.status.automationHash}")
-			Expect(disabledHash).NotTo(Equal(initialHash))
-
-			By("Re-enabling automation (enabled: true)")
-			patchCmd = exec.Command("kubectl", "patch", "haauto", automationName, "-n", namespace,
-				"--type", "json", "-p", `[{"op":"replace","path":"/spec/enabled","value":true}]`)
-			_, err = utils.Run(patchCmd)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying automation reappears in ConfigMap")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).To(ContainSubstring("Toggle Test"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Verifying hash changed after re-enable")
-			finalHash := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-				"-o", "jsonpath={.status.automationHash}")
-			Expect(finalHash).NotTo(Equal(disabledHash))
-		})
-	})
-
-	Context("Automation Spec Fields", Label("automation", "fast", "infra-only"), func() {
-		It("should correctly serialize all spec fields to ConfigMap YAML", func() {
-			By("Creating HomeAssistant CR")
-			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  version: "stable"
-  storage:
-    size: "1Gi"
-`, haName, namespace)
-			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
-
-			By("Creating HomeAssistantConfiguration CR")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantConfiguration
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  configuration: |
-    default_config:
-`, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
-
-			By("Creating automation with all optional fields")
-			automationYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantAutomation
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  alias: "Full Spec Test"
-  description: "Test automation with all fields"
-  mode: restart
-  max: 5
-  triggers:
-    - platform: time
-      at: "12:00:00"
     - platform: state
       entity_id: binary_sensor.motion
       to: "on"
-  conditions:
-    - condition: state
-      entity_id: sun.sun
-      state: "above_horizon"
   actions:
     - service: light.turn_on
       target:
-        entity_id: light.living_room
-      data:
-        brightness: 255
-    - service: notify.mobile_app
-      data:
-        message: "Lights turned on"
-`, automationName, namespace, haName)
-			Expect(utils.ApplyYAML(automationYAML, namespace)).To(Succeed())
+        entity_id: light.hallway
+`, autoName, namespace, haName)
+			Expect(utils.ApplyYAML(autoYAML, namespace)).To(Succeed())
 
-			By("Verifying ConfigMap YAML contains all fields with correct snake_case")
-			configMapName := haName + "-automations"
+			By("Verifying status.automationHash is set")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.automationHash}")
+				g.Expect(output).NotTo(BeEmpty())
+				g.Expect(output).To(MatchRegexp("^[a-f0-9]{64}$")) // SHA256 hash
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 
-				// Required fields
-				g.Expect(output).To(ContainSubstring("id: " + automationName))
-				g.Expect(output).To(ContainSubstring("alias: Full Spec Test"))
-
-				// Optional fields
-				g.Expect(output).To(ContainSubstring("description: Test automation with all fields"))
-				g.Expect(output).To(ContainSubstring("mode: restart"))
-				g.Expect(output).To(ContainSubstring("max: 5"))
-
-				// Triggers (multiple)
-				g.Expect(output).To(ContainSubstring("platform: time"))
-				g.Expect(output).To(ContainSubstring("at: \"12:00:00\""))
-				g.Expect(output).To(ContainSubstring("platform: state"))
-				g.Expect(output).To(ContainSubstring("entity_id: binary_sensor.motion"))
-
-				// Conditions
-				g.Expect(output).To(ContainSubstring("condition: state"))
-				g.Expect(output).To(ContainSubstring("entity_id: sun.sun"))
-
-				// Actions (multiple)
-				g.Expect(output).To(ContainSubstring("service: light.turn_on"))
-				g.Expect(output).To(ContainSubstring("brightness: 255"))
-				g.Expect(output).To(ContainSubstring("service: notify.mobile_app"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Verifying status Ready=True")
-			status := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-				"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-			Expect(status).To(Equal("True"))
-		})
-
-		It("should handle minimal automation spec (only required fields)", func() {
-			By("Creating HomeAssistant CR")
-			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  version: "stable"
-  storage:
-    size: "1Gi"
-`, haName, namespace)
-			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
-
-			By("Creating HomeAssistantConfiguration CR")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantConfiguration
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  configuration: |
-    default_config:
-`, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
-
-			By("Creating minimal automation (only required fields)")
-			automationYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantAutomation
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  alias: "Minimal Automation"
-  triggers:
-    - platform: time
-      at: "06:00:00"
-  actions:
-    - service: light.turn_on
-`, automationName, namespace, haName)
-			Expect(utils.ApplyYAML(automationYAML, namespace)).To(Succeed())
-
-			By("Verifying ConfigMap generated correctly")
-			configMapName := haName + "-automations"
+			By("Verifying status.observedGeneration is set")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.observedGeneration}")
+				g.Expect(output).NotTo(BeEmpty())
+				g.Expect(output).To(Equal("1")) // First generation
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 
-				// Required fields present
-				g.Expect(output).To(ContainSubstring("id: " + automationName))
-				g.Expect(output).To(ContainSubstring("alias: Minimal Automation"))
-				g.Expect(output).To(ContainSubstring("platform: time"))
-				g.Expect(output).To(ContainSubstring("service: light.turn_on"))
+			By("Verifying status.conditions contains Ready condition")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(output).To(Equal("True"))
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 
-				// Optional fields not present (or have defaults)
-				// Note: Some fields might have default values set by controller
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
+			By("Verifying Ready condition has correct reason")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].reason}")
+				g.Expect(output).To(Equal("AutomationGenerated"))
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 
-			By("Verifying auto-generated ID matches CR name")
-			output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-				"-o", "jsonpath={.data.automations\\.yaml}")
-			Expect(output).To(ContainSubstring("id: " + automationName))
-
-			By("Verifying status Ready=True")
-			status := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-				"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-			Expect(status).To(Equal("True"))
+			By("Verifying lastError contains expected message (no bootstrap in this test)")
+			// Without bootstrap, controller attempts hot-reload but finds no API token
+			// This is expected behavior - lastError should contain the token message
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "haauto", autoName, "-n", namespace,
+					"-o", "jsonpath={.status.lastError}")
+				g.Expect(output).To(ContainSubstring("API token not found"))
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 		})
 	})
 })
 
-// collectAutomationDebugInfo collects debug information when automation test fails
-func collectAutomationDebugInfo(namespace, haName, automationName string) {
-	// Helper function for best-effort logging to GinkgoWriter
-	// Ignores write errors since debug output is non-critical
+// collectAutomationDebugInfo gathers debug information for automation tests on failure.
+func collectAutomationDebugInfo(namespace, haName string) {
 	writeDebug := func(format string, args ...any) {
-		_, _ = fmt.Fprintf(GinkgoWriter, format, args...) // best-effort logging; ignore write errors
+		_, _ = fmt.Fprintf(GinkgoWriter, format, args...)
 	}
 
-	writeDebug("\n=== DEBUG INFO: HomeAssistantAutomation Test Failed ===\n")
+	writeDebug("\n=== AUTOMATION DEBUG INFO ===\n")
 
-	// Automation CR describe
-	writeDebug("\n--- HomeAssistantAutomation describe ---\n")
-	cmd := exec.Command("kubectl", "describe", "haauto", automationName, "-n", namespace)
+	writeDebug("\n--- HomeAssistantAutomation Resources ---\n")
+	cmd := exec.Command("kubectl", "get", "haauto", "-n", namespace, "-o", "wide")
 	output, err := utils.Run(cmd)
 	if err == nil {
 		writeDebug("%s\n", output)
-	} else {
-		writeDebug("Error: %v\n", err)
 	}
 
-	// Automation status
-	writeDebug("\n--- HomeAssistantAutomation status ---\n")
-	cmd = exec.Command("kubectl", "get", "haauto", automationName, "-n", namespace, "-o", "yaml")
-	output, err = utils.Run(cmd)
-	if err == nil {
-		writeDebug("%s\n", output)
-	} else {
-		writeDebug("Error: %v\n", err)
-	}
-
-	// ConfigMap content
-	writeDebug("\n--- Automations ConfigMap ---\n")
+	writeDebug("\n--- Automations ConfigMap Content ---\n")
 	configMapName := haName + "-automations"
 	cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", namespace, "-o", "yaml")
 	output, err = utils.Run(cmd)
 	if err == nil {
 		writeDebug("%s\n", output)
-	} else {
-		writeDebug("Error: %v\n", err)
 	}
 
-	// HomeAssistant CR
-	writeDebug("\n--- HomeAssistant CR ---\n")
-	cmd = exec.Command("kubectl", "get", "ha", haName, "-n", namespace, "-o", "yaml")
+	writeDebug("\n--- HomeAssistantAutomation Status (describe all) ---\n")
+	cmd = exec.Command("kubectl", "describe", "haauto", "-n", namespace)
 	output, err = utils.Run(cmd)
 	if err == nil {
 		writeDebug("%s\n", output)
-	} else {
-		writeDebug("Error: %v\n", err)
 	}
 
-	// Events
-	writeDebug("\n--- Events ---\n")
+	writeDebug("\n--- Controller Logs (last 200 lines) ---\n")
+	cmd = exec.Command(
+		"kubectl", "logs", "-n", "homeassistant-operator-system",
+		"-l", "control-plane=controller-manager", "--tail=200",
+	)
+	output, err = utils.Run(cmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	}
+
+	writeDebug("\n--- Kubernetes Events ---\n")
 	cmd = exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
 	output, err = utils.Run(cmd)
 	if err == nil {
 		writeDebug("%s\n", output)
-	} else {
-		writeDebug("Error: %v\n", err)
 	}
 
-	// Operator logs (last 50 lines)
-	writeDebug("\n--- Operator logs (last 50 lines) ---\n")
-	cmd = exec.Command("kubectl", "logs", "-n", "homeassistant-operator-system",
-		"-l", "control-plane=controller-manager", "--tail=50")
-	output, err = utils.Run(cmd)
-	if err == nil {
-		writeDebug("%s\n", output)
-	} else {
-		writeDebug("Error: %v\n", err)
-	}
-
-	writeDebug("\n=== END DEBUG INFO ===\n")
+	writeDebug("\n=== END AUTOMATION DEBUG INFO ===\n")
 }

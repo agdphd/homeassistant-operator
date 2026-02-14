@@ -4,31 +4,32 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: homeassistantautomations.ha.homeassistant.io
+  name: homeassistantscenes.ha.homeassistant.io
 spec:
   group: ha.homeassistant.io
   names:
     categories:
     - homeassistant
-    kind: HomeAssistantAutomation
-    listKind: HomeAssistantAutomationList
-    plural: homeassistantautomations
+    kind: HomeAssistantScene
+    listKind: HomeAssistantSceneList
+    plural: homeassistantscenes
     shortNames:
-    - haauto
-    - haautomation
-    singular: homeassistantautomation
+    - hascene
+    - hasc
+    singular: homeassistantscene
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - jsonPath: .spec.homeAssistantRef.name
       name: HomeAssistant
       type: string
-    - jsonPath: .spec.alias
-      name: Alias
+    - jsonPath: .spec.name
+      name: Name
       type: string
-    - jsonPath: .spec.enabled
-      name: Enabled
-      type: boolean
+    - description: Number of entities
+      jsonPath: .status.entityCount
+      name: Entities
+      type: integer
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
@@ -38,7 +39,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: HomeAssistantAutomation is the Schema for the homeassistantautomations
+        description: HomeAssistantScene is the Schema for the homeassistantscenes
           API
         properties:
           apiVersion:
@@ -59,55 +60,49 @@ spec:
           metadata:
             type: object
           spec:
-            description: HomeAssistantAutomationSpec defines the desired state of
-              HomeAssistantAutomation
+            description: HomeAssistantSceneSpec defines the desired state of HomeAssistantScene
             properties:
-              actions:
-                description: |-
-                  Actions define the sequence of tasks to execute when triggered
-                  At least one action is required
-                items:
-                  description: |-
-                    AutomationAction defines an action to be executed by the automation
-                    This is a flexible structure that accepts any valid Home Assistant action configuration
-                  type: object
-                  x-kubernetes-preserve-unknown-fields: true
-                minItems: 1
-                type: array
-              alias:
-                description: Alias is a user-friendly name for the automation
-                minLength: 1
-                type: string
               autoReload:
                 default: true
                 description: |-
-                  AutoReload enables automatic hot-reload when automation changes
+                  AutoReload enables automatic hot-reload when scene configuration changes
                   If false, requires manual reload or pod restart
                 type: boolean
-              conditions:
+              entities:
                 description: |-
-                  Conditions define requirements that must be met for the automation to execute
-                  All conditions must evaluate to true for the automation to run
+                  Entities define the list of devices and their states to set when scene is activated
+                  At least one entity is required
                 items:
-                  description: |-
-                    AutomationCondition defines a condition that must be met for the automation to execute
-                    This is a flexible structure that accepts any valid Home Assistant condition configuration
+                  description: SceneEntity represents a single entity (device) in
+                    a scene with its desired state
+                  properties:
+                    attributes:
+                      description: |-
+                        Attributes contains additional entity-specific attributes
+                        Examples: brightness, color_temp, rgb_color for lights
+                        This is a flexible structure that accepts any valid Home Assistant entity attributes
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    entity_id:
+                      description: |-
+                        EntityID is the Home Assistant entity identifier in format domain.object_id
+                        Examples: light.living_room, switch.fan, climate.bedroom
+                      pattern: ^[a-z_]+\.[a-z0-9_]+$
+                      type: string
+                    state:
+                      description: |-
+                        State is the desired state for this entity
+                        Examples: "on", "off", numeric values
+                      type: string
+                  required:
+                  - entity_id
+                  - state
                   type: object
-                  x-kubernetes-preserve-unknown-fields: true
+                minItems: 1
                 type: array
-              description:
-                description: Description provides details about what the automation
-                  does
-                type: string
-              enabled:
-                default: true
-                description: |-
-                  Enabled controls whether this automation is active
-                  Can be used to temporarily disable without deleting the CR
-                type: boolean
               homeAssistantRef:
                 description: HomeAssistantRef references the HomeAssistant CR that
-                  will use this automation
+                  will use this scene
                 properties:
                   name:
                     description: Name of the HomeAssistant resource
@@ -115,73 +110,32 @@ spec:
                 required:
                 - name
                 type: object
+              icon:
+                description: |-
+                  Icon is a Material Design icon for the scene (e.g., "mdi:movie", "mdi:candle")
+                  See https://mdi.bessarabov.com/ for available icons
+                type: string
               id:
                 description: |-
-                  ID is a unique identifier for the automation (used by Home Assistant)
+                  ID is a unique identifier for the scene (used by Home Assistant)
                   If not specified, will be auto-generated from the CR name
                 type: string
-              initialState:
+              name:
                 description: |-
-                  InitialState defines whether the automation should be enabled at startup
-                  If not specified, the last state is restored
-                type: boolean
-              max:
-                default: 10
-                description: Max defines the maximum number of concurrent or queued
-                  runs (for queued/parallel modes)
-                format: int32
-                minimum: 1
-                type: integer
-              maxExceeded:
-                default: warning
-                description: MaxExceeded defines the log severity level when max is
-                  exceeded (silent, info, warning, error)
-                enum:
-                - silent
-                - info
-                - warning
-                - error
+                  Name is a user-friendly name for the scene (displayed in Home Assistant UI)
+                  If not specified, the CR name will be used
+                minLength: 1
                 type: string
-              mode:
-                default: single
-                description: Mode defines how the automation should behave when triggered
-                  again while already running
-                enum:
-                - single
-                - restart
-                - queued
-                - parallel
-                type: string
-              triggers:
-                description: |-
-                  Triggers define the events that will trigger this automation
-                  At least one trigger is required
-                items:
-                  description: |-
-                    AutomationTrigger defines an event that will trigger the automation
-                    This is a flexible structure that accepts any valid Home Assistant trigger configuration
-                  type: object
-                  x-kubernetes-preserve-unknown-fields: true
-                minItems: 1
-                type: array
             required:
-            - actions
-            - alias
+            - entities
             - homeAssistantRef
-            - triggers
             type: object
           status:
-            description: HomeAssistantAutomationStatus defines the observed state
-              of HomeAssistantAutomation
+            description: HomeAssistantSceneStatus defines the observed state of HomeAssistantScene
             properties:
-              automationHash:
-                description: |-
-                  AutomationHash is the SHA256 hash of the current automation configuration
-                  Used to detect changes and determine if reload is needed
-                type: string
               conditions:
                 description: Conditions represent the latest available observations
-                  of the HomeAssistantAutomation state
+                  of the HomeAssistantScene state
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -237,31 +191,37 @@ spec:
                   - type
                   type: object
                 type: array
+              entityCount:
+                description: |-
+                  EntityCount is the number of entities defined in the scene
+                  Updated by the controller for display in kubectl output
+                format: int32
+                type: integer
+              lastActivated:
+                description: LastActivated is the timestamp when the scene was last
+                  activated (if available from HA)
+                format: date-time
+                type: string
               lastError:
                 description: |-
                   LastError contains the error message from the last failed operation
                   Cleared when operation succeeds
-                type: string
-              lastReloadMethod:
-                description: |-
-                  LastReloadMethod indicates how the last reload was performed
-                  Possible values: "hot-reload", "restart", "none"
                 type: string
               lastReloadTime:
                 description: LastReloadTime is the timestamp of the last successful
                   reload
                 format: date-time
                 type: string
-              lastTriggeredTime:
-                description: LastTriggeredTime is the timestamp when the automation
-                  was last triggered (if available from HA)
-                format: date-time
-                type: string
               observedGeneration:
                 description: ObservedGeneration reflects the generation of the most
-                  recently observed HomeAssistantAutomation
+                  recently observed HomeAssistantScene
                 format: int64
                 type: integer
+              sceneHash:
+                description: |-
+                  SceneHash is the SHA256 hash of the current scene configuration
+                  Used to detect changes and determine if reload is needed
+                type: string
             type: object
         type: object
     served: true

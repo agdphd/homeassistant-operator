@@ -1,0 +1,62 @@
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantScene
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: homeassistantscene-advanced
+spec:
+  # Reference to the HomeAssistant instance
+  homeAssistantRef:
+    name: homeassistant-sample
+
+  # Custom ID (optional, auto-generated from CR name if not specified)
+  id: romantic_dinner
+
+  # User-friendly name
+  name: "Romantic Dinner"
+
+  # Material Design icon
+  icon: "mdi:candle"
+
+  # Entities with advanced attributes
+  entities:
+    # Dining table light - warm amber color
+    - entity_id: light.dining_table
+      state: "on"
+      attributes:
+        brightness: 100
+        rgb_color: [255, 100, 50]  # Warm amber
+
+    # Kitchen counter light - soft white
+    - entity_id: light.kitchen_counter
+      state: "on"
+      attributes:
+        brightness: 50
+        color_temp: 400
+
+    # Living room - turn off
+    - entity_id: light.living_room
+      state: "off"
+
+    # Climate control - comfortable temperature
+    - entity_id: climate.dining_area
+      state: "heat"
+      attributes:
+        temperature: 21
+
+    # Media player - soft background music
+    - entity_id: media_player.dining_room
+      state: "on"
+      attributes:
+        volume_level: 0.3
+        source: "Spotify - Dinner Jazz"
+
+    # Curtains - partially closed
+    - entity_id: cover.dining_curtains
+      state: "open"
+      attributes:
+        position: 30
+
+  # Auto-reload enabled
+  autoReload: true

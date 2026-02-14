@@ -6,6 +6,7 @@ resources:
 - bases/ha.homeassistant.io_homeassistantsecrets.yaml
 - bases/ha.homeassistant.io_homeassistantconfigurations.yaml
 - bases/ha.homeassistant.io_homeassistantautomations.yaml
+- bases/ha.homeassistant.io_homeassistantscenes.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

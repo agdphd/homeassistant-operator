@@ -647,3 +647,18 @@ func (c *Client) ReloadAutomations(
 		"failed to reload automations",
 	)
 }
+
+// ReloadScenes triggers a hot-reload of Home Assistant scenes.
+// Returns nil if reload successful, error if failed.
+// Requires authenticated API call with long-lived token.
+func (c *Client) ReloadScenes(
+	ctx context.Context,
+	token string,
+) error {
+	return c.postServiceWithToken(
+		ctx,
+		"/api/services/scene/reload",
+		token,
+		"failed to reload scenes",
+	)
+}

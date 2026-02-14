@@ -23,4 +23,23 @@ const (
 	// configHashAnnotationKey - Used by both HomeAssistant and
 	// HomeAssistantConfiguration controllers
 	configHashAnnotationKey = "ha.homeassistant.io/config-hash"
+
+	// automationsHashAnnotationKey - Used by HomeAssistant controller
+	// to trigger pod restart when automations ConfigMap changes (subPath limitation)
+	automationsHashAnnotationKey = "ha.homeassistant.io/automations-hash"
+
+	// scenesHashAnnotationKey - Used by HomeAssistant controller
+	// to trigger pod restart when scenes ConfigMap changes (subPath limitation)
+	scenesHashAnnotationKey = "ha.homeassistant.io/scenes-hash"
+
+	// Reload method names for status tracking
+	// Used by Configuration and Automation controllers
+	reloadMethodRestart   = "restart"
+	reloadMethodHotReload = "hot-reload"
+	reloadMethodNone      = "none"
+
+	// Home Assistant defaults
+	// Used across multiple controllers
+	defaultHomeAssistantPort = 8123
+	apiTokenSecretSuffix     = "-api-token"
 )

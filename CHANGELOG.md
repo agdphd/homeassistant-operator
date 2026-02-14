@@ -20,6 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Execution modes: `single`, `restart`, `queued`, `parallel`
   - Short names: `haautomation`, `haauto`
 
+- **HomeAssistantScene CRD**: Declarative scene management for Home Assistant
+  - Aggregation pattern - multiple CR instances → single `scenes.yaml`
+  - Hot-reload via REST API (`/api/services/scene/reload`) for zero-downtime updates
+  - Entity validation with pattern regex (`domain.object_id`)
+  - Flexible entity attributes support via `runtime.RawExtension`
+  - Short names: `hascene`, `hasc`
+  - Status tracking: Ready, LastActivated, LastReloadTime
+  - Finalizer-based cleanup - regenerates ConfigMap without deleted scene
+  - Auto-reload control via `spec.autoReload` (default: true)
+- **HAClient Extension**: Added `ReloadScenes()` method for scene hot-reload
+
+
 ## [0.3.0] - 2026-01-27
 
 ### Added

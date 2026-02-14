@@ -1,0 +1,36 @@
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantScene
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: homeassistantscene-basic
+spec:
+  # Reference to the HomeAssistant instance
+  homeAssistantRef:
+    name: homeassistant-sample
+
+  # User-friendly name (displayed in Home Assistant UI)
+  name: "Movie Night"
+
+  # Material Design icon (optional)
+  icon: "mdi:movie"
+
+  # Entities define devices and their states when scene is activated
+  entities:
+    # Living room light - dimmed
+    - entity_id: light.living_room
+      state: "on"
+      attributes:
+        brightness: 30
+
+    # Blinds - closed
+    - entity_id: cover.blinds
+      state: "closed"
+
+    # TV - on
+    - entity_id: media_player.tv
+      state: "on"
+
+  # Auto-reload when scene changes (optional, default: true)
+  autoReload: true

@@ -761,16 +761,15 @@ spec:
 				g.Expect(status).To(Equal("True"))
 			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
 
-			By("Verifying no StatefulSet annotation change (no pod restart triggered)")
-			// For fast test, verify StatefulSet annotation didn't change (which would trigger restart)
-			// Don't wait for pod as that requires 12+ min startup
-			Consistently(func(g Gomega) {
-				// Check that automations-hash annotation is not set (would only be set if restart was triggered)
+			By("Verifying hash annotation is set (subPath workaround)")
+			// Hash annotation is ALWAYS set (even without API token) to trigger rolling restart
+			// when ConfigMap changes - this is the subPath workaround mechanism
+			Eventually(func(g Gomega) {
 				hash := utils.Kubectl("get", "statefulset", haName, "-n", namespace,
 					"-o", "jsonpath={.spec.template.metadata.annotations.ha\\.homeassistant\\.io/automations-hash}")
-				// Should be empty since no bootstrap/API token means no StatefulSet annotation update
-				g.Expect(hash).To(BeEmpty())
-			}, 10*time.Second, 2*time.Second).Should(Succeed())
+				// Hash should be set since ConfigMap changed (automation was added/updated)
+				g.Expect(hash).NotTo(BeEmpty(), "automations-hash annotation should be set")
+			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
 		})
 	})
 

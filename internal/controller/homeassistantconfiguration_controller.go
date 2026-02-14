@@ -18,7 +18,6 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"reflect"
 	"time"
@@ -50,14 +49,8 @@ const (
 	reasonConfigurationGenerated = "ConfigurationGenerated"
 	reasonConfigurationNotFound  = "ConfigurationNotFound"
 	reasonInvalidConfig          = "InvalidConfiguration"
-
-	// Reload method names for status tracking
-	reloadMethodRestart   = "restart"
-	reloadMethodHotReload = "hot-reload"
-	reloadMethodNone      = "none"
-
-	// Default port for Home Assistant
-	defaultHomeAssistantPort = 8123
+	// Note: reloadMethodRestart, reloadMethodHotReload, reloadMethodNone,
+	// and defaultHomeAssistantPort are defined in constants.go
 )
 
 // Critical sections that always require pod restart
@@ -328,12 +321,6 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 	}
 
 	return nil
-}
-
-// calculateConfigHash computes SHA256 hash of the given configuration
-func calculateConfigHash(content string) string {
-	hash := sha256.Sum256([]byte(content))
-	return fmt.Sprintf("%x", hash)
 }
 
 // SetupWithManager sets up the controller with the Manager.

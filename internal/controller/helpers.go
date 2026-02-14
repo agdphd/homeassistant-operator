@@ -18,8 +18,12 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -90,4 +94,67 @@ func isServiceReadyFromEndpointSlices(
 
 	log.V(1).Info("Service has no ready endpoints")
 	return false
+}
+
+// calculateConfigHash computes SHA256 hash of the given content
+// Used by multiple controllers to detect changes in ConfigMaps
+func calculateConfigHash(content string) string {
+	hash := sha256.Sum256([]byte(content))
+	return fmt.Sprintf("%x", hash)
+}
+
+// buildHomeAssistantURL builds the internal cluster URL for Home Assistant service
+// Used by automation and scene controllers for hot-reload
+func buildHomeAssistantURL(ha *hav1alpha1.HomeAssistant) string {
+	// Use internal Kubernetes service DNS name
+	// Format: <service-name>.<namespace>.svc.cluster.local:<port>
+	serviceName := ha.Name
+	port := defaultHomeAssistantPort
+	if ha.Spec.Service != nil && ha.Spec.Service.Port != 0 {
+		port = int(ha.Spec.Service.Port)
+	}
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", serviceName, ha.Namespace, port)
+}
+
+// getApiToken retrieves the Home Assistant API token from Secret
+// Used by automation and scene controllers for hot-reload
+func getApiToken(
+	ctx context.Context,
+	c client.Client,
+	ha *hav1alpha1.HomeAssistant,
+) (string, error) {
+	log := logf.FromContext(ctx)
+
+	// Get token secret name from HA status (set by bootstrap controller)
+	// Check if Bootstrap status is initialized
+	if ha.Status.Bootstrap == nil {
+		log.V(1).Info("Bootstrap status not initialized, API token not available")
+		return "", fmt.Errorf("bootstrap not configured")
+	}
+
+	tokenSecretName := ha.Status.Bootstrap.ApiTokenSecretName
+	if tokenSecretName == "" {
+		// Fallback: bootstrap may not be configured yet
+		log.V(1).Info("API token secret name not in status, bootstrap may not be complete")
+		return "", fmt.Errorf("API token secret name not available in HomeAssistant status")
+	}
+
+	tokenSecret := &corev1.Secret{}
+	err := c.Get(ctx, types.NamespacedName{Name: tokenSecretName, Namespace: ha.Namespace}, tokenSecret)
+
+	if err != nil {
+		if errors.IsNotFound(err) {
+			log.V(1).Info("API token secret not found, cannot perform hot-reload", "secret", tokenSecretName)
+			return "", err
+		}
+		return "", err
+	}
+
+	tokenBytes, ok := tokenSecret.Data["token"]
+	if !ok {
+		log.Error(fmt.Errorf("missing token key"), "API token secret missing key", "secret", tokenSecretName)
+		return "", fmt.Errorf("API token secret missing key 'token'")
+	}
+
+	return string(tokenBytes), nil
 }
