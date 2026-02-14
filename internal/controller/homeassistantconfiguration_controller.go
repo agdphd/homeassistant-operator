@@ -125,6 +125,7 @@ type HomeAssistantConfigurationReconciler struct {
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantconfigurations/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch
+// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -706,6 +707,30 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 		return nil
 	}
 
+	// Check if Home Assistant Service is ready before attempting hot-reload
+	if !r.isHomeAssistantServiceReady(ctx, ha) {
+		log.Info("Home Assistant Service not ready yet, cannot perform hot-reload")
+
+		// If user explicitly requested hot-reload strategy, fail instead of falling back
+		if strategy == string(hav1alpha1.ConfigurationReloadStrategyHotReload) {
+			config.Status.LastError = "Hot-reload strategy requested but Service not ready (pod not ready)"
+			return fmt.Errorf("hot-reload strategy requires ready Service but pod is not ready yet")
+		}
+
+		// Auto strategy can fallback to restart
+		log.Info("Service not ready, falling back to restart")
+		config.Status.LastError = "Service not ready - falling back to restart"
+
+		// Update ConfigMap annotation to trigger restart via HomeAssistant Controller
+		if err := r.updateConfigMapHashAnnotation(ctx, config, newHash); err != nil {
+			return fmt.Errorf("failed to update ConfigMap hash for restart fallback: %w", err)
+		}
+
+		config.Status.LastReloadMethod = reloadMethodRestart
+		log.Info("Configuration reload: restart (fallback - Service not ready)", "hash", newHash)
+		return nil
+	}
+
 	// Attempt hot-reload
 	if err := r.performHotReload(ctx, haURL, token); err != nil {
 		// If user explicitly requested hot-reload strategy, fail instead of falling back
@@ -905,4 +930,14 @@ func (r *HomeAssistantConfigurationReconciler) validateHomeAssistantRef(
 		return nil, err
 	}
 	return ha, nil
+}
+
+// isHomeAssistantServiceReady checks if the HomeAssistant Service has ready endpoints
+// Returns true if service endpoints are available, false otherwise
+// Uses the shared EndpointSlice-based helper to avoid deprecated Endpoints API
+func (r *HomeAssistantConfigurationReconciler) isHomeAssistantServiceReady(
+	ctx context.Context,
+	ha *hav1alpha1.HomeAssistant,
+) bool {
+	return isServiceReadyFromEndpointSlices(ctx, r.Client, ha.Name, ha.Namespace)
 }

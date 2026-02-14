@@ -75,15 +75,6 @@ kubectl delete -f https://raw.githubusercontent.com/przemekhys/homeassistant-ope
 kubectl delete -f https://raw.githubusercontent.com/przemekhys/homeassistant-operator/main/dist/install.yaml
 ```
 
-#### Example Configurations
-
-See complete examples in [config/samples/](config/samples/):
-
-- **[ha_v1alpha1_homeassistant_with_config.yaml](config/samples/ha_v1alpha1_homeassistant_with_config.yaml)** - Basic configuration with `auto` strategy (recommended)
-- **[haconfig_hot_reload_strategy.yaml](config/samples/haconfig_hot_reload_strategy.yaml)** - Force hot-reload strategy
-- **[haconfig_restart_strategy.yaml](config/samples/haconfig_restart_strategy.yaml)** - Force restart strategy
-- **[complete_example_with_secrets.yaml](config/samples/complete_example_with_secrets.yaml)** - Complete example with secrets management
-
 
 ## Development
 

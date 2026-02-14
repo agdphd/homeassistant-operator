@@ -209,7 +209,7 @@ spec:
 
 			By("verifying HomeAssistant resource was created")
 			verifyHACreated := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "homeassistant", haName, "-n", testNamespace)
+				cmd := exec.Command("kubectl", "get", "ha", haName, "-n", testNamespace)
 				_, err := utils.Run(cmd)
 				g.Expect(err).NotTo(HaveOccurred())
 			}

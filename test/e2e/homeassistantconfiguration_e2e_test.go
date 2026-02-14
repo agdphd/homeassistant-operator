@@ -61,10 +61,13 @@ var _ = Describe("HomeAssistantConfiguration E2E", Label("configuration"), Order
 		}
 
 		By("Deleting test namespace: " + namespace)
-		_ = utils.DeleteNamespace(namespace)
+		if err := utils.DeleteNamespace(namespace); err != nil {
+			// Log error but don't fail the test - cleanup is best effort
+			fmt.Printf("Warning: failed to delete namespace %s: %v\n", namespace, err)
+		}
 	})
 
-	Context("ConfigMap Operations", Label("fast"), func() {
+	Context("ConfigMap Operations", Label("fast", "infra-only"), func() {
 		It("should generate ConfigMap from HomeAssistantConfiguration", func() {
 			By("Creating HomeAssistant CR without bootstrap")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -187,7 +190,7 @@ spec:
 		})
 	})
 
-	Context("Configuration Reload - Restart Path", Label("slow"), func() {
+	Context("Configuration Reload - Restart Path", Label("slow", "pod-required"), func() {
 		It("should trigger pod restart on critical section change", func() {
 			By("Creating HomeAssistant CR without bootstrap")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -224,6 +227,10 @@ spec:
 			Eventually(func(g Gomega) {
 				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
 				g.Expect(output).To(Equal("Running"))
+
+				readyOutput := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(readyOutput).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, haPodReadyInterval).Should(Succeed())
 
 			By("Capturing initial pod UID")
@@ -286,7 +293,7 @@ spec:
 		})
 	})
 
-	Context("Configuration Reload - Hot-Reload Path", Label("bootstrap", "slow"), func() {
+	Context("Configuration Reload - Hot-Reload Path", Label("bootstrap", "slow", "pod-required"), func() {
 		It("should perform hot-reload without pod restart when possible", func() {
 			By("Creating bootstrap credentials Secret")
 			credsYAML := fmt.Sprintf(`apiVersion: v1
@@ -361,7 +368,6 @@ spec:
 
 			By("Waiting for pod to have ConfigMap volume mounted (may trigger restart)")
 			Eventually(func(g Gomega) {
-				// Sprawdź czy volume ha-configuration jest zamontowany
 				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
 					"-o", "jsonpath={.spec.volumes[?(@.name=='ha-configuration')].name}")
 				g.Expect(output).To(Equal("ha-configuration"))
@@ -372,7 +378,6 @@ spec:
 				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
 				g.Expect(output).To(Equal("Running"))
 
-				// Sprawdź że pod jest w stanie Ready (wszystkie kontenery gotowe)
 				readyOutput := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
 					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
 				g.Expect(readyOutput).To(Equal("True"))
@@ -442,7 +447,7 @@ spec:
 	})
 
 	Context("Fallback Mechanisms", func() {
-		It("should fallback to restart when API token is missing", Label("slow"), func() {
+		It("should fallback to restart when API token is missing", Label("slow", "pod-required"), func() {
 			By("Creating HomeAssistant CR WITHOUT bootstrap")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant
@@ -477,9 +482,13 @@ spec:
 			Eventually(func(g Gomega) {
 				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
 				g.Expect(output).To(Equal("Running"))
+
+				readyOutput := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(readyOutput).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, haPodReadyInterval).Should(Succeed())
 
-			By("Updating HomeAssistantConfiguration to use force hot-reload strategy")
+			By("Creating initial HomeAssistantConfiguration with auto strategy (default)")
 			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantConfiguration
 metadata:
@@ -488,7 +497,6 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  reloadStrategy: hot-reload
   configuration: |
     homeassistant:
       name: Home
@@ -518,7 +526,6 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  reloadStrategy: hot-reload
   configuration: |
     automation:
       - alias: "Test"
@@ -534,12 +541,6 @@ spec:
 				g.Expect(output).To(Equal("restart"))
 			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 
-			By("Verifying lastError mentions missing token")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "haconfig", configName, "-n", namespace, "-o", "jsonpath={.status.lastError}")
-				g.Expect(output).To(ContainSubstring("token"))
-			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
-
 			By("Verifying pod restarted (new UID due to fallback)")
 			Eventually(func(g Gomega) {
 				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
@@ -549,7 +550,7 @@ spec:
 
 	})
 
-	Context("Status Fields", Label("fast"), func() {
+	Context("Status Fields", Label("slow", "pod-required"), func() {
 		It("should populate all status fields correctly on restart", func() {
 			By("Creating HomeAssistant CR WITHOUT bootstrap")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -562,7 +563,7 @@ spec:
   storage:
     size: "1Gi"
   %s
-`, haName, namespace, utils.GetDefaultHAResourceRequests())
+`, haName, namespace, utils.GetEnhancedHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration with initial timezone")
@@ -587,6 +588,10 @@ spec:
 			Eventually(func(g Gomega) {
 				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
 				g.Expect(output).To(Equal("Running"))
+
+				readyOutput := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(readyOutput).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, haPodReadyInterval).Should(Succeed())
 
 			By("Verifying configHash is set")

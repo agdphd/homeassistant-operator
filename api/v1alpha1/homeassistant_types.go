@@ -86,7 +86,7 @@ type BootstrapSpec struct {
 
 	// ApiTokenSecretName is the name of the Secret where the API token will be stored
 	// The Secret will have a "token" key containing the long-lived access token
-	// +kubebuilder:default="homeassistant-api-token"
+	// If not specified, defaults to "{homeassistant-name}-homeassistant-api-token"
 	// +optional
 	ApiTokenSecretName string `json:"apiTokenSecretName,omitempty"`
 
