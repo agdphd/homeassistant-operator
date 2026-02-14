@@ -170,6 +170,7 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// Update status
 	scene.Status.SceneHash = sceneHash
 	scene.Status.ObservedGeneration = scene.Generation
+	scene.Status.EntityCount = int32(len(scene.Spec.Entities))
 	meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             metav1.ConditionTrue,
@@ -384,39 +385,26 @@ func (r *HomeAssistantSceneReconciler) performSceneReload(
 		return nil
 	}
 
-	// Get API token from bootstrap secret
-	// Secret name matches bootstrap controller's naming: ha.Name + "-homeassistant-api-token"
-	tokenSecretName := ha.Name + "-homeassistant-api-token"
-	tokenSecret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: tokenSecretName, Namespace: ha.Namespace}, tokenSecret); err != nil {
-		if errors.IsNotFound(err) {
-			log.Info("API token not available, skipping hot-reload")
-			scene.Status.LastError = "API token not found - bootstrap may not be configured"
-			return nil
-		}
-		return fmt.Errorf("failed to get API token secret: %w", err)
-	}
-
-	token := string(tokenSecret.Data["token"])
-	if token == "" {
-		log.Info("API token empty, skipping hot-reload")
-		scene.Status.LastError = "API token is empty"
+	// Get API token for hot-reload (uses ha.Status.Bootstrap.ApiTokenSecretName)
+	token, tokenErr := getApiToken(ctx, r.Client, ha)
+	if tokenErr != nil {
+		log.Info("API token not available, skipping hot-reload")
+		scene.Status.LastError = "API token not found - bootstrap may not be configured"
 		return nil
 	}
 
-	// Construct Home Assistant URL
-	// Service name matches the HomeAssistant CR name (see homeassistant_controller.go buildService)
-	haURL := fmt.Sprintf(
-		"http://%s.%s.svc.cluster.local:%d",
-		ha.Name, ha.Namespace, defaultHomeAssistantPort,
-	)
+	// Build Home Assistant URL (respects custom port from ha.Spec.Service.Port)
+	haURL := buildHomeAssistantURL(ha)
 	haClient := haclient.NewClient(haURL)
 
 	// Call scene reload endpoint
 	log.Info("Triggering scene hot-reload", "url", haURL)
 	if err := haClient.ReloadScenes(ctx, token); err != nil {
+		log.Error(err, "Hot-reload failed")
 		scene.Status.LastError = fmt.Sprintf("Hot-reload failed: %v", err)
-		return fmt.Errorf("failed to reload scenes via API: %w", err)
+		// Don't fail reconciliation - scene is in ConfigMap
+		// It will be loaded on next HA restart
+		return nil
 	}
 
 	// Update status on success

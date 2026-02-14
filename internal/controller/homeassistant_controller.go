@@ -677,6 +677,31 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 	}
 	// If StatefulSet doesn't exist (NotFound error), existingAnnotations will be empty - this is correct
 
+	// Calculate hashes for automations and scenes ConfigMaps
+	// This is needed because volumeMounts use subPath, which prevents ConfigMap updates
+	// from propagating to the pod. Changing the hash annotation triggers a rolling restart.
+	automationsConfigMap := &corev1.ConfigMap{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      automationsConfigMapName,
+		Namespace: ha.Namespace,
+	}, automationsConfigMap); err == nil {
+		// ConfigMap exists - calculate hash
+		automationsYaml := automationsConfigMap.Data["automations.yaml"]
+		automationsHash := calculateConfigHash(automationsYaml)
+		existingAnnotations[automationsHashAnnotationKey] = automationsHash
+	}
+
+	scenesConfigMap := &corev1.ConfigMap{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      scenesConfigMapName,
+		Namespace: ha.Namespace,
+	}, scenesConfigMap); err == nil {
+		// ConfigMap exists - calculate hash
+		scenesYaml := scenesConfigMap.Data["scenes.yaml"]
+		scenesHash := calculateConfigHash(scenesYaml)
+		existingAnnotations[scenesHashAnnotationKey] = scenesHash
+	}
+
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ha.Name,

@@ -514,98 +514,24 @@ func (r *HomeAssistantAutomationReconciler) validateHomeAssistantRef(
 	return ha, nil
 }
 
-// getApiToken retrieves the Home Assistant API token from Secret
-func (r *HomeAssistantAutomationReconciler) getApiToken(
-	ctx context.Context, ha *hav1alpha1.HomeAssistant,
-) (string, error) {
-	log := logf.FromContext(ctx)
-
-	// Get token secret name from HA status (set by bootstrap controller)
-	// Check if Bootstrap status is initialized
-	if ha.Status.Bootstrap == nil {
-		log.V(1).Info("Bootstrap status not initialized, API token not available")
-		return "", fmt.Errorf("bootstrap not configured")
-	}
-
-	tokenSecretName := ha.Status.Bootstrap.ApiTokenSecretName
-	if tokenSecretName == "" {
-		// Fallback: bootstrap may not be configured yet
-		log.V(1).Info("API token secret name not in status, bootstrap may not be complete")
-		return "", fmt.Errorf("API token secret name not available in HomeAssistant status")
-	}
-
-	tokenSecret := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: tokenSecretName, Namespace: ha.Namespace}, tokenSecret)
-
-	if err != nil {
-		if errors.IsNotFound(err) {
-			log.V(1).Info("API token secret not found, cannot perform hot-reload", "secret", tokenSecretName)
-			return "", err
-		}
-		return "", err
-	}
-
-	tokenBytes, ok := tokenSecret.Data["token"]
-	if !ok {
-		log.Error(fmt.Errorf("missing token key"), "API token secret missing key", "secret", tokenSecretName)
-		return "", fmt.Errorf("API token secret missing key 'token'")
-	}
-
-	return string(tokenBytes), nil
-}
-
-// buildHomeAssistantURL builds the internal cluster URL for Home Assistant service
-func (r *HomeAssistantAutomationReconciler) buildHomeAssistantURL(ha *hav1alpha1.HomeAssistant) string {
-	// Use internal Kubernetes service DNS name
-	// Format: <service-name>.<namespace>.svc.cluster.local:<port>
-	serviceName := ha.Name
-	port := defaultHomeAssistantPort
-	if ha.Spec.Service != nil && ha.Spec.Service.Port != 0 {
-		port = int(ha.Spec.Service.Port)
-	}
-	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", serviceName, ha.Namespace, port)
-}
-
 // performHotReloadAutomations attempts to hot-reload automations via HA REST API
-// Retries with fixed interval to handle kubelet ConfigMap sync delay
+// Makes a single attempt - reconciler will requeue on failure for retry
 func (r *HomeAssistantAutomationReconciler) performHotReloadAutomations(
 	ctx context.Context, haURL, token string,
 ) error {
 	log := logf.FromContext(ctx)
 
 	haClient := haclient.NewClient(haURL)
-
 	log.Info("Attempting to hot-reload automations via REST API")
 
-	// Poll until reload succeeds
-	// Kubelet syncFrequency is typically 60s, so we need generous timeout
-	const maxRetries = 20 // 20 * 5s = 100s max wait
-	const retryInterval = 5 * time.Second
-
-	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 {
-			log.V(1).Info("Waiting before retry", "attempt", attempt+1, "interval", retryInterval)
-			time.Sleep(retryInterval)
-		}
-
-		// Try to reload automations
-		if err := haClient.ReloadAutomations(ctx, token); err != nil {
-			lastErr = err
-			log.V(1).Info("Failed to reload automations, will retry", "attempt", attempt+1, "error", err.Error())
-			continue
-		}
-
-		// Success
-		waitTime := time.Duration(attempt) * retryInterval
-		log.Info("Automations hot-reload successful", "attempts", attempt+1, "totalWaitTime", waitTime)
-		return nil
+	// Single attempt - let reconciler handle retry via requeue
+	if err := haClient.ReloadAutomations(ctx, token); err != nil {
+		log.Error(err, "Failed to reload automations")
+		return fmt.Errorf("failed to reload automations via API: %w", err)
 	}
 
-	log.Error(lastErr,
-		"Automations hot-reload failed after retries",
-		"maxRetries", maxRetries)
-	return fmt.Errorf("timeout waiting for automations reload: %w", lastErr)
+	log.Info("Automations hot-reload successful")
+	return nil
 }
 
 // performAutomationReload executes reload based on autoReload setting
@@ -637,7 +563,7 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 	}
 
 	// Get API token for hot-reload
-	token, tokenErr := r.getApiToken(ctx, ha)
+	token, tokenErr := getApiToken(ctx, r.Client, ha)
 	if tokenErr != nil {
 		log.Error(tokenErr, "API token not found - bootstrap may not be configured",
 			"expectedSecretName", bootstrapSecretName)
@@ -648,7 +574,7 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 	}
 
 	// Build Home Assistant URL
-	haURL := r.buildHomeAssistantURL(ha)
+	haURL := buildHomeAssistantURL(ha)
 	log.Info("Attempting hot-reload", "url", haURL)
 
 	// Attempt hot-reload

@@ -27,7 +27,7 @@ spec:
       name: Name
       type: string
     - description: Number of entities
-      jsonPath: .spec.entities[*].entity_id
+      jsonPath: .status.entityCount
       name: Entities
       type: integer
     - jsonPath: .status.conditions[?(@.type=="Ready")].status
@@ -191,6 +191,12 @@ spec:
                   - type
                   type: object
                 type: array
+              entityCount:
+                description: |-
+                  EntityCount is the number of entities defined in the scene
+                  Updated by the controller for display in kubectl output
+                format: int32
+                type: integer
               lastActivated:
                 description: LastActivated is the timestamp when the scene was last
                   activated (if available from HA)

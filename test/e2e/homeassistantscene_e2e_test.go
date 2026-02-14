@@ -498,9 +498,11 @@ spec:
 			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 
 			By("Verifying first scene still exists and is Ready")
-			output := utils.Kubectl("get", "hascene", "scene-keep", "-n", namespace,
-				"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-			Expect(output).To(Equal("True"))
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "hascene", "scene-keep", "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(output).To(Equal("True"))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 		})
 	})
 

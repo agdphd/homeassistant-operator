@@ -102,6 +102,11 @@ type HomeAssistantSceneStatus struct {
 	// +optional
 	LastError string `json:"lastError,omitempty"`
 
+	// EntityCount is the number of entities defined in the scene
+	// Updated by the controller for display in kubectl output
+	// +optional
+	EntityCount int32 `json:"entityCount,omitempty"`
+
 	// ObservedGeneration reflects the generation of the most recently observed HomeAssistantScene
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -112,7 +117,7 @@ type HomeAssistantSceneStatus struct {
 // +kubebuilder:resource:shortName=hascene;hasc,categories=homeassistant
 // +kubebuilder:printcolumn:name="HomeAssistant",type=string,JSONPath=`.spec.homeAssistantRef.name`
 // +kubebuilder:printcolumn:name="Name",type=string,JSONPath=`.spec.name`
-// +kubebuilder:printcolumn:name="Entities",type=integer,JSONPath=`.spec.entities[*].entity_id`,description="Number of entities"
+// +kubebuilder:printcolumn:name="Entities",type=integer,JSONPath=`.status.entityCount`,description="Number of entities"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

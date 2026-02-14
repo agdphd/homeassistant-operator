@@ -18,7 +18,6 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"reflect"
 	"time"
@@ -322,12 +321,6 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 	}
 
 	return nil
-}
-
-// calculateConfigHash computes SHA256 hash of the given configuration
-func calculateConfigHash(content string) string {
-	hash := sha256.Sum256([]byte(content))
-	return fmt.Sprintf("%x", hash)
 }
 
 // SetupWithManager sets up the controller with the Manager.
