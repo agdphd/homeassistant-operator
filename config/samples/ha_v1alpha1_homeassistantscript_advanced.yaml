@@ -1,0 +1,152 @@
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantScript
+metadata:
+  name: bedtime-routine
+  namespace: default
+spec:
+  homeAssistantRef:
+    name: my-home
+
+  # Custom ID (optional) - if not specified, CR name is used
+  id: bedtime_routine
+
+  alias: "Bedtime Routine"
+
+  description: "Turn off lights, lock doors, set alarm, and adjust thermostat for bedtime"
+
+  icon: "mdi:sleep"
+
+  # Restart mode: If called again while running, stop and start fresh
+  mode: restart
+
+  # Auto-reload when script changes
+  autoReload: true
+
+  # Input parameter for target temperature
+  fields:
+    target_temp:
+      description: "Target temperature for the night"
+      example: "18"
+      default: "18"
+      selector:
+        number:
+          min: 15
+          max: 25
+          unit_of_measurement: "°C"
+
+  # Complex sequence with conditions, delays, and multiple services
+  sequence:
+    # Step 1: Turn off all lights except bedroom
+    - service: light.turn_off
+      target:
+        area_id: living_room
+    - service: light.turn_off
+      target:
+        area_id: kitchen
+    - delay:
+        seconds: 2
+
+    # Step 2: Dim bedroom lights
+    - service: light.turn_on
+      target:
+        entity_id: light.bedroom
+      data:
+        brightness_pct: 20
+        color_temp: 400
+
+    # Step 3: Lock all doors
+    - service: lock.lock
+      target:
+        area_id: front_door
+
+    # Step 4: Set alarm system to night mode
+    - service: alarm_control_panel.alarm_arm_night
+      target:
+        entity_id: alarm_control_panel.home
+
+    # Step 5: Adjust thermostat
+    - service: climate.set_temperature
+      target:
+        entity_id: climate.bedroom
+      data:
+        temperature: "{{ target_temp }}"
+        hvac_mode: heat
+
+    # Step 6: Wait 5 minutes, then turn off bedroom lights
+    - delay:
+        minutes: 5
+
+    - condition: state
+      entity_id: binary_sensor.bedroom_motion
+      state: "off"
+
+    - service: light.turn_off
+      target:
+        entity_id: light.bedroom
+
+    # Step 7: Send notification that routine is complete
+    - service: notify.mobile_app
+      data:
+        title: "Bedtime Routine"
+        message: "All set! Temperature: {{ target_temp }}°C"
+
+---
+# Example of a parallel script - can handle multiple simultaneous calls
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantScript
+metadata:
+  name: tts-announce
+  namespace: default
+spec:
+  homeAssistantRef:
+    name: my-home
+
+  alias: "TTS Announcement"
+
+  description: "Text-to-speech announcement on all speakers"
+
+  icon: "mdi:volume-high"
+
+  # Parallel mode: Can run multiple instances simultaneously
+  mode: parallel
+
+  # Maximum 10 parallel announcements
+  max: 10
+
+  maxExceeded: error
+
+  fields:
+    message:
+      description: "Message to announce"
+      example: "Dinner is ready!"
+      selector:
+        text:
+          multiline: true
+    speaker:
+      description: "Which speaker to use"
+      example: "media_player.kitchen"
+      default: "all"
+      selector:
+        entity:
+          domain: media_player
+
+  sequence:
+    - choose:
+        # If specific speaker selected
+        - conditions:
+            - condition: template
+              value_template: "{{ speaker != 'all' }}"
+          sequence:
+            - service: tts.google_translate_say
+              target:
+                entity_id: "{{ speaker }}"
+              data:
+                message: "{{ message }}"
+
+      # Default: announce on all speakers
+      default:
+        - service: tts.google_translate_say
+          target:
+            entity_id: media_player.all_speakers
+          data:
+            message: "{{ message }}"

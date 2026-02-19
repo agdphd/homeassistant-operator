@@ -14,22 +14,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Full automation definition via CRD with triggers, conditions, and actions
   - Uses `runtime.RawExtension` for flexible YAML compatibility with Home Assistant syntax
   - Aggregates multiple automation CRs into single ConfigMap (`<name>-automations`)
-  - Hot-reload via REST API (`/api/services/automation/reload`) with automatic fallback to pod restart
   - Finalizer-based deletion: regenerates ConfigMap without removed automation before CR deletion
   - Enable/disable without deletion via `spec.enabled` field
-  - Execution modes: `single`, `restart`, `queued`, `parallel`
   - Short names: `haautomation`, `haauto`
 
 - **HomeAssistantScene CRD**: Declarative scene management for Home Assistant
   - Aggregation pattern - multiple CR instances → single `scenes.yaml`
-  - Hot-reload via REST API (`/api/services/scene/reload`) for zero-downtime updates
   - Entity validation with pattern regex (`domain.object_id`)
   - Flexible entity attributes support via `runtime.RawExtension`
   - Short names: `hascene`, `hasc`
   - Status tracking: Ready, LastActivated, LastReloadTime
   - Finalizer-based cleanup - regenerates ConfigMap without deleted scene
   - Auto-reload control via `spec.autoReload` (default: true)
-- **HAClient Extension**: Added `ReloadScenes()` method for scene hot-reload
+
+- **HomeAssistantScript CRD**: Declarative script management for Home Assistant
+  - Aggregation pattern - multiple CR instances → single `scripts.yaml`
+  - Flexible sequence definition via `runtime.RawExtension`
+  - Input parameters support via `spec.fields` map
+  - Short names: `hascript`, `hascp`
+  - Status tracking: Ready, LastReloadTime, LastReloadMethod
+  - Finalizer-based cleanup - regenerates ConfigMap without deleted script
+  - Auto-reload control via `spec.autoReload` (default: true)
 
 
 ## [0.3.0] - 2026-01-27

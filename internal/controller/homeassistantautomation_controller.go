@@ -31,6 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -61,7 +62,8 @@ const (
 // HomeAssistantAutomationReconciler reconciles a HomeAssistantAutomation object
 type HomeAssistantAutomationReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantautomations,verbs=get;list;watch
@@ -525,9 +527,10 @@ func (r *HomeAssistantAutomationReconciler) performHotReloadAutomations(
 	return nil
 }
 
-// performAutomationReload executes reload based on autoReload setting
+// performAutomationReload triggers hot-reload of automations via Home Assistant REST API
+// Uses smart component detection and retry mechanism for reliability
 //
-//nolint:unparam // Always returns nil intentionally - errors are logged but don't fail reconciliation
+//nolint:unparam // Always returns nil or requeue error intentionally - errors are logged but don't fail reconciliation
 func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 	ctx context.Context,
 	automation *hav1alpha1.HomeAssistantAutomation,
@@ -535,53 +538,114 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 ) error {
 	log := logf.FromContext(ctx)
 
-	// Safe access to Bootstrap status
-	var bootstrapSecretName string
-	if ha.Status.Bootstrap != nil {
-		bootstrapSecretName = ha.Status.Bootstrap.ApiTokenSecretName
-	}
-
-	log.Info("performAutomationReload called",
-		"automation", automation.Name,
-		"ha", ha.Name,
-		"bootstrapSecretName", bootstrapSecretName)
-
 	// Check if autoReload is disabled
 	if automation.Spec.AutoReload != nil && !*automation.Spec.AutoReload {
-		log.Info("AutoReload disabled, skipping reload")
+		log.Info("AutoReload disabled, skipping reload", "name", automation.Name)
 		automation.Status.LastReloadMethod = reloadMethodNone
+		automation.Status.LastError = ""
 		return nil
 	}
 
 	// Get API token for hot-reload
 	token, tokenErr := getApiToken(ctx, r.Client, ha)
 	if tokenErr != nil {
-		log.Error(tokenErr, "API token not found - bootstrap may not be configured",
-			"expectedSecretName", bootstrapSecretName)
+		log.Info("API token not available, skipping hot-reload")
 		automation.Status.LastError = "API token not found - bootstrap may not be configured"
-		// Don't fail reconciliation - just skip hot-reload
-		// The automation is still added to ConfigMap
+
+		meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
+			Type:    "ReloadReady",
+			Status:  metav1.ConditionFalse,
+			Reason:  "TokenNotAvailable",
+			Message: "API token not available - bootstrap may not be configured",
+		})
+
 		return nil
 	}
 
-	// Build Home Assistant URL
+	// Build Home Assistant URL and client
 	haURL := buildHomeAssistantURL(ha)
-	log.Info("Attempting hot-reload", "url", haURL)
+	haClient := haclient.NewClient(haURL)
 
-	// Attempt hot-reload
-	if err := r.performHotReloadAutomations(ctx, haURL, token); err != nil {
-		log.Error(err, "Hot-reload failed")
-		automation.Status.LastError = fmt.Sprintf("Hot-reload failed: %v", err)
-		// Don't fail reconciliation - automation is in ConfigMap
-		// It will be loaded on next HA restart
+	// Perform reload with retry and smart detection
+	reloadConfig := ReloadConfig{
+		MaxRetries:    3,
+		RetryDelay:    5 * time.Second,
+		ComponentName: "automation",
+	}
+
+	result := PerformReloadWithRetry(
+		ctx,
+		haClient,
+		token,
+		reloadConfig,
+		haClient.ReloadAutomations,
+	)
+
+	// Update status based on result
+	now := metav1.Now()
+
+	if result.Success {
+		// SUCCESS
+		automation.Status.LastReloadTime = &now
+		automation.Status.LastReloadMethod = result.Method
+		automation.Status.LastError = ""
+
+		meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
+			Type:   "ReloadReady",
+			Status: metav1.ConditionTrue,
+			Reason: "ReloadSuccessful",
+			Message: fmt.Sprintf("Automation hot-reloaded successfully after %d attempts (%.1fs)",
+				result.Attempts, result.Duration.Seconds()),
+		})
+
+		r.Recorder.Event(automation, corev1.EventTypeNormal, "ReloadSuccessful",
+			fmt.Sprintf("Automation hot-reloaded successfully after %d attempts", result.Attempts))
+
+		log.Info("Automation hot-reload completed successfully",
+			"name", automation.Name,
+			"attempts", result.Attempts,
+			"duration", result.Duration)
+
 		return nil
 	}
 
-	// Hot-reload succeeded
-	now := metav1.Now()
-	automation.Status.LastReloadTime = &now
-	automation.Status.LastReloadMethod = reloadMethodHotReload
-	automation.Status.LastError = ""
-	log.Info("Automation hot-reload successful")
+	// FAILED or SKIPPED
+	automation.Status.LastError = result.Error.Error()
+
+	if !result.ComponentLoaded {
+		// Component not loaded - will retry on next reconcile
+		meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
+			Type:    "ReloadReady",
+			Status:  metav1.ConditionFalse,
+			Reason:  "ComponentNotLoaded",
+			Message: "Automation integration not loaded in Home Assistant yet (will retry automatically)",
+		})
+
+		// Requeue to retry when component loads
+		log.Info("Automation component not loaded yet, will retry",
+			"name", automation.Name,
+			"reloadID", result.ReloadID)
+		return fmt.Errorf("automation component not loaded: %w", result.Error)
+	}
+
+	// Component loaded but reload failed after all retries
+	meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
+		Type:   "ReloadReady",
+		Status: metav1.ConditionFalse,
+		Reason: "ReloadFailed",
+		Message: fmt.Sprintf("Hot-reload failed after %d attempts: %s",
+			result.Attempts, truncateString(result.Error.Error(), 200)),
+	})
+
+	r.Recorder.Event(automation, corev1.EventTypeWarning, "ReloadFailed",
+		fmt.Sprintf("Hot-reload failed after %d attempts: %s",
+			result.Attempts, truncateString(result.Error.Error(), 100)))
+
+	// Don't fail reconciliation - automation is in ConfigMap, will load on next HA restart
+	log.Info("Hot-reload failed, automation will load on next HA restart",
+		"name", automation.Name,
+		"attempts", result.Attempts,
+		"error", result.Error)
+
 	return nil
 }

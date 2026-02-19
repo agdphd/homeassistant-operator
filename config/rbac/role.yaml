@@ -22,6 +22,13 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
   - pods
   verbs:
   - get
@@ -54,6 +61,7 @@ rules:
   - homeassistantconfigurations
   - homeassistants
   - homeassistantscenes
+  - homeassistantscripts
   verbs:
   - create
   - delete
@@ -69,6 +77,7 @@ rules:
   - homeassistantconfigurations/finalizers
   - homeassistants/finalizers
   - homeassistantscenes/finalizers
+  - homeassistantscripts/finalizers
   - homeassistantsecrets/finalizers
   verbs:
   - update
@@ -79,6 +88,7 @@ rules:
   - homeassistantconfigurations/status
   - homeassistants/status
   - homeassistantscenes/status
+  - homeassistantscripts/status
   - homeassistantsecrets/status
   verbs:
   - get

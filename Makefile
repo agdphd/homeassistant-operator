@@ -128,10 +128,14 @@ setup-test-e2e: ## Set up a k3d cluster for e2e tests (always creates fresh clus
 	@k3d cluster delete $(K3D_CLUSTER_E2E) 2>/dev/null || true
 	@echo "Creating fresh k3d cluster $(K3D_CLUSTER_E2E) with $(K3D_MEMORY_E2E) memory..."
 	@k3d cluster create $(K3D_CLUSTER_E2E) --agents 0 --servers-memory $(K3D_MEMORY_E2E)
-	@echo "Pre-pulling Home Assistant image to speed up tests..."
-	@docker pull ghcr.io/home-assistant/home-assistant:stable
-	@echo "Importing Home Assistant image into k3d cluster..."
-	@k3d image import ghcr.io/home-assistant/home-assistant:stable -c $(K3D_CLUSTER_E2E)
+	@echo "Ensuring Home Assistant image is in local Docker cache..."
+	@docker image inspect ghcr.io/home-assistant/home-assistant:stable >/dev/null 2>&1 || \
+		docker pull ghcr.io/home-assistant/home-assistant:stable
+	@echo "Importing Home Assistant image from local Docker cache into k3d containerd..."
+	@docker save ghcr.io/home-assistant/home-assistant:stable | \
+		docker exec -i k3d-$(K3D_CLUSTER_E2E)-server-0 ctr images import -
+	@echo "Verifying image is available in k3d containerd..."
+	@docker exec k3d-$(K3D_CLUSTER_E2E)-server-0 crictl images | grep home-assistant
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ginkgo ## Run ALL E2E tests with 4× parallelization (~15 min, 12-15× faster than sequential)

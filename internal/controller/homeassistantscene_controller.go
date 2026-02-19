@@ -31,6 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -57,7 +58,8 @@ const (
 // HomeAssistantSceneReconciler reconciles a HomeAssistantScene object
 type HomeAssistantSceneReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscenes,verbs=get;list;watch
@@ -66,6 +68,8 @@ type HomeAssistantSceneReconciler struct {
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscenes/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -356,6 +360,8 @@ func (r *HomeAssistantSceneReconciler) sceneToYaml(
 
 // performSceneReload triggers hot-reload of scenes via Home Assistant REST API
 //
+// nolint:gocyclo
+//
 //nolint:dupl,unparam // dupl: Similar to performAutomationReload by design; unparam: Always returns nil intentionally
 func (r *HomeAssistantSceneReconciler) performSceneReload(
 	ctx context.Context,
@@ -377,34 +383,105 @@ func (r *HomeAssistantSceneReconciler) performSceneReload(
 		return nil
 	}
 
-	// Get API token for hot-reload (uses ha.Status.Bootstrap.ApiTokenSecretName)
+	// Get API token for hot-reload
 	token, tokenErr := getApiToken(ctx, r.Client, ha)
 	if tokenErr != nil {
 		log.Info("API token not available, skipping hot-reload")
 		scene.Status.LastError = "API token not found - bootstrap may not be configured"
+
+		// Set condition: Token not available
+		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: scene.Generation,
+			Reason:             "TokenNotAvailable",
+			Message:            "API token not available - bootstrap may not be configured",
+		})
 		return nil
 	}
 
-	// Build Home Assistant URL (respects custom port from ha.Spec.Service.Port)
+	// Build Home Assistant URL
 	haURL := buildHomeAssistantURL(ha)
 	haClient := haclient.NewClient(haURL)
 
-	// Call scene reload endpoint
-	log.Info("Triggering scene hot-reload", "url", haURL)
-	if err := haClient.ReloadScenes(ctx, token); err != nil {
-		log.Error(err, "Hot-reload failed")
-		scene.Status.LastError = fmt.Sprintf("Hot-reload failed: %v", err)
-		// Don't fail reconciliation - scene is in ConfigMap
-		// It will be loaded on next HA restart
+	// Use PerformReloadWithRetry with smart detection
+	config := ReloadConfig{
+		MaxRetries:    3,
+		RetryDelay:    5 * time.Second,
+		ComponentName: "scene",
+	}
+
+	reloadFunc := func(ctx context.Context, token string) error {
+		return haClient.ReloadScenes(ctx, token)
+	}
+
+	result := PerformReloadWithRetry(ctx, haClient, token, config, reloadFunc)
+
+	// Update status based on result
+	if result.Success {
+		// SUCCESS
+		now := metav1.Now()
+		scene.Status.LastReloadTime = &now
+		scene.Status.LastError = ""
+
+		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: scene.Generation,
+			Reason:             "ReloadSuccessful",
+			Message: fmt.Sprintf("Scene hot-reloaded successfully after %d attempts (%.1fs)",
+				result.Attempts, result.Duration.Seconds()),
+		})
+
+		r.Recorder.Eventf(scene, corev1.EventTypeNormal, "ReloadSuccessful",
+			"Scene hot-reload successful (attempts: %d, duration: %.1fs)",
+			result.Attempts, result.Duration.Seconds())
+
+		log.Info("Scene hot-reload successful", "name", scene.Name, "hash", newHash,
+			"reloadID", result.ReloadID, "attempts", result.Attempts, "duration", result.Duration)
 		return nil
 	}
 
-	// Update status on success
-	now := metav1.Now()
-	scene.Status.LastReloadTime = &now
-	scene.Status.LastError = ""
+	// FAILURE
+	if !result.ComponentLoaded {
+		// Component not loaded - will retry on next reconcile
+		scene.Status.LastError = result.Error.Error()
 
-	log.Info("Scene hot-reload successful", "name", scene.Name, "hash", newHash)
+		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: scene.Generation,
+			Reason:             "ComponentNotLoaded",
+			Message:            "Scene integration not loaded in Home Assistant yet (will retry automatically)",
+		})
+
+		log.Info("Scene component not loaded, will retry",
+			"reloadID", result.ReloadID, "error", result.Error)
+
+		// Return error to trigger requeue
+		return result.Error
+	}
+
+	// Hot-reload failed after retries
+	scene.Status.LastError = result.Error.Error()
+
+	meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
+		Type:               "ReloadReady",
+		Status:             metav1.ConditionFalse,
+		ObservedGeneration: scene.Generation,
+		Reason:             "ReloadFailed",
+		Message: fmt.Sprintf("Hot-reload failed after %d attempts: %s",
+			result.Attempts, truncateString(result.Error.Error(), 200)),
+	})
+
+	r.Recorder.Eventf(scene, corev1.EventTypeWarning, "ReloadFailed",
+		"Hot-reload failed after %d attempts: %s",
+		result.Attempts, truncateString(result.Error.Error(), 100))
+
+	log.Error(result.Error, "Scene hot-reload failed after retries",
+		"reloadID", result.ReloadID, "attempts", result.Attempts, "duration", result.Duration)
+
+	// Don't fail reconciliation - scene is in ConfigMap, will be loaded on HA restart
 	return nil
 }
 

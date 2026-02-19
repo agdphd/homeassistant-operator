@@ -230,17 +230,27 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.HomeAssistantAutomationReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("homeassistantautomation-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantAutomation")
 		os.Exit(1)
 	}
 	if err := (&controller.HomeAssistantSceneReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("homeassistantscene-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantScene")
+		os.Exit(1)
+	}
+	if err := (&controller.HomeAssistantScriptReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("homeassistantscript-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantScript")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

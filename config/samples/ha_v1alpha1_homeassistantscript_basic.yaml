@@ -1,0 +1,59 @@
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantScript
+metadata:
+  name: notify-mobile
+  namespace: default
+spec:
+  # Reference to the HomeAssistant instance
+  homeAssistantRef:
+    name: my-home
+
+  # User-friendly name (required)
+  alias: "Notify Mobile Devices"
+
+  # Description of what this script does
+  description: "Send notification to all mobile devices"
+
+  # Icon for the script (Material Design Icons)
+  icon: "mdi:cellphone-message"
+
+  # Execution mode: single, restart, queued, parallel
+  # single: Don't start a new run if already running
+  mode: single
+
+  # Maximum concurrent/queued runs (for queued/parallel modes)
+  max: 5
+
+  # Log level when max is exceeded: silent, info, warning, error
+  maxExceeded: warning
+
+  # Auto-reload when script changes (default: true)
+  autoReload: true
+
+  # Input parameters for the script
+  fields:
+    message:
+      description: "The message to send"
+      example: "Hello from Home Assistant!"
+      selector:
+        text:
+          multiline: false
+    title:
+      description: "Notification title"
+      example: "Alert"
+      selector:
+        text:
+          multiline: false
+
+  # Sequence of actions to execute
+  sequence:
+    - service: notify.mobile_app_phone
+      data:
+        title: "{{ title }}"
+        message: "{{ message }}"
+    - delay:
+        seconds: 1
+    - service: notify.mobile_app_tablet
+      data:
+        title: "{{ title }}"
+        message: "{{ message }}"
