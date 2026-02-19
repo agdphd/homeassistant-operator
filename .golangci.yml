@@ -38,6 +38,9 @@ linters:
           - dupl
         path: _test\.go$
       - linters:
+          - goconst
+        path: _test\.go$
+      - linters:
           - dupl
         path: ^test/
       - linters:

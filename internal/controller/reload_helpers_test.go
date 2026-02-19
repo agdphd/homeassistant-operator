@@ -1,5 +1,6 @@
 package controller
 
+//nolint:goconst // Test fixtures use repeated strings for mock HTTP endpoints
 import (
 	"context"
 	"errors"
@@ -38,6 +39,7 @@ var _ = Describe("PerformReloadWithRetry", func() {
 	Describe("Success scenarios", func() {
 		It("Should succeed on first attempt", func() {
 			// Mock HA server that returns component loaded + reload success
+			//nolint:goconst // Test fixtures use repeated endpoint strings
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/config":
@@ -64,7 +66,7 @@ var _ = Describe("PerformReloadWithRetry", func() {
 			Expect(result.Method).To(Equal("hot-reload"))
 			Expect(result.Attempts).To(Equal(1))
 			Expect(result.ComponentLoaded).To(BeTrue())
-			Expect(result.Error).To(BeNil())
+			Expect(result.Error).ToNot(HaveOccurred())
 			Expect(result.ReloadID).NotTo(BeEmpty())
 			Expect(result.Duration).To(BeNumerically(">", 0))
 		})

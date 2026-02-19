@@ -55,6 +55,10 @@ const (
 	reasonInvalidAutomation   = "InvalidAutomation"
 	reasonReloadSucceeded     = "ReloadSucceeded"
 	reasonReloadFailed        = "ReloadFailed"
+
+	// Error messages
+	errMsgTokenNotAvailable = "API token not found - bootstrap may not be configured"
+
 	// Note: reloadMethodRestart, reloadMethodHotReload, reloadMethodNone,
 	// defaultHomeAssistantPort, and apiTokenSecretSuffix are defined in constants.go
 )
@@ -507,26 +511,6 @@ func (r *HomeAssistantAutomationReconciler) validateHomeAssistantRef(
 	return ha, nil
 }
 
-// performHotReloadAutomations attempts to hot-reload automations via HA REST API
-// Makes a single attempt - reconciler will requeue on failure for retry
-func (r *HomeAssistantAutomationReconciler) performHotReloadAutomations(
-	ctx context.Context, haURL, token string,
-) error {
-	log := logf.FromContext(ctx)
-
-	haClient := haclient.NewClient(haURL)
-	log.Info("Attempting to hot-reload automations via REST API")
-
-	// Single attempt - let reconciler handle retry via requeue
-	if err := haClient.ReloadAutomations(ctx, token); err != nil {
-		log.Error(err, "Failed to reload automations")
-		return fmt.Errorf("failed to reload automations via API: %w", err)
-	}
-
-	log.Info("Automations hot-reload successful")
-	return nil
-}
-
 // performAutomationReload triggers hot-reload of automations via Home Assistant REST API
 // Uses smart component detection and retry mechanism for reliability
 //
@@ -550,7 +534,7 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 	token, tokenErr := getApiToken(ctx, r.Client, ha)
 	if tokenErr != nil {
 		log.Info("API token not available, skipping hot-reload")
-		automation.Status.LastError = "API token not found - bootstrap may not be configured"
+		automation.Status.LastError = errMsgTokenNotAvailable
 
 		meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
 			Type:    "ReloadReady",
