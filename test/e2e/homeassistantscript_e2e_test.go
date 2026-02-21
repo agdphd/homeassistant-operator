@@ -1012,6 +1012,13 @@ func collectScriptDebugInfo(namespace, haName string) {
 		writeDebug("%s\n", output)
 	}
 
+	writeDebug("\n--- HomeAssistantScript YAML ---\n")
+	cmd = exec.Command("kubectl", "get", "hascript", "-n", namespace, "-o", "yaml")
+	output, err = utils.Run(cmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	}
+
 	writeDebug("\n--- Scripts ConfigMap Content ---\n")
 	configMapName := haName + "-scripts"
 	cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", namespace, "-o", "yaml")

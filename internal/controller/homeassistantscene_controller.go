@@ -390,7 +390,7 @@ func (r *HomeAssistantSceneReconciler) performSceneReload(
 	token, tokenErr := getApiToken(ctx, r.Client, ha)
 	if tokenErr != nil {
 		log.Info("API token not available, skipping hot-reload")
-		scene.Status.LastError = "API token not found - bootstrap may not be configured"
+		scene.Status.LastError = errMsgTokenNotAvailable
 
 		// Set condition: Token not available
 		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{

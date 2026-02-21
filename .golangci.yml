@@ -52,10 +52,6 @@ linters:
       - linters:
           - dupl
         path: ^cmd/main\.go$
-      - linters:
-          - staticcheck
-        text: "SA1019"
-        path: ^cmd/main\.go$
     paths:
       - third_party$
       - builtin$

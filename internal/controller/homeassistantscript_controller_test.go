@@ -300,8 +300,9 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 				yamlContent := cm.Data[scriptsYamlKey]
 				Expect(yamlContent).To(ContainSubstring(string(mode)))
 
-				// Cleanup
+				// Cleanup: delete then reconcile to trigger finalizer removal
 				_ = k8sClient.Delete(ctx, script)
+				_, _ = reconcileScript(script.Name)
 			}
 		})
 	})

@@ -42,4 +42,7 @@ const (
 	// Used across multiple controllers
 	defaultHomeAssistantPort = 8123
 	apiTokenSecretSuffix     = "-api-token"
+
+	// Error messages shared across controllers
+	errMsgTokenNotAvailable = "API token not found - bootstrap may not be configured"
 )

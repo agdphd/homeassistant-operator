@@ -56,11 +56,8 @@ const (
 	reasonReloadSucceeded     = "ReloadSucceeded"
 	reasonReloadFailed        = "ReloadFailed"
 
-	// Error messages
-	errMsgTokenNotAvailable = "API token not found - bootstrap may not be configured"
-
 	// Note: reloadMethodRestart, reloadMethodHotReload, reloadMethodNone,
-	// defaultHomeAssistantPort, and apiTokenSecretSuffix are defined in constants.go
+	// defaultHomeAssistantPort, apiTokenSecretSuffix, and errMsgTokenNotAvailable are defined in constants.go
 )
 
 // HomeAssistantAutomationReconciler reconciles a HomeAssistantAutomation object

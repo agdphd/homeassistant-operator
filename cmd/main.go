@@ -232,7 +232,7 @@ func main() {
 	if err := (&controller.HomeAssistantAutomationReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("homeassistantautomation-controller"),
+		Recorder: mgr.GetEventRecorderFor("homeassistantautomation-controller"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantAutomation")
 		os.Exit(1)
@@ -240,7 +240,7 @@ func main() {
 	if err := (&controller.HomeAssistantSceneReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("homeassistantscene-controller"),
+		Recorder: mgr.GetEventRecorderFor("homeassistantscene-controller"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantScene")
 		os.Exit(1)
@@ -248,7 +248,7 @@ func main() {
 	if err := (&controller.HomeAssistantScriptReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("homeassistantscript-controller"),
+		Recorder: mgr.GetEventRecorderFor("homeassistantscript-controller"), //nolint:staticcheck
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantScript")
 		os.Exit(1)

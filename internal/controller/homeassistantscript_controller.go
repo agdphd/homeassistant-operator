@@ -224,6 +224,7 @@ func (r *HomeAssistantScriptReconciler) reconcileScriptsConfigMap(
 		scriptYaml, err := r.scriptToYaml(&sc)
 		if err != nil {
 			log.Error(err, "Failed to convert script to YAML", "name", sc.Name)
+			r.Recorder.Eventf(&sc, corev1.EventTypeWarning, "YamlConversionFailed", "Failed to convert script to YAML: %v", err)
 			continue
 		}
 		scriptsMap[scriptID] = scriptYaml
@@ -339,14 +340,14 @@ func (r *HomeAssistantScriptReconciler) scriptToYaml(
 		result["mode"] = string(script.Spec.Mode)
 	}
 
-	// Max (optional)
-	if script.Spec.Max != nil {
-		result["max"] = *script.Spec.Max
-	}
-
-	// MaxExceeded (optional)
-	if script.Spec.MaxExceeded != "" {
-		result["max_exceeded"] = script.Spec.MaxExceeded
+	// Max and MaxExceeded (only relevant for queued/parallel modes)
+	if script.Spec.Mode == hav1alpha1.ScriptModeQueued || script.Spec.Mode == hav1alpha1.ScriptModeParallel {
+		if script.Spec.Max != nil {
+			result["max"] = *script.Spec.Max
+		}
+		if script.Spec.MaxExceeded != "" {
+			result["max_exceeded"] = script.Spec.MaxExceeded
+		}
 	}
 
 	// Fields (optional) - input parameters
@@ -404,7 +405,7 @@ func (r *HomeAssistantScriptReconciler) performScriptReload(
 	token, tokenErr := getApiToken(ctx, r.Client, ha)
 	if tokenErr != nil {
 		log.Info("API token not available, skipping hot-reload")
-		script.Status.LastError = "API token not found - bootstrap may not be configured"
+		script.Status.LastError = errMsgTokenNotAvailable
 
 		meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
 			Type:               "ReloadReady",
