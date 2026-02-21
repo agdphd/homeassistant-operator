@@ -180,11 +180,13 @@ test-k3d: k3d-create k3d-load install deploy ## Full test cycle on k3d: create c
 	@echo "Run 'kubectl apply -f config/samples/' to create a HomeAssistant instance"
 
 .PHONY: lint
-lint: golangci-lint ## Run golangci-lint linter
+lint: golangci-lint ## Run golangci-lint linter (clears cache for fresh analysis)
+	$(GOLANGCI_LINT) cache clean
 	$(GOLANGCI_LINT) run
 
 .PHONY: lint-fix
-lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
+lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes (clears cache for fresh analysis)
+	$(GOLANGCI_LINT) cache clean
 	$(GOLANGCI_LINT) run --fix
 
 .PHONY: lint-config
