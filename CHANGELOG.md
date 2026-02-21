@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Prometheus metrics for hot-reload operations** — three new domain-specific metrics exposed at `/metrics`:
+  - `homeassistant_reload_total{component, result}` — counter per component (automation/scene/script) and result (success/failed/skipped)
+  - `homeassistant_reload_duration_seconds{component}` — histogram (buckets: 0.5s–30s) for reload latency percentiles
+  - `homeassistant_reload_retries_total{component}` — extra retry attempts beyond the first; non-zero value indicates the reload required more than one attempt
+  - All data sourced from existing `ReloadResult` fields — no additional API calls required
+
 - **HomeAssistantAutomation CRD**: Declarative automation management with hot-reload capabilities
   - Full automation definition via CRD with triggers, conditions, and actions
   - Uses `runtime.RawExtension` for flexible YAML compatibility with Home Assistant syntax
