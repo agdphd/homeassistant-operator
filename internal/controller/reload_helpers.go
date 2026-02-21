@@ -48,6 +48,21 @@ func PerformReloadWithRetry(
 		ReloadID: uuid.New().String()[:8],
 	}
 	startTime := time.Now()
+
+	// Metrics defer runs SECOND (declared first = LIFO), after Duration is set below.
+	defer func() {
+		resultLabel := result.Method
+		if resultLabel == reloadMethodHotReload {
+			resultLabel = "success"
+		}
+		reloadTotal.WithLabelValues(config.ComponentName, resultLabel).Inc()
+		reloadDuration.WithLabelValues(config.ComponentName).Observe(result.Duration.Seconds())
+		if result.Attempts > 1 {
+			reloadRetriesTotal.WithLabelValues(config.ComponentName).Add(float64(result.Attempts - 1))
+		}
+	}()
+
+	// Duration defer runs FIRST (declared last = LIFO).
 	defer func() {
 		result.Duration = time.Since(startTime)
 	}()
