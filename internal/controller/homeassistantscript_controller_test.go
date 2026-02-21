@@ -65,7 +65,8 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 
 	// Helper to create test action
 	createTestAction := func(data map[string]interface{}) hav1alpha1.ScriptAction {
-		raw, _ := json.Marshal(data)
+		raw, err := json.Marshal(data)
+		Expect(err).NotTo(HaveOccurred())
 		return hav1alpha1.ScriptAction{
 			RawExtension: runtime.RawExtension{Raw: raw},
 		}

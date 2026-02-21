@@ -78,6 +78,8 @@ type HomeAssistantAutomationReconciler struct {
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -612,7 +614,7 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 		log.Info("Automation component not loaded yet, will retry",
 			"name", automation.Name,
 			"reloadID", result.ReloadID)
-		return fmt.Errorf("automation component not loaded: %w", result.Error)
+		return result.Error
 	}
 
 	// Component loaded but reload failed after all retries

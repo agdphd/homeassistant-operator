@@ -68,6 +68,8 @@ type HomeAssistantScriptReconciler struct {
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscripts/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -405,10 +407,11 @@ func (r *HomeAssistantScriptReconciler) performScriptReload(
 		script.Status.LastError = "API token not found - bootstrap may not be configured"
 
 		meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
-			Type:    "ReloadReady",
-			Status:  metav1.ConditionFalse,
-			Reason:  "TokenNotAvailable",
-			Message: "API token not available - bootstrap may not be configured",
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: script.Generation,
+			Reason:             "TokenNotAvailable",
+			Message:            "API token not available - bootstrap may not be configured",
 		})
 
 		return nil
@@ -434,18 +437,18 @@ func (r *HomeAssistantScriptReconciler) performScriptReload(
 	)
 
 	// Update status based on result
-	now := metav1.Now()
-
 	if result.Success {
 		// SUCCESS
+		now := metav1.Now()
 		script.Status.LastReloadTime = &now
 		script.Status.LastReloadMethod = result.Method
 		script.Status.LastError = ""
 
 		meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
-			Type:   "ReloadReady",
-			Status: metav1.ConditionTrue,
-			Reason: "ReloadSuccessful",
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: script.Generation,
+			Reason:             "ReloadSuccessful",
 			Message: fmt.Sprintf("Script hot-reloaded successfully after %d attempts (%.1fs)",
 				result.Attempts, result.Duration.Seconds()),
 		})
@@ -468,24 +471,26 @@ func (r *HomeAssistantScriptReconciler) performScriptReload(
 	if !result.ComponentLoaded {
 		// Component not loaded - will retry on next reconcile
 		meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
-			Type:    "ReloadReady",
-			Status:  metav1.ConditionFalse,
-			Reason:  "ComponentNotLoaded",
-			Message: "Script integration not loaded in Home Assistant yet (will retry automatically)",
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: script.Generation,
+			Reason:             "ComponentNotLoaded",
+			Message:            "Script integration not loaded in Home Assistant yet (will retry automatically)",
 		})
 
 		// Requeue to retry when component loads
 		log.Info("Script component not loaded yet, will retry",
 			"name", script.Name,
 			"reloadID", result.ReloadID)
-		return fmt.Errorf("script component not loaded: %w", result.Error)
+		return result.Error
 	}
 
 	// Component loaded but reload failed after all retries
 	meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
-		Type:   "ReloadReady",
-		Status: metav1.ConditionFalse,
-		Reason: "ReloadFailed",
+		Type:               "ReloadReady",
+		Status:             metav1.ConditionFalse,
+		ObservedGeneration: script.Generation,
+		Reason:             "ReloadFailed",
 		Message: fmt.Sprintf("Hot-reload failed after %d attempts: %s",
 			result.Attempts, truncateString(result.Error.Error(), 200)),
 	})
