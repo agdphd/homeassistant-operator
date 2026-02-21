@@ -662,3 +662,82 @@ func (c *Client) ReloadScenes(
 		"failed to reload scenes",
 	)
 }
+
+// ReloadScripts triggers a hot-reload of Home Assistant scripts.
+// Returns nil if reload successful, error if failed.
+// Requires authenticated API call with long-lived token.
+func (c *Client) ReloadScripts(
+	ctx context.Context,
+	token string,
+) error {
+	return c.postServiceWithToken(
+		ctx,
+		"/api/services/script/reload",
+		token,
+		"failed to reload scripts",
+	)
+}
+
+// GetConfig returns Home Assistant configuration including loaded components.
+// This is useful for checking if specific integrations are loaded.
+// Requires authenticated API call with long-lived token.
+func (c *Client) GetConfig(ctx context.Context, token string) (*ConfigResponse, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/config", nil)
+	if err != nil {
+		return nil, &Error{
+			Type:    ErrorTypeHTTP,
+			Message: "failed to create config request",
+			Err:     err,
+		}
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, &Error{
+			Type:    ErrorTypeNotReady,
+			Message: "failed to get config",
+			Err:     err,
+		}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, &Error{
+			Type:       ErrorTypeHTTP,
+			Message:    fmt.Sprintf("failed to get config: %s", string(bodyBytes)),
+			StatusCode: resp.StatusCode,
+		}
+	}
+
+	var config ConfigResponse
+	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
+		return nil, &Error{
+			Type:    ErrorTypeInvalidResponse,
+			Message: "failed to decode config response",
+			Err:     err,
+		}
+	}
+
+	return &config, nil
+}
+
+// IsComponentLoaded checks if a specific component/integration is loaded in Home Assistant.
+// Common components: "automation", "script", "scene", "homeassistant", "http", "mqtt", etc.
+// Returns true if component is loaded, false otherwise.
+// Requires authenticated API call with long-lived token.
+func (c *Client) IsComponentLoaded(ctx context.Context, token, component string) (bool, error) {
+	config, err := c.GetConfig(ctx, token)
+	if err != nil {
+		return false, err
+	}
+
+	for _, comp := range config.Components {
+		if comp == component {
+			return true, nil
+		}
+	}
+	return false, nil
+}

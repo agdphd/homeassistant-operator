@@ -85,3 +85,14 @@ type AnalyticsPreferences struct {
 	Usage       bool `json:"usage,omitempty"`
 	Statistics  bool `json:"statistics,omitempty"`
 }
+
+// ConfigResponse represents GET /api/config response
+// Contains Home Assistant configuration including loaded components
+type ConfigResponse struct {
+	Components            []string `json:"components"`
+	Version               string   `json:"version"`
+	LocationName          string   `json:"location_name"`
+	TimeZone              string   `json:"time_zone"`
+	ConfigDir             string   `json:"config_dir"`
+	WhitelistExternalDirs []string `json:"whitelist_external_dirs"`
+}

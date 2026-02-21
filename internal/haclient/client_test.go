@@ -840,4 +840,181 @@ var _ = Describe("HAClient", func() {
 			Expect(err.(*Error).Message).To(ContainSubstring("unexpected response format"))
 		})
 	})
+
+	Describe("GetConfig", func() {
+		const validConfigResponse = `{
+			"components": ["automation", "script", "scene", "homeassistant", "http"],
+			"version": "2024.2.0",
+			"location_name": "Test Home",
+			"time_zone": "Europe/Berlin",
+			"config_dir": "/config",
+			"whitelist_external_dirs": ["/config/custom_components"]
+		}`
+
+		It("Should successfully get config", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal("/api/config"))
+				Expect(r.Method).To(Equal("GET"))
+				Expect(r.Header.Get("Authorization")).To(Equal("Bearer test-token"))
+				Expect(r.Header.Get("User-Agent")).To(Equal(userAgent))
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(validConfigResponse))
+			}))
+
+			client = NewClient(server.URL)
+			config, err := client.GetConfig(ctx, "test-token")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(config).NotTo(BeNil())
+			Expect(config.Version).To(Equal("2024.2.0"))
+			Expect(config.LocationName).To(Equal("Test Home"))
+			Expect(config.TimeZone).To(Equal("Europe/Berlin"))
+			Expect(config.ConfigDir).To(Equal("/config"))
+			Expect(config.Components).To(HaveLen(5))
+			Expect(config.Components).To(ContainElement("automation"))
+			Expect(config.Components).To(ContainElement("script"))
+			Expect(config.Components).To(ContainElement("scene"))
+		})
+
+		It("Should return error for 401 Unauthorized", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"message": "Invalid token"}`))
+			}))
+
+			client = NewClient(server.URL)
+			config, err := client.GetConfig(ctx, "invalid-token")
+			Expect(err).To(HaveOccurred())
+			Expect(config).To(BeNil())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeHTTP))
+			Expect(err.(*Error).StatusCode).To(Equal(http.StatusUnauthorized))
+		})
+
+		It("Should return error for 503 Service Unavailable", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`Service Unavailable`))
+			}))
+
+			client = NewClient(server.URL)
+			config, err := client.GetConfig(ctx, "test-token")
+			Expect(err).To(HaveOccurred())
+			Expect(config).To(BeNil())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeHTTP))
+			Expect(err.(*Error).StatusCode).To(Equal(http.StatusServiceUnavailable))
+		})
+
+		It("Should return error for invalid JSON response", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`invalid json`))
+			}))
+
+			client = NewClient(server.URL)
+			config, err := client.GetConfig(ctx, "test-token")
+			Expect(err).To(HaveOccurred())
+			Expect(config).To(BeNil())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeInvalidResponse))
+			Expect(err.(*Error).Message).To(ContainSubstring("failed to decode config response"))
+		})
+
+		It("Should handle timeout", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(100 * time.Millisecond)
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(validConfigResponse))
+			}))
+
+			client = NewClient(server.URL).WithTimeout(10 * time.Millisecond)
+			config, err := client.GetConfig(ctx, "test-token")
+			Expect(err).To(HaveOccurred())
+			Expect(config).To(BeNil())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeNotReady))
+		})
+	})
+
+	Describe("IsComponentLoaded", func() {
+		const configWithScript = `{
+			"components": ["automation", "script", "scene", "homeassistant"],
+			"version": "2024.2.0"
+		}`
+
+		const configWithoutScript = `{
+			"components": ["automation", "scene", "homeassistant"],
+			"version": "2024.2.0"
+		}`
+
+		It("Should return true when component is loaded", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal("/api/config"))
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(configWithScript))
+			}))
+
+			client = NewClient(server.URL)
+			loaded, err := client.IsComponentLoaded(ctx, "test-token", "script")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(loaded).To(BeTrue())
+		})
+
+		It("Should return false when component is not loaded", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(configWithoutScript))
+			}))
+
+			client = NewClient(server.URL)
+			loaded, err := client.IsComponentLoaded(ctx, "test-token", "script")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(loaded).To(BeFalse())
+		})
+
+		It("Should check for automation component", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(configWithScript))
+			}))
+
+			client = NewClient(server.URL)
+			loaded, err := client.IsComponentLoaded(ctx, "test-token", "automation")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(loaded).To(BeTrue())
+		})
+
+		It("Should check for scene component", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(configWithScript))
+			}))
+
+			client = NewClient(server.URL)
+			loaded, err := client.IsComponentLoaded(ctx, "test-token", "scene")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(loaded).To(BeTrue())
+		})
+
+		It("Should return error when GetConfig fails", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"message": "Invalid token"}`))
+			}))
+
+			client = NewClient(server.URL)
+			loaded, err := client.IsComponentLoaded(ctx, "invalid-token", "script")
+			Expect(err).To(HaveOccurred())
+			Expect(loaded).To(BeFalse())
+			Expect(err.(*Error).StatusCode).To(Equal(http.StatusUnauthorized))
+		})
+
+		It("Should handle non-existent component", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(configWithScript))
+			}))
+
+			client = NewClient(server.URL)
+			loaded, err := client.IsComponentLoaded(ctx, "test-token", "nonexistent_component")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(loaded).To(BeFalse())
+		})
+	})
 })

@@ -128,10 +128,14 @@ setup-test-e2e: ## Set up a k3d cluster for e2e tests (always creates fresh clus
 	@k3d cluster delete $(K3D_CLUSTER_E2E) 2>/dev/null || true
 	@echo "Creating fresh k3d cluster $(K3D_CLUSTER_E2E) with $(K3D_MEMORY_E2E) memory..."
 	@k3d cluster create $(K3D_CLUSTER_E2E) --agents 0 --servers-memory $(K3D_MEMORY_E2E)
-	@echo "Pre-pulling Home Assistant image to speed up tests..."
-	@docker pull ghcr.io/home-assistant/home-assistant:stable
-	@echo "Importing Home Assistant image into k3d cluster..."
-	@k3d image import ghcr.io/home-assistant/home-assistant:stable -c $(K3D_CLUSTER_E2E)
+	@echo "Ensuring Home Assistant image is in local Docker cache..."
+	@docker image inspect ghcr.io/home-assistant/home-assistant:stable >/dev/null 2>&1 || \
+		docker pull ghcr.io/home-assistant/home-assistant:stable
+	@echo "Importing Home Assistant image from local Docker cache into k3d containerd..."
+	@docker save ghcr.io/home-assistant/home-assistant:stable | \
+		docker exec -i k3d-$(K3D_CLUSTER_E2E)-server-0 ctr images import -
+	@echo "Verifying image is available in k3d containerd..."
+	@docker exec k3d-$(K3D_CLUSTER_E2E)-server-0 crictl images | grep home-assistant
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ginkgo ## Run ALL E2E tests with 4× parallelization (~15 min, 12-15× faster than sequential)
@@ -176,11 +180,13 @@ test-k3d: k3d-create k3d-load install deploy ## Full test cycle on k3d: create c
 	@echo "Run 'kubectl apply -f config/samples/' to create a HomeAssistant instance"
 
 .PHONY: lint
-lint: golangci-lint ## Run golangci-lint linter
+lint: golangci-lint ## Run golangci-lint linter (clears cache for fresh analysis)
+	$(GOLANGCI_LINT) cache clean
 	$(GOLANGCI_LINT) run
 
 .PHONY: lint-fix
-lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
+lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes (clears cache for fresh analysis)
+	$(GOLANGCI_LINT) cache clean
 	$(GOLANGCI_LINT) run --fix
 
 .PHONY: lint-config
@@ -288,7 +294,7 @@ CONTROLLER_TOOLS_VERSION ?= v0.18.0
 ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
-GOLANGCI_LINT_VERSION ?= v2.8.0
+GOLANGCI_LINT_VERSION ?= v2.10.1
 GINKGO_VERSION ?= v2.27.5
 
 .PHONY: kustomize

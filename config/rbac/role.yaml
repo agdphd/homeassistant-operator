@@ -48,12 +48,20 @@ rules:
   - list
   - watch
 - apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
   - ha.homeassistant.io
   resources:
   - homeassistantautomations
   - homeassistantconfigurations
   - homeassistants
   - homeassistantscenes
+  - homeassistantscripts
   verbs:
   - create
   - delete
@@ -69,6 +77,7 @@ rules:
   - homeassistantconfigurations/finalizers
   - homeassistants/finalizers
   - homeassistantscenes/finalizers
+  - homeassistantscripts/finalizers
   - homeassistantsecrets/finalizers
   verbs:
   - update
@@ -79,6 +88,7 @@ rules:
   - homeassistantconfigurations/status
   - homeassistants/status
   - homeassistantscenes/status
+  - homeassistantscripts/status
   - homeassistantsecrets/status
   verbs:
   - get

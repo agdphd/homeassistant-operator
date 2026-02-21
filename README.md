@@ -28,8 +28,9 @@ The Home Assistant Operator automates the deployment and lifecycle management of
 | `HomeAssistant` | Alpha | Core Home Assistant deployment |
 | `HomeAssistantSecrets` | Alpha | Declarative secrets management |
 | `HomeAssistantConfiguration` | Alpha | Declarative configuration with hot-reload |
-| `HomeAssistantAutomation` | Alpha | Declarative automation management |
-| `HomeAssistantScene` | Alpha | Declarative scene management with hot-reload |
+| `HomeAssistantAutomation` | Alpha | Declarative automation management with smart detection & retry |
+| `HomeAssistantScene` | Alpha | Declarative scene management with smart detection & retry |
+| `HomeAssistantScript` | Alpha | Declarative script management with smart detection & retry |
 
 ## Quick Start
 
