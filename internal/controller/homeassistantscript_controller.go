@@ -31,7 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -44,14 +44,12 @@ import (
 )
 
 const (
-	scriptsYamlKey          = "scripts.yaml"
-	generatedScriptsSuffix  = "-scripts"
-	scriptHashAnnotationKey = "ha.homeassistant.io/script-hash"
-	scriptFinalizerName     = "ha.homeassistant.io/script-finalizer"
+	scriptsYamlKey         = "scripts.yaml"
+	generatedScriptsSuffix = "-scripts"
+	scriptFinalizerName    = "ha.homeassistant.io/script-finalizer"
 
 	// Condition reasons for HomeAssistantScript
 	reasonScriptGenerated = "ScriptGenerated"
-	reasonScriptNotFound  = "ScriptNotFound"
 	reasonInvalidScript   = "InvalidScript"
 )
 
@@ -59,7 +57,7 @@ const (
 type HomeAssistantScriptReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscripts,verbs=get;list;watch
@@ -69,7 +67,7 @@ type HomeAssistantScriptReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -224,7 +222,9 @@ func (r *HomeAssistantScriptReconciler) reconcileScriptsConfigMap(
 		scriptYaml, err := r.scriptToYaml(&sc)
 		if err != nil {
 			log.Error(err, "Failed to convert script to YAML", "name", sc.Name)
-			r.Recorder.Eventf(&sc, corev1.EventTypeWarning, "YamlConversionFailed", "Failed to convert script to YAML: %v", err)
+			r.Recorder.Eventf(&sc, nil, corev1.EventTypeWarning,
+				"YamlConversionFailed", "YamlConversionFailed",
+				"Failed to convert script to YAML: %v", err)
 			continue
 		}
 		scriptsMap[scriptID] = scriptYaml
@@ -397,6 +397,7 @@ func (r *HomeAssistantScriptReconciler) performScriptReload(
 
 	if !autoReload {
 		log.Info("AutoReload disabled, skipping reload", "name", script.Name)
+		script.Status.LastReloadMethod = reloadMethodNone
 		script.Status.LastError = ""
 		return nil
 	}
@@ -411,7 +412,7 @@ func (r *HomeAssistantScriptReconciler) performScriptReload(
 			Type:               "ReloadReady",
 			Status:             metav1.ConditionFalse,
 			ObservedGeneration: script.Generation,
-			Reason:             "TokenNotAvailable",
+			Reason:             reasonTokenNotAvailable,
 			Message:            "API token not available - bootstrap may not be configured",
 		})
 
@@ -454,8 +455,8 @@ func (r *HomeAssistantScriptReconciler) performScriptReload(
 				result.Attempts, result.Duration.Seconds()),
 		})
 
-		r.Recorder.Event(script, corev1.EventTypeNormal, "ReloadSuccessful",
-			fmt.Sprintf("Script hot-reloaded successfully after %d attempts", result.Attempts))
+		r.Recorder.Eventf(script, nil, corev1.EventTypeNormal, "ReloadSuccessful", "ReloadSuccessful",
+			"Script hot-reloaded successfully after %d attempts", result.Attempts)
 
 		log.Info("Script hot-reload completed successfully",
 			"name", script.Name,
@@ -487,6 +488,7 @@ func (r *HomeAssistantScriptReconciler) performScriptReload(
 	}
 
 	// Component loaded but reload failed after all retries
+	script.Status.LastReloadMethod = result.Method
 	meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
 		Type:               "ReloadReady",
 		Status:             metav1.ConditionFalse,
@@ -496,9 +498,9 @@ func (r *HomeAssistantScriptReconciler) performScriptReload(
 			result.Attempts, truncateString(result.Error.Error(), 200)),
 	})
 
-	r.Recorder.Event(script, corev1.EventTypeWarning, "ReloadFailed",
-		fmt.Sprintf("Hot-reload failed after %d attempts: %s",
-			result.Attempts, truncateString(result.Error.Error(), 100)))
+	r.Recorder.Eventf(script, nil, corev1.EventTypeWarning, "ReloadFailed", "ReloadFailed",
+		"Hot-reload failed after %d attempts: %s",
+		result.Attempts, truncateString(result.Error.Error(), 100))
 
 	// Don't fail reconciliation - script is in ConfigMap, will load on next HA restart
 	log.Info("Hot-reload failed, script will load on next HA restart",
@@ -509,10 +511,18 @@ func (r *HomeAssistantScriptReconciler) performScriptReload(
 	return nil
 }
 
-// calculateScriptHash computes SHA256 hash of the script spec
+// calculateScriptHash computes SHA256 hash of the script spec.
+// Includes the effective script ID (spec.id or CR name) so that ID-only
+// changes also update the hash and trigger a reload.
 func (r *HomeAssistantScriptReconciler) calculateScriptHash(
 	script *hav1alpha1.HomeAssistantScript,
 ) (string, error) {
+	// Effective ID matches the key used in the scripts ConfigMap
+	scriptID := script.Spec.ID
+	if scriptID == "" {
+		scriptID = script.Name
+	}
+
 	// Convert spec to YAML for consistent hashing
 	yamlData, err := r.scriptToYaml(script)
 	if err != nil {
@@ -524,7 +534,9 @@ func (r *HomeAssistantScriptReconciler) calculateScriptHash(
 		return "", err
 	}
 
-	hash := sha256.Sum256(yamlBytes)
+	// Prefix with script ID so ID-only changes are captured
+	data := append([]byte(scriptID+"\n"), yamlBytes...)
+	hash := sha256.Sum256(data)
 	return fmt.Sprintf("%x", hash), nil
 }
 

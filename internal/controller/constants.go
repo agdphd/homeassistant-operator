@@ -45,4 +45,7 @@ const (
 
 	// Error messages shared across controllers
 	errMsgTokenNotAvailable = "API token not found - bootstrap may not be configured"
+
+	// Condition reasons for ReloadReady
+	reasonTokenNotAvailable = "TokenNotAvailable"
 )

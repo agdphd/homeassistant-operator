@@ -26,12 +26,12 @@ import (
 
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -64,7 +64,7 @@ const (
 type HomeAssistantAutomationReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantautomations,verbs=get;list;watch
@@ -76,7 +76,7 @@ type HomeAssistantAutomationReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -86,7 +86,7 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 	// Fetch the HomeAssistantAutomation instance
 	automation := &hav1alpha1.HomeAssistantAutomation{}
 	if err := r.Get(ctx, req.NamespacedName, automation); err != nil {
-		if errors.IsNotFound(err) {
+		if k8serrors.IsNotFound(err) {
 			log.Info("HomeAssistantAutomation resource not found. Ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
@@ -164,11 +164,18 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 		return ctrl.Result{}, err
 	}
 
-	// Perform hot-reload if enabled and hash changed
-	if automation.Status.AutomationHash != automationHash {
-		log.Info("Automation hash changed, triggering hot-reload",
+	// Perform hot-reload if hash changed OR reload is pending (token was previously unavailable)
+	hashChanged := automation.Status.AutomationHash != automationHash
+	reloadPending := false
+	if reloadCond := meta.FindStatusCondition(automation.Status.Conditions, "ReloadReady"); reloadCond != nil {
+		reloadPending = reloadCond.Status == metav1.ConditionFalse && reloadCond.Reason == reasonTokenNotAvailable
+	}
+	if hashChanged || reloadPending {
+		log.Info("Triggering hot-reload",
 			"oldHash", automation.Status.AutomationHash,
-			"newHash", automationHash)
+			"newHash", automationHash,
+			"hashChanged", hashChanged,
+			"reloadPending", reloadPending)
 		if err := r.performAutomationReload(ctx, automation, ha); err != nil {
 			if statusErr := r.Status().Update(ctx, automation); statusErr != nil {
 				log.Error(statusErr, "Failed to update status")
@@ -176,10 +183,10 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 			return ctrl.Result{}, err
 		}
 	} else {
-		log.V(1).Info("Automation hash unchanged, skipping hot-reload", "hash", automationHash)
+		log.V(1).Info("Automation hash unchanged and no pending reload, skipping hot-reload", "hash", automationHash)
 	}
 
-	// Update status
+	// Update status — always mark Ready after ConfigMap sync (reload failure is graceful)
 	automation.Status.AutomationHash = automationHash
 	automation.Status.ObservedGeneration = automation.Generation
 	meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
@@ -196,6 +203,13 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 	}
 
 	log.Info("Successfully reconciled HomeAssistantAutomation")
+
+	// Requeue if hot-reload is still pending (token not yet available) so we retry once it is
+	if reloadCond := meta.FindStatusCondition(automation.Status.Conditions, "ReloadReady"); reloadCond != nil {
+		if reloadCond.Status == metav1.ConditionFalse && reloadCond.Reason == reasonTokenNotAvailable {
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+	}
 	return ctrl.Result{}, nil
 }
 
@@ -271,7 +285,7 @@ func (r *HomeAssistantAutomationReconciler) reconcileAutomationsConfigMap(
 	if err := r.Get(ctx, haRef, ha); err != nil {
 		// If HA doesn't exist, we can't create/update ConfigMap with proper owner reference
 		// This is expected during cleanup/deletion scenarios
-		if errors.IsNotFound(err) {
+		if k8serrors.IsNotFound(err) {
 			log.V(1).Info("HomeAssistant not found, skipping ConfigMap reconciliation", "ha", haRef.Name)
 			return nil
 		}
@@ -286,7 +300,7 @@ func (r *HomeAssistantAutomationReconciler) reconcileAutomationsConfigMap(
 	// Check if ConfigMap exists
 	existingConfigMap := &corev1.ConfigMap{}
 	err = r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: automation.Namespace}, existingConfigMap)
-	if err != nil && errors.IsNotFound(err) {
+	if err != nil && k8serrors.IsNotFound(err) {
 		// Create new ConfigMap
 		log.Info("Creating automations ConfigMap", "name", configMapName)
 		if err := r.Create(ctx, configMap); err != nil {
@@ -488,7 +502,7 @@ func (r *HomeAssistantAutomationReconciler) validateHomeAssistantRef(
 
 	ha, err := getHomeAssistant(ctx, r.Client, haRef)
 	if err != nil {
-		if errors.IsNotFound(err) {
+		if k8serrors.IsNotFound(err) {
 			log.Error(err, "Referenced HomeAssistant not found",
 				"name", haRef.Name)
 			meta.SetStatusCondition(&automation.Status.Conditions,
@@ -540,7 +554,7 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 			Type:               "ReloadReady",
 			Status:             metav1.ConditionFalse,
 			ObservedGeneration: automation.Generation,
-			Reason:             "TokenNotAvailable",
+			Reason:             reasonTokenNotAvailable,
 			Message:            "API token not available - bootstrap may not be configured",
 		})
 
@@ -583,8 +597,8 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 				result.Attempts, result.Duration.Seconds()),
 		})
 
-		r.Recorder.Event(automation, corev1.EventTypeNormal, "ReloadSuccessful",
-			fmt.Sprintf("Automation hot-reloaded successfully after %d attempts", result.Attempts))
+		r.Recorder.Eventf(automation, nil, corev1.EventTypeNormal, "ReloadSuccessful", "ReloadSuccessful",
+			"Automation hot-reloaded successfully after %d attempts", result.Attempts)
 
 		log.Info("Automation hot-reload completed successfully",
 			"name", automation.Name,
@@ -624,9 +638,9 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 			result.Attempts, truncateString(result.Error.Error(), 200)),
 	})
 
-	r.Recorder.Event(automation, corev1.EventTypeWarning, "ReloadFailed",
-		fmt.Sprintf("Hot-reload failed after %d attempts: %s",
-			result.Attempts, truncateString(result.Error.Error(), 100)))
+	r.Recorder.Eventf(automation, nil, corev1.EventTypeWarning, "ReloadFailed", "ReloadFailed",
+		"Hot-reload failed after %d attempts: %s",
+		result.Attempts, truncateString(result.Error.Error(), 100))
 
 	// Don't fail reconciliation - automation is in ConfigMap, will load on next HA restart
 	log.Info("Hot-reload failed, automation will load on next HA restart",

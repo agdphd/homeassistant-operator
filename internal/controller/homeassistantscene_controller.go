@@ -31,7 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -59,7 +59,7 @@ const (
 type HomeAssistantSceneReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscenes,verbs=get;list;watch
@@ -69,7 +69,7 @@ type HomeAssistantSceneReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
-// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -155,8 +155,13 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 
-	// Perform hot-reload if enabled and hash changed
-	if scene.Status.SceneHash != sceneHash {
+	// Perform hot-reload if hash changed OR reload is pending (token was previously unavailable)
+	hashChanged := scene.Status.SceneHash != sceneHash
+	reloadPending := false
+	if reloadCond := meta.FindStatusCondition(scene.Status.Conditions, "ReloadReady"); reloadCond != nil {
+		reloadPending = reloadCond.Status == metav1.ConditionFalse && reloadCond.Reason == reasonTokenNotAvailable
+	}
+	if hashChanged || reloadPending {
 		if err := r.performSceneReload(ctx, scene, ha, sceneHash); err != nil {
 			if statusErr := r.Status().Update(ctx, scene); statusErr != nil {
 				log.Error(statusErr, "Failed to update status")
@@ -165,7 +170,7 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 	}
 
-	// Update status
+	// Update status — always mark Ready after ConfigMap sync (reload failure is graceful)
 	scene.Status.SceneHash = sceneHash
 	scene.Status.ObservedGeneration = scene.Generation
 	scene.Status.EntityCount = int32(len(scene.Spec.Entities))
@@ -183,6 +188,13 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	log.Info("Successfully reconciled HomeAssistantScene")
+
+	// Requeue if hot-reload is still pending (token not yet available) so we retry once it is
+	if reloadCond := meta.FindStatusCondition(scene.Status.Conditions, "ReloadReady"); reloadCond != nil {
+		if reloadCond.Status == metav1.ConditionFalse && reloadCond.Reason == reasonTokenNotAvailable {
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+	}
 	return ctrl.Result{}, nil
 }
 
@@ -397,7 +409,7 @@ func (r *HomeAssistantSceneReconciler) performSceneReload(
 			Type:               "ReloadReady",
 			Status:             metav1.ConditionFalse,
 			ObservedGeneration: scene.Generation,
-			Reason:             "TokenNotAvailable",
+			Reason:             reasonTokenNotAvailable,
 			Message:            "API token not available - bootstrap may not be configured",
 		})
 		return nil
@@ -436,7 +448,7 @@ func (r *HomeAssistantSceneReconciler) performSceneReload(
 				result.Attempts, result.Duration.Seconds()),
 		})
 
-		r.Recorder.Eventf(scene, corev1.EventTypeNormal, "ReloadSuccessful",
+		r.Recorder.Eventf(scene, nil, corev1.EventTypeNormal, "ReloadSuccessful", "ReloadSuccessful",
 			"Scene hot-reload successful (attempts: %d, duration: %.1fs)",
 			result.Attempts, result.Duration.Seconds())
 
@@ -477,7 +489,7 @@ func (r *HomeAssistantSceneReconciler) performSceneReload(
 			result.Attempts, truncateString(result.Error.Error(), 200)),
 	})
 
-	r.Recorder.Eventf(scene, corev1.EventTypeWarning, "ReloadFailed",
+	r.Recorder.Eventf(scene, nil, corev1.EventTypeWarning, "ReloadFailed", "ReloadFailed",
 		"Hot-reload failed after %d attempts: %s",
 		result.Attempts, truncateString(result.Error.Error(), 100))
 
