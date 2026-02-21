@@ -158,6 +158,9 @@ func getStatusCode(err error) int {
 
 // getResponseBody extracts response body/message from haclient.Error
 func getResponseBody(err error) string {
+	if err == nil {
+		return ""
+	}
 	var haErr *haclient.Error
 	if errors.As(err, &haErr) {
 		return haErr.Message

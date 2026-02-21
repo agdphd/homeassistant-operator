@@ -576,9 +576,10 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 		automation.Status.LastError = ""
 
 		meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
-			Type:   "ReloadReady",
-			Status: metav1.ConditionTrue,
-			Reason: "ReloadSuccessful",
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: automation.Generation,
+			Reason:             "ReloadSuccessful",
 			Message: fmt.Sprintf("Automation hot-reloaded successfully after %d attempts (%.1fs)",
 				result.Attempts, result.Duration.Seconds()),
 		})
@@ -600,10 +601,11 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 	if !result.ComponentLoaded {
 		// Component not loaded - will retry on next reconcile
 		meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
-			Type:    "ReloadReady",
-			Status:  metav1.ConditionFalse,
-			Reason:  "ComponentNotLoaded",
-			Message: "Automation integration not loaded in Home Assistant yet (will retry automatically)",
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: automation.Generation,
+			Reason:             "ComponentNotLoaded",
+			Message:            "Automation integration not loaded in Home Assistant yet (will retry automatically)",
 		})
 
 		// Requeue to retry when component loads
@@ -615,9 +617,10 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 
 	// Component loaded but reload failed after all retries
 	meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
-		Type:   "ReloadReady",
-		Status: metav1.ConditionFalse,
-		Reason: "ReloadFailed",
+		Type:               "ReloadReady",
+		Status:             metav1.ConditionFalse,
+		ObservedGeneration: automation.Generation,
+		Reason:             "ReloadFailed",
 		Message: fmt.Sprintf("Hot-reload failed after %d attempts: %s",
 			result.Attempts, truncateString(result.Error.Error(), 200)),
 	})

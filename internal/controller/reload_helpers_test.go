@@ -260,6 +260,11 @@ var _ = Describe("PerformReloadWithRetry", func() {
 				body := getResponseBody(err)
 				Expect(body).To(Equal("generic error message"))
 			})
+
+			It("Should return empty string for nil error", func() {
+				body := getResponseBody(nil)
+				Expect(body).To(Equal(""))
+			})
 		})
 
 		Describe("truncateString", func() {
