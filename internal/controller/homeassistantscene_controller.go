@@ -157,9 +157,12 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	// Perform hot-reload if enabled and hash changed
 	if scene.Status.SceneHash != sceneHash {
-		// Fire-and-forget: performSceneReload always returns nil
-		// Sets Status.LastError/LastReloadTime internally
-		_ = r.performSceneReload(ctx, scene, ha, sceneHash)
+		if err := r.performSceneReload(ctx, scene, ha, sceneHash); err != nil {
+			if statusErr := r.Status().Update(ctx, scene); statusErr != nil {
+				log.Error(statusErr, "Failed to update status")
+			}
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Update status
@@ -362,7 +365,7 @@ func (r *HomeAssistantSceneReconciler) sceneToYaml(
 //
 // nolint:gocyclo
 //
-//nolint:dupl,unparam // dupl: Similar to performAutomationReload by design; unparam: Always returns nil intentionally
+//nolint:dupl // dupl: Similar to performAutomationReload by design
 func (r *HomeAssistantSceneReconciler) performSceneReload(
 	ctx context.Context,
 	scene *hav1alpha1.HomeAssistantScene,

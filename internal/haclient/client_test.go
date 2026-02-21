@@ -913,7 +913,7 @@ var _ = Describe("HAClient", func() {
 			config, err := client.GetConfig(ctx, "test-token")
 			Expect(err).To(HaveOccurred())
 			Expect(config).To(BeNil())
-			Expect(err.(*Error).Type).To(Equal(ErrorTypeHTTP))
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeInvalidResponse))
 			Expect(err.(*Error).Message).To(ContainSubstring("failed to decode config response"))
 		})
 
@@ -928,7 +928,7 @@ var _ = Describe("HAClient", func() {
 			config, err := client.GetConfig(ctx, "test-token")
 			Expect(err).To(HaveOccurred())
 			Expect(config).To(BeNil())
-			Expect(err.(*Error).Type).To(Equal(ErrorTypeHTTP))
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeNotReady))
 		})
 	})
 

@@ -696,7 +696,7 @@ func (c *Client) GetConfig(ctx context.Context, token string) (*ConfigResponse, 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		return nil, &Error{
-			Type:    ErrorTypeHTTP,
+			Type:    ErrorTypeNotReady,
 			Message: "failed to get config",
 			Err:     err,
 		}
@@ -715,7 +715,7 @@ func (c *Client) GetConfig(ctx context.Context, token string) (*ConfigResponse, 
 	var config ConfigResponse
 	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
 		return nil, &Error{
-			Type:    ErrorTypeHTTP,
+			Type:    ErrorTypeInvalidResponse,
 			Message: "failed to decode config response",
 			Err:     err,
 		}
@@ -734,8 +734,8 @@ func (c *Client) IsComponentLoaded(ctx context.Context, token, component string)
 		return false, err
 	}
 
-	for _, c := range config.Components {
-		if c == component {
+	for _, comp := range config.Components {
+		if comp == component {
 			return true, nil
 		}
 	}

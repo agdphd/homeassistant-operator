@@ -141,7 +141,7 @@ type HomeAssistantScriptStatus struct {
 	LastError string `json:"lastError,omitempty"`
 
 	// LastReloadMethod indicates how the last reload was performed
-	// Possible values: "hot-reload", "restart", "none"
+	// Possible values: "hot-reload" (success), "failed" (all retries exhausted), "none" (skipped/initial)
 	// +optional
 	LastReloadMethod string `json:"lastReloadMethod,omitempty"`
 

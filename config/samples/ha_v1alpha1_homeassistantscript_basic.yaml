@@ -18,8 +18,8 @@ spec:
   icon: "mdi:cellphone-message"
 
   # Execution mode: single, restart, queued, parallel
-  # single: Don't start a new run if already running
-  mode: single
+  # queued: Queue new runs while one is already running
+  mode: queued
 
   # Maximum concurrent/queued runs (for queued/parallel modes)
   max: 5

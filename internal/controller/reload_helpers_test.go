@@ -1,6 +1,5 @@
 package controller
 
-//nolint:goconst // Test fixtures use repeated strings for mock HTTP endpoints
 import (
 	"context"
 	"errors"
@@ -273,7 +272,7 @@ var _ = Describe("PerformReloadWithRetry", func() {
 			It("Should truncate long strings", func() {
 				s := "this is a very long string that should be truncated"
 				result := truncateString(s, 10)
-				Expect(result).To(Equal("this is a ..."))
+				Expect(result).To(Equal("this is..."))
 			})
 
 			It("Should handle exact length", func() {

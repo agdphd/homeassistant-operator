@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -28,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -84,8 +86,9 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 		namespace = "default"
 
 		reconciler = &HomeAssistantScriptReconciler{
-			Client: k8sClient,
-			Scheme: k8sClient.Scheme(),
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: record.NewFakeRecorder(100),
 		}
 	})
 
@@ -280,15 +283,18 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 
 				// Verify ConfigMap contains mode
 				cm := &corev1.ConfigMap{}
-				Eventually(func() bool {
+				Eventually(func() error {
 					if err := k8sClient.Get(ctx, types.NamespacedName{
 						Name:      ha.Name + generatedScriptsSuffix,
 						Namespace: namespace,
 					}, cm); err != nil {
-						return false
+						return err
 					}
-					return cm.Data[scriptsYamlKey] != ""
-				}, timeout, interval).Should(BeTrue())
+					if cm.Data[scriptsYamlKey] == "" {
+						return fmt.Errorf("scriptsYamlKey is empty")
+					}
+					return nil
+				}, timeout, interval).Should(Succeed())
 
 				yamlContent := cm.Data[scriptsYamlKey]
 				Expect(yamlContent).To(ContainSubstring(string(mode)))
@@ -414,8 +420,9 @@ var _ = Describe("HomeAssistantScript Helper Functions", func() {
 
 	BeforeEach(func() {
 		reconciler = &HomeAssistantScriptReconciler{
-			Client: k8sClient,
-			Scheme: k8sClient.Scheme(),
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: record.NewFakeRecorder(100),
 		}
 	})
 

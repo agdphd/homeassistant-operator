@@ -927,7 +927,7 @@ spec:
 	})
 
 	Context("Fallback Mechanisms", Label("slow"), func() {
-		It("should fallback to restart when API token missing", func() {
+		It("should skip reload and set LastError when API token missing", func() {
 			By("Creating HomeAssistant WITHOUT bootstrap")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -148,7 +149,8 @@ func PerformReloadWithRetry(
 
 // getStatusCode extracts HTTP status code from haclient.Error
 func getStatusCode(err error) int {
-	if haErr, ok := err.(*haclient.Error); ok {
+	var haErr *haclient.Error
+	if errors.As(err, &haErr) {
 		return haErr.StatusCode
 	}
 	return 0
@@ -156,16 +158,20 @@ func getStatusCode(err error) int {
 
 // getResponseBody extracts response body/message from haclient.Error
 func getResponseBody(err error) string {
-	if haErr, ok := err.(*haclient.Error); ok {
+	var haErr *haclient.Error
+	if errors.As(err, &haErr) {
 		return haErr.Message
 	}
 	return err.Error()
 }
 
-// truncateString truncates string for logging
+// truncateString truncates string for logging so total length never exceeds maxLen
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
 }

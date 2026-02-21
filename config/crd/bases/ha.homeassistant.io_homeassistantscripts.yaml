@@ -218,7 +218,7 @@ spec:
               lastReloadMethod:
                 description: |-
                   LastReloadMethod indicates how the last reload was performed
-                  Possible values: "hot-reload", "restart", "none"
+                  Possible values: "hot-reload" (success), "failed" (all retries exhausted), "none" (skipped/initial)
                 type: string
               lastReloadTime:
                 description: LastReloadTime is the timestamp of the last successful

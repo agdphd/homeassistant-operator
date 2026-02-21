@@ -170,9 +170,12 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 		log.Info("Automation hash changed, triggering hot-reload",
 			"oldHash", automation.Status.AutomationHash,
 			"newHash", automationHash)
-		// Fire-and-forget: performAutomationReload always returns nil
-		// Sets Status.LastError/LastReloadTime/LastReloadMethod internally
-		_ = r.performAutomationReload(ctx, automation, ha)
+		if err := r.performAutomationReload(ctx, automation, ha); err != nil {
+			if statusErr := r.Status().Update(ctx, automation); statusErr != nil {
+				log.Error(statusErr, "Failed to update status")
+			}
+			return ctrl.Result{}, err
+		}
 	} else {
 		log.V(1).Info("Automation hash unchanged, skipping hot-reload", "hash", automationHash)
 	}
@@ -513,8 +516,6 @@ func (r *HomeAssistantAutomationReconciler) validateHomeAssistantRef(
 
 // performAutomationReload triggers hot-reload of automations via Home Assistant REST API
 // Uses smart component detection and retry mechanism for reliability
-//
-//nolint:unparam // Always returns nil or requeue error intentionally - errors are logged but don't fail reconciliation
 func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 	ctx context.Context,
 	automation *hav1alpha1.HomeAssistantAutomation,
@@ -537,10 +538,11 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 		automation.Status.LastError = errMsgTokenNotAvailable
 
 		meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
-			Type:    "ReloadReady",
-			Status:  metav1.ConditionFalse,
-			Reason:  "TokenNotAvailable",
-			Message: "API token not available - bootstrap may not be configured",
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: automation.Generation,
+			Reason:             "TokenNotAvailable",
+			Message:            "API token not available - bootstrap may not be configured",
 		})
 
 		return nil
@@ -566,10 +568,9 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 	)
 
 	// Update status based on result
-	now := metav1.Now()
-
 	if result.Success {
 		// SUCCESS
+		now := metav1.Now()
 		automation.Status.LastReloadTime = &now
 		automation.Status.LastReloadMethod = result.Method
 		automation.Status.LastError = ""

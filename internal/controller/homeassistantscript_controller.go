@@ -155,12 +155,15 @@ func (r *HomeAssistantScriptReconciler) Reconcile(ctx context.Context, req ctrl.
 
 	// Perform hot-reload if enabled and hash changed
 	if script.Status.ScriptHash != scriptHash {
-		// Fire-and-forget: performScriptReload always returns nil
-		// Sets Status.LastError/LastReloadTime internally
-		_ = r.performScriptReload(ctx, script, ha, scriptHash)
+		if err := r.performScriptReload(ctx, script, ha, scriptHash); err != nil {
+			if statusErr := r.Status().Update(ctx, script); statusErr != nil {
+				log.Error(statusErr, "Failed to update status")
+			}
+			return ctrl.Result{}, err
+		}
 	}
 
-	// Update status
+	// Update status (only reached when reload succeeded or hash was unchanged)
 	script.Status.ScriptHash = scriptHash
 	script.Status.ObservedGeneration = script.Generation
 	meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
@@ -372,11 +375,9 @@ func (r *HomeAssistantScriptReconciler) scriptToYaml(
 }
 
 // performScriptReload triggers hot-reload of scripts via Home Assistant REST API
-//
-// performScriptReload triggers hot-reload of scripts via Home Assistant REST API
 // Uses smart component detection and retry mechanism for reliability
 //
-//nolint:unparam // Always returns nil or requeue error intentionally - errors are logged but don't fail reconciliation
+//nolint:dupl // dupl: Similar to performAutomationReload/performSceneReload by design
 func (r *HomeAssistantScriptReconciler) performScriptReload(
 	ctx context.Context,
 	script *hav1alpha1.HomeAssistantScript,
@@ -525,7 +526,6 @@ func (r *HomeAssistantScriptReconciler) calculateScriptHash(
 func (r *HomeAssistantScriptReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hav1alpha1.HomeAssistantScript{}).
-		Owns(&corev1.ConfigMap{}).
 		Watches(
 			&hav1alpha1.HomeAssistant{},
 			handler.EnqueueRequestsFromMapFunc(r.findScriptsForHomeAssistant),
