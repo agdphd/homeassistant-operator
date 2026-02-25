@@ -32,6 +32,9 @@ linters:
     generated: lax
     rules:
       - linters:
+          - misspell
+        text: "mosquitto"  # Eclipse Mosquitto MQTT broker - official product name
+      - linters:
           - lll
         path: api/*
       - linters:

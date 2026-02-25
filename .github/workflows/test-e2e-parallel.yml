@@ -93,6 +93,18 @@ jobs:
             procs: 4
             timeout: 45
 
+          # Addon tests - fast path (resource creation, no pod startup)
+          - name: addon-fast
+            label: "addon && fast"
+            procs: 4
+            timeout: 20
+
+          # Addon tests - slow path (pod startup + bootstrap for B1)
+          - name: addon-slow
+            label: "addon && slow"
+            procs: 2
+            timeout: 60
+
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.timeout }}
 
@@ -137,6 +149,14 @@ jobs:
         run: |
           docker load -i operator-e2e.tar
           k3d image import operator:e2e -c e2e-${{ matrix.name }}
+
+      - name: Pre-load addon images into k3d (for addon-slow tests)
+        if: contains(matrix.name, 'addon')
+        run: |
+          for image in eclipse-mosquitto:2 mariadb:11 nodered/node-red:latest; do
+            docker pull $image
+            k3d image import $image -c e2e-${{ matrix.name }}
+          done
 
       - name: Verify cluster is ready
         run: |

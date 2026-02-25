@@ -83,6 +83,7 @@ func ForceDeleteNamespace(namespace string) error {
 	resourceTypes := []string{
 		"homeassistants", "homeassistantconfigurations",
 		"homeassistantsecrets", "homeassistantautomations",
+		"homeassistantscenes", "homeassistantscripts", "homeassistantaddons",
 	}
 
 	for _, resourceType := range resourceTypes {
