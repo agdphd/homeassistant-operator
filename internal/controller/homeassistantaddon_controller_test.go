@@ -173,19 +173,19 @@ var _ = Describe("HomeAssistantAddon Controller", func() {
 			Expect(*sts.Spec.Replicas).To(Equal(int32(1)))
 		})
 
-		It("creates Deployment for mosquito profile (has storage → StatefulSet)", func() {
-			addon := newAddon("addon-mosquito", "ha-workload", "mosquito")
+		It("creates StatefulSet for mosquitto profile (has storage → StatefulSet)", func() {
+			addon := newAddon("addon-mosquitto", "ha-workload", "mosquitto")
 			Expect(k8sClient.Create(testCtx, addon)).To(Succeed())
 			defer func() { _ = k8sClient.Delete(testCtx, addon) }()
 
 			_, err := reconcileAddon(addon.Name)
 			Expect(err).NotTo(HaveOccurred())
 
-			// mosquito profile has storage → StatefulSet
+			// mosquitto profile has storage → StatefulSet
 			sts := &appsv1.StatefulSet{}
 			Eventually(func() error {
 				return k8sClient.Get(testCtx, types.NamespacedName{
-					Name: "ha-workload-addon-mosquito", Namespace: ns,
+					Name: "ha-workload-addon-mosquitto", Namespace: ns,
 				}, sts)
 			}, timeout, interval).Should(Succeed())
 
@@ -639,8 +639,8 @@ var _ = Describe("HomeAssistantAddon Controller", func() {
 			_ = k8sClient.Delete(testCtx, haConfig)
 		})
 
-		It("adds mqtt section to HomeAssistantConfiguration for mosquito profile", func() {
-			addon := newAddon("addon-mqtt", "ha-integration", "mosquito")
+		It("adds mqtt section to HomeAssistantConfiguration for mosquitto profile", func() {
+			addon := newAddon("addon-mqtt", "ha-integration", "mosquitto")
 			Expect(k8sClient.Create(testCtx, addon)).To(Succeed())
 			defer func() { _ = k8sClient.Delete(testCtx, addon) }()
 
@@ -660,7 +660,7 @@ var _ = Describe("HomeAssistantAddon Controller", func() {
 		})
 
 		It("injects Service DNS as broker when mqtt section has no broker set", func() {
-			addon := newAddon("addon-mqtt-dns", "ha-integration", "mosquito")
+			addon := newAddon("addon-mqtt-dns", "ha-integration", "mosquitto")
 			Expect(k8sClient.Create(testCtx, addon)).To(Succeed())
 			defer func() { _ = k8sClient.Delete(testCtx, addon) }()
 
@@ -682,7 +682,7 @@ var _ = Describe("HomeAssistantAddon Controller", func() {
 			defer func() { _ = k8sClient.Delete(testCtx, ha2) }()
 
 			// No HomeAssistantConfiguration for ha-no-config
-			addon := newAddon("addon-no-haconfig", "ha-no-config", "mosquito")
+			addon := newAddon("addon-no-haconfig", "ha-no-config", "mosquitto")
 			Expect(k8sClient.Create(testCtx, addon)).To(Succeed())
 			defer func() { _ = k8sClient.Delete(testCtx, addon) }()
 
@@ -693,7 +693,7 @@ var _ = Describe("HomeAssistantAddon Controller", func() {
 		})
 
 		It("removes integration section when addon is deleted", func() {
-			addon := newAddon("addon-mqtt-del", "ha-integration", "mosquito")
+			addon := newAddon("addon-mqtt-del", "ha-integration", "mosquitto")
 			Expect(k8sClient.Create(testCtx, addon)).To(Succeed())
 
 			// Reconcile to add the section
@@ -711,7 +711,13 @@ var _ = Describe("HomeAssistantAddon Controller", func() {
 
 			// Delete addon → triggers finalizer
 			Expect(k8sClient.Delete(testCtx, addon)).To(Succeed())
-			time.Sleep(time.Millisecond * 100)
+			Eventually(func() bool {
+				fetched := &hav1alpha1.HomeAssistantAddon{}
+				if err := k8sClient.Get(testCtx, types.NamespacedName{Name: addon.Name, Namespace: ns}, fetched); err != nil {
+					return false
+				}
+				return fetched.GetDeletionTimestamp() != nil
+			}, timeout, interval).Should(BeTrue())
 
 			_, err = reconcileAddon(addon.Name)
 			Expect(err).NotTo(HaveOccurred())

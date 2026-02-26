@@ -87,7 +87,7 @@ type ResolvedAddonSpec struct {
 // addonProfiles is the built-in catalog of well-known addon configurations.
 // Each profile provides sensible defaults that users can override in HomeAssistantAddonSpec.
 var addonProfiles = map[string]AddonProfile{
-	"mosquito": {
+	"mosquitto": {
 		Image:          "eclipse-mosquitto",
 		DefaultVersion: "2",
 		Ports: []hav1alpha1.AddonPort{
@@ -97,8 +97,10 @@ var addonProfiles = map[string]AddonProfile{
 		Config: &hav1alpha1.AddonConfig{
 			MountPath: "/mosquitto/config",
 			Data: map[string]string{
+				// allow_anonymous is disabled by default for security.
+				// Override spec.config to enable it in development environments.
 				"mosquitto.conf": "listener 1883\n" +
-					"allow_anonymous true\n" +
+					"allow_anonymous false\n" +
 					"persistence true\n" +
 					"persistence_location /mosquitto/data/\n",
 			},
@@ -227,7 +229,7 @@ func resolveAddonSpec(spec *hav1alpha1.HomeAssistantAddonSpec) (*ResolvedAddonSp
 		var ok bool
 		profile, ok = addonProfiles[spec.Profile]
 		if !ok {
-			return nil, fmt.Errorf("unknown profile %q: valid profiles are mosquito, mariadb, node-red", spec.Profile)
+			return nil, fmt.Errorf("unknown profile %q: valid profiles are mosquitto, mariadb, node-red", spec.Profile)
 		}
 		resolved.applyProfile(profile, spec.Version)
 	}

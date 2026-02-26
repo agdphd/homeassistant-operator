@@ -84,7 +84,7 @@ type HomeAssistantAddonReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-func (r *HomeAssistantAddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ctrl.Result, err error) {
+func (r *HomeAssistantAddonReconciler) Reconcile(ctx context.Context, req ctrl.Request) (_ ctrl.Result, err error) {
 	start := time.Now()
 	profile := "custom"
 	defer func() {
@@ -102,11 +102,10 @@ func (r *HomeAssistantAddonReconciler) Reconcile(ctx context.Context, req ctrl.R
 	addon := &hav1alpha1.HomeAssistantAddon{}
 	if err = r.Get(ctx, req.NamespacedName, addon); err != nil {
 		if errors.IsNotFound(err) {
-			err = nil
-			return
+			return ctrl.Result{}, nil
 		}
 		log.Error(err, "Failed to get HomeAssistantAddon")
-		return
+		return ctrl.Result{}, err
 	}
 
 	// Set profile label for metrics now that we have the addon
@@ -120,18 +119,18 @@ func (r *HomeAssistantAddonReconciler) Reconcile(ctx context.Context, req ctrl.R
 			log.Info("Handling deletion - removing HAIntegration if present")
 			if err = r.cleanupHAIntegration(ctx, addon); err != nil {
 				log.Error(err, "Failed to clean up HAIntegration during deletion")
-				return
+				return ctrl.Result{}, err
 			}
 			r.Recorder.Eventf(addon, nil, corev1.EventTypeNormal, "AddonDeleted", "AddonDeleted",
 				"Addon %s deleted", addon.Name)
 			controllerutil.RemoveFinalizer(addon, addonFinalizerName)
 			if err = r.Update(ctx, addon); err != nil {
 				log.Error(err, "Failed to remove finalizer")
-				return
+				return ctrl.Result{}, err
 			}
 			log.Info("Finalizer removed, addon deleted")
 		}
-		return
+		return ctrl.Result{}, nil
 	}
 
 	// Add finalizer if not present
@@ -140,7 +139,7 @@ func (r *HomeAssistantAddonReconciler) Reconcile(ctx context.Context, req ctrl.R
 		controllerutil.AddFinalizer(addon, addonFinalizerName)
 		if err = r.Update(ctx, addon); err != nil {
 			log.Error(err, "Failed to add finalizer")
-			return
+			return ctrl.Result{}, err
 		}
 		log.V(1).Info("Finalizer added, continuing reconciliation")
 	}
@@ -150,7 +149,7 @@ func (r *HomeAssistantAddonReconciler) Reconcile(ctx context.Context, req ctrl.R
 		Name:      addon.Spec.HomeAssistantRef.Name,
 		Namespace: addon.Namespace,
 	}
-	ha, haErr := getHomeAssistant(ctx, r.Client, haRef)
+	_, haErr := getHomeAssistant(ctx, r.Client, haRef)
 	if haErr != nil {
 		if errors.IsNotFound(haErr) {
 			log.Info("Referenced HomeAssistant not found, requeuing", "ha", haRef.Name)
@@ -162,13 +161,10 @@ func (r *HomeAssistantAddonReconciler) Reconcile(ctx context.Context, req ctrl.R
 				ObservedGeneration: addon.Generation,
 			})
 			_ = r.Status().Update(ctx, addon)
-			res = ctrl.Result{RequeueAfter: 30 * time.Second}
-			return
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
-		err = haErr
-		return
+		return ctrl.Result{}, haErr
 	}
-	_ = ha // used below
 
 	// Resolve spec (profile + overrides)
 	resolved, specErr := resolveAddonSpec(&addon.Spec)
@@ -183,13 +179,13 @@ func (r *HomeAssistantAddonReconciler) Reconcile(ctx context.Context, req ctrl.R
 		})
 		addon.Status.Phase = hav1alpha1.AddonPhaseFailed
 		_ = r.Status().Update(ctx, addon)
-		return // spec error: don't requeue automatically, user must fix the spec
+		return ctrl.Result{}, nil // spec error: don't requeue automatically, user must fix the spec
 	}
 
 	// Reconcile ConfigMap (addon config files)
 	if err = r.reconcileConfigMap(ctx, addon, resolved); err != nil {
 		log.Error(err, "Failed to reconcile ConfigMap")
-		return
+		return ctrl.Result{}, err
 	}
 
 	// Reconcile workload (Deployment or StatefulSet)
@@ -203,7 +199,7 @@ func (r *HomeAssistantAddonReconciler) Reconcile(ctx context.Context, req ctrl.R
 			ObservedGeneration: addon.Generation,
 		})
 		_ = r.Status().Update(ctx, addon)
-		return
+		return ctrl.Result{}, err
 	}
 
 	// Reconcile Service
@@ -217,13 +213,13 @@ func (r *HomeAssistantAddonReconciler) Reconcile(ctx context.Context, req ctrl.R
 			ObservedGeneration: addon.Generation,
 		})
 		_ = r.Status().Update(ctx, addon)
-		return
+		return ctrl.Result{}, err
 	}
 
 	// Reconcile Ingress
 	if err = r.reconcileIngress(ctx, addon, resolved); err != nil {
 		log.Error(err, "Failed to reconcile Ingress")
-		return
+		return ctrl.Result{}, err
 	}
 
 	// Reconcile HAIntegration (best-effort — failure does not block the addon)
@@ -235,8 +231,7 @@ func (r *HomeAssistantAddonReconciler) Reconcile(ctx context.Context, req ctrl.R
 	addonHash, hashErr := r.calculateAddonHash(resolved)
 	if hashErr != nil {
 		log.Error(hashErr, "Failed to calculate addon hash")
-		err = hashErr
-		return
+		return ctrl.Result{}, hashErr
 	}
 
 	// Update status — all sub-reconcilers succeeded
@@ -277,7 +272,7 @@ func (r *HomeAssistantAddonReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 	if err = r.Status().Update(ctx, addon); err != nil {
 		log.Error(err, "Failed to update HomeAssistantAddon status")
-		return
+		return ctrl.Result{}, err
 	}
 
 	log.Info("Successfully reconciled HomeAssistantAddon",
@@ -285,7 +280,7 @@ func (r *HomeAssistantAddonReconciler) Reconcile(ctx context.Context, req ctrl.R
 		"workload", workloadType,
 		"hash", addonHash)
 
-	return
+	return ctrl.Result{}, nil
 }
 
 // addonResourceName returns the base name for all resources owned by this addon:
@@ -362,8 +357,14 @@ func (r *HomeAssistantAddonReconciler) reconcileDeployment(
 	log := logf.FromContext(ctx)
 	name := addonResourceName(addon)
 
-	// If a StatefulSet exists for this addon (e.g., after storage was removed),
-	// let Kubernetes GC handle it via owner references — we just create the new Deployment.
+	// If a StatefulSet exists (e.g., storage was removed from spec), delete it first.
+	staleSts := &appsv1.StatefulSet{}
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: addon.Namespace}, staleSts); err == nil {
+		log.Info("Deleting stale StatefulSet (storage removed from spec)", "name", name)
+		if err := r.Delete(ctx, staleSts); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete stale StatefulSet: %w", err)
+		}
+	}
 	replicas := int32(1)
 	desired := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -425,6 +426,15 @@ func (r *HomeAssistantAddonReconciler) reconcileStatefulSet(
 ) error {
 	log := logf.FromContext(ctx)
 	name := addonResourceName(addon)
+
+	// If a Deployment exists (e.g., storage was added to spec), delete it first.
+	staleDeployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: addon.Namespace}, staleDeployment); err == nil {
+		log.Info("Deleting stale Deployment (storage added to spec)", "name", name)
+		if err := r.Delete(ctx, staleDeployment); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete stale Deployment: %w", err)
+		}
+	}
 
 	storageSize := resolved.Storage.Size
 	if storageSize.IsZero() {
@@ -723,8 +733,7 @@ func (r *HomeAssistantAddonReconciler) reconcileHAIntegration(
 	existingConfig := make(map[string]interface{})
 	if haConfig.Spec.Configuration != "" {
 		if err := yaml.Unmarshal([]byte(haConfig.Spec.Configuration), &existingConfig); err != nil {
-			log.Error(err, "Failed to parse HomeAssistantConfiguration YAML, overwriting section")
-			existingConfig = make(map[string]interface{})
+			return fmt.Errorf("failed to parse HomeAssistantConfiguration YAML: %w", err)
 		}
 	}
 
@@ -928,13 +937,20 @@ func (r *HomeAssistantAddonReconciler) calculateAddonHash(
 	resolved *ResolvedAddonSpec,
 ) (string, error) {
 	data, err := json.Marshal(map[string]interface{}{
-		"image":   resolved.Image,
-		"ports":   resolved.Ports,
-		"storage": resolved.Storage,
-		"config":  resolved.Config,
-		"env":     resolved.Env,
-		"host":    resolved.HostNetwork,
-		"res":     resolved.Resources,
+		"image":           resolved.Image,
+		"ports":           resolved.Ports,
+		"storage":         resolved.Storage,
+		"config":          resolved.Config,
+		"env":             resolved.Env,
+		"host":            resolved.HostNetwork,
+		"res":             resolved.Resources,
+		"ingress":         resolved.Ingress,
+		"livenessProbe":   resolved.LivenessProbe,
+		"readinessProbe":  resolved.ReadinessProbe,
+		"securityContext": resolved.SecurityContext,
+		"volumeMounts":    resolved.VolumeMounts,
+		"volumes":         resolved.Volumes,
+		"haIntegration":   resolved.HAIntegration,
 	})
 	if err != nil {
 		return "", err

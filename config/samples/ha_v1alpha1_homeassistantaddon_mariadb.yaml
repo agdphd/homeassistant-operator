@@ -40,5 +40,5 @@ spec:
   # Configure manually in HomeAssistantConfiguration:
   #
   # recorder:
-  #   db_url: mysql://homeassistant:PASSWORD@mariadb-homeassistant-sample.default.svc.cluster.local/homeassistant?charset=utf8mb4
+  #   db_url: mysql://homeassistant:REPLACE_ME@mariadb-homeassistant-sample.default.svc.cluster.local/homeassistant?charset=utf8mb4
   #   purge_keep_days: 10

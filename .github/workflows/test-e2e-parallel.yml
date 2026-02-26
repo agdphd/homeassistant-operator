@@ -151,7 +151,7 @@ jobs:
           k3d image import operator:e2e -c e2e-${{ matrix.name }}
 
       - name: Pre-load addon images into k3d (for addon-slow tests)
-        if: contains(matrix.name, 'addon')
+        if: contains(matrix.name, 'addon-slow')
         run: |
           for image in eclipse-mosquitto:2 mariadb:11 nodered/node-red:latest; do
             docker pull $image

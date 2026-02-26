@@ -131,11 +131,11 @@ type HomeAssistantAddonSpec struct {
 	// +kubebuilder:validation:Required
 	HomeAssistantRef HomeAssistantReference `json:"homeAssistantRef"`
 
-	// Profile selects a predefined addon configuration (e.g., "mosquito", "mariadb", "node-red").
+	// Profile selects a predefined addon configuration (e.g., "mosquitto", "mariadb", "node-red").
 	// Profile values can be overridden by other fields in this spec.
 	// Either Profile or Image must be specified.
 	// +optional
-	// +kubebuilder:validation:Enum=mosquito;mariadb;node-red
+	// +kubebuilder:validation:Enum=mosquitto;mariadb;node-red
 	Profile string `json:"profile,omitempty"`
 
 	// Version overrides the default image tag from the profile (e.g., "2.0", "11", "latest").

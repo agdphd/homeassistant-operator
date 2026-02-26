@@ -63,7 +63,7 @@ var _ = Describe("HomeAssistantAddon E2E", Label("addon"), Ordered, func() {
 
 	Context("Mosquito Profile", Label("fast"), func() {
 		It("should create StatefulSet, Service, ConfigMap and set status fields", func() {
-			addonName := "test-mosquito"
+			addonName := "test-mosquitto"
 			resourceName := haName + "-" + addonName
 
 			By("Creating HomeAssistant CR")
@@ -73,7 +73,7 @@ var _ = Describe("HomeAssistantAddon E2E", Label("addon"), Ordered, func() {
 				g.Expect(out).To(Equal(haName))
 			}, utils.ResourceTimeout, addonReconcileInterval).Should(Succeed())
 
-			By("Creating HomeAssistantAddon with mosquito profile")
+			By("Creating HomeAssistantAddon with mosquitto profile")
 			addonYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantAddon
 metadata:
@@ -424,7 +424,7 @@ spec:
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
-			By("Creating HomeAssistantAddon with mosquito profile (includes haIntegration.mqtt)")
+			By("Creating HomeAssistantAddon with mosquitto profile (includes haIntegration.mqtt)")
 			addonYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantAddon
 metadata:
@@ -459,7 +459,7 @@ spec:
 
 	Context("Mosquito + HA Bootstrap", Label("bootstrap", "slow"), func() {
 		It("should verify mqtt section appears in HA configuration.yaml", func() {
-			addonName := "mosquito"
+			addonName := "mosquitto"
 			configName := haName + "-config"
 
 			By("Creating bootstrap credentials Secret")
@@ -528,7 +528,7 @@ spec:
 				g.Expect(out).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, addonPodReadyInterval).Should(Succeed())
 
-			By("Creating mosquito addon with haIntegration")
+			By("Creating mosquitto addon with haIntegration")
 			addonYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantAddon
 metadata:

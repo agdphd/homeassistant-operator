@@ -29,10 +29,10 @@ var _ = Describe("Addon Profile System", func() {
 
 	Describe("resolveAddonSpec", func() {
 
-		Context("mosquito profile", func() {
+		Context("mosquitto profile", func() {
 			It("resolves correct image and version", func() {
 				spec := &hav1alpha1.HomeAssistantAddonSpec{
-					Profile: "mosquito",
+					Profile: "mosquitto",
 				}
 				resolved, err := resolveAddonSpec(spec)
 				Expect(err).NotTo(HaveOccurred())
@@ -40,7 +40,7 @@ var _ = Describe("Addon Profile System", func() {
 			})
 
 			It("exposes mqtt and mqtt-ws ports", func() {
-				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquito"}
+				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquitto"}
 				resolved, err := resolveAddonSpec(spec)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resolved.Ports).To(HaveLen(2))
@@ -51,7 +51,7 @@ var _ = Describe("Addon Profile System", func() {
 			})
 
 			It("includes storage configuration", func() {
-				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquito"}
+				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquitto"}
 				resolved, err := resolveAddonSpec(spec)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resolved.Storage).NotTo(BeNil())
@@ -60,7 +60,7 @@ var _ = Describe("Addon Profile System", func() {
 			})
 
 			It("includes mosquitto.conf in ConfigMap data", func() {
-				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquito"}
+				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquitto"}
 				resolved, err := resolveAddonSpec(spec)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resolved.Config).NotTo(BeNil())
@@ -69,7 +69,7 @@ var _ = Describe("Addon Profile System", func() {
 			})
 
 			It("includes HAIntegration with mqtt section", func() {
-				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquito"}
+				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquitto"}
 				resolved, err := resolveAddonSpec(spec)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resolved.HAIntegration).NotTo(BeNil())
@@ -77,7 +77,7 @@ var _ = Describe("Addon Profile System", func() {
 			})
 
 			It("includes liveness probe on port 1883", func() {
-				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquito"}
+				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquitto"}
 				resolved, err := resolveAddonSpec(spec)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resolved.LivenessProbe).NotTo(BeNil())
@@ -86,7 +86,7 @@ var _ = Describe("Addon Profile System", func() {
 			})
 
 			It("includes resource requests and limits", func() {
-				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquito"}
+				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquitto"}
 				resolved, err := resolveAddonSpec(spec)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(resolved.Resources).NotTo(BeNil())
@@ -210,17 +210,17 @@ var _ = Describe("Addon Profile System", func() {
 		Context("user overrides", func() {
 			It("overrides profile image with custom image", func() {
 				spec := &hav1alpha1.HomeAssistantAddonSpec{
-					Profile: "mosquito",
-					Image:   "my-registry/mosquito:custom",
+					Profile: "mosquitto",
+					Image:   "my-registry/mosquitto:custom",
 				}
 				resolved, err := resolveAddonSpec(spec)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(resolved.Image).To(Equal("my-registry/mosquito:custom"))
+				Expect(resolved.Image).To(Equal("my-registry/mosquitto:custom"))
 			})
 
 			It("overrides profile version", func() {
 				spec := &hav1alpha1.HomeAssistantAddonSpec{
-					Profile: "mosquito",
+					Profile: "mosquitto",
 					Version: "2.1",
 				}
 				resolved, err := resolveAddonSpec(spec)
@@ -231,7 +231,7 @@ var _ = Describe("Addon Profile System", func() {
 			It("overrides profile resources", func() {
 				customMemory := resource.MustParse("256Mi")
 				spec := &hav1alpha1.HomeAssistantAddonSpec{
-					Profile: "mosquito",
+					Profile: "mosquitto",
 					Resources: &corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceMemory: customMemory,
@@ -247,10 +247,10 @@ var _ = Describe("Addon Profile System", func() {
 
 			It("overrides profile storage size", func() {
 				spec := &hav1alpha1.HomeAssistantAddonSpec{
-					Profile: "mosquito",
+					Profile: "mosquitto",
 					Storage: &hav1alpha1.AddonStorage{
 						Size:      resource.MustParse("10Gi"),
-						MountPath: "/mosquito/data",
+						MountPath: "/mosquitto/data",
 					},
 				}
 				resolved, err := resolveAddonSpec(spec)
@@ -260,7 +260,7 @@ var _ = Describe("Addon Profile System", func() {
 
 			It("overrides profile ports", func() {
 				spec := &hav1alpha1.HomeAssistantAddonSpec{
-					Profile: "mosquito",
+					Profile: "mosquitto",
 					Ports: []hav1alpha1.AddonPort{
 						{Name: "mqtt", Port: 1884, Protocol: "TCP"},
 					},
@@ -273,7 +273,7 @@ var _ = Describe("Addon Profile System", func() {
 
 			It("overrides profile HAIntegration", func() {
 				spec := &hav1alpha1.HomeAssistantAddonSpec{
-					Profile: "mosquito",
+					Profile: "mosquitto",
 					HAIntegration: &hav1alpha1.HAIntegration{
 						Section: "custom_mqtt",
 					},
@@ -313,7 +313,7 @@ var _ = Describe("Addon Profile System", func() {
 
 			It("sets hostNetwork from user spec", func() {
 				spec := &hav1alpha1.HomeAssistantAddonSpec{
-					Profile:     "mosquito",
+					Profile:     "mosquitto",
 					HostNetwork: true,
 				}
 				resolved, err := resolveAddonSpec(spec)
@@ -355,7 +355,7 @@ var _ = Describe("Addon Profile System", func() {
 					PeriodSeconds: 60,
 				}
 				spec := &hav1alpha1.HomeAssistantAddonSpec{
-					Profile:        "mosquito",
+					Profile:        "mosquitto",
 					ReadinessProbe: probe,
 				}
 				resolved, err := resolveAddonSpec(spec)
@@ -367,7 +367,7 @@ var _ = Describe("Addon Profile System", func() {
 			It("applies security context override", func() {
 				runAsUser := int64(1000)
 				spec := &hav1alpha1.HomeAssistantAddonSpec{
-					Profile: "mosquito",
+					Profile: "mosquitto",
 					SecurityContext: &corev1.SecurityContext{
 						RunAsUser: &runAsUser,
 					},
@@ -380,7 +380,7 @@ var _ = Describe("Addon Profile System", func() {
 
 			It("applies additional volume mounts and volumes", func() {
 				spec := &hav1alpha1.HomeAssistantAddonSpec{
-					Profile: "mosquito",
+					Profile: "mosquitto",
 					VolumeMounts: []corev1.VolumeMount{
 						{Name: "usb-device", MountPath: "/dev/ttyUSB0"},
 					},
@@ -400,7 +400,7 @@ var _ = Describe("Addon Profile System", func() {
 
 			It("applies liveness probe override via user spec", func() {
 				spec := &hav1alpha1.HomeAssistantAddonSpec{
-					Profile: "mosquito",
+					Profile: "mosquitto",
 					LivenessProbe: &corev1.Probe{
 						ProbeHandler: corev1.ProbeHandler{
 							HTTPGet: &corev1.HTTPGetAction{
@@ -419,7 +419,7 @@ var _ = Describe("Addon Profile System", func() {
 
 		Context("idempotency", func() {
 			It("produces identical results on repeated calls with same spec", func() {
-				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquito"}
+				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquitto"}
 				resolved1, err1 := resolveAddonSpec(spec)
 				resolved2, err2 := resolveAddonSpec(spec)
 				Expect(err1).NotTo(HaveOccurred())
@@ -431,7 +431,7 @@ var _ = Describe("Addon Profile System", func() {
 
 			It("user overrides do not mutate the profile defaults", func() {
 				spec := &hav1alpha1.HomeAssistantAddonSpec{
-					Profile: "mosquito",
+					Profile: "mosquitto",
 					Ports: []hav1alpha1.AddonPort{
 						{Name: "custom", Port: 9999},
 					},
@@ -440,7 +440,7 @@ var _ = Describe("Addon Profile System", func() {
 				Expect(err).NotTo(HaveOccurred())
 
 				// Re-resolve without user ports — should still get profile defaults
-				spec2 := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquito"}
+				spec2 := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquitto"}
 				resolved2, err2 := resolveAddonSpec(spec2)
 				Expect(err2).NotTo(HaveOccurred())
 				Expect(resolved2.Ports).To(HaveLen(2))

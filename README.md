@@ -71,39 +71,9 @@ The `HomeAssistantAddon` CRD deploys companion services (MQTT brokers, databases
 
 | Profile | Image | Workload | Ports | Storage |
 |---------|-------|----------|-------|---------|
-| `mosquito` | `eclipse-mosquitto:2` | StatefulSet | 1883 (MQTT), 9001 (WS) | 1 Gi |
+| `mosquitto` | `eclipse-mosquitto:2` | StatefulSet | 1883 (MQTT), 9001 (WS) | 1 Gi |
 | `mariadb` | `mariadb:11` | StatefulSet | 3306 (MySQL) | 5 Gi |
 | `node-red` | `nodered/node-red:latest` | StatefulSet | 1880 (HTTP) | 2 Gi |
-
-### Example: Mosquitto MQTT broker
-
-```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantAddon
-metadata:
-  name: mosquitto
-spec:
-  homeAssistantRef:
-    name: my-home
-  profile: mosquito
-  haIntegration:
-    section: mqtt
-    configuration:
-      discovery: true
-```
-
-The operator automatically:
-1. Creates a StatefulSet `my-home-mosquitto` with `eclipse-mosquitto:2`
-2. Creates a Service `my-home-mosquitto` (ports 1883, 9001)
-3. Creates a PVC `my-home-mosquitto-data` (1 Gi)
-4. Creates a ConfigMap `my-home-mosquitto-config` with `mosquitto.conf`
-5. Adds an `mqtt:` section to `HomeAssistantConfiguration`, triggering a hot-reload of Home Assistant
-
-See [config/samples/](config/samples/) for more examples:
-- [ha_v1alpha1_homeassistantaddon_mosquitto.yaml](config/samples/ha_v1alpha1_homeassistantaddon_mosquitto.yaml)
-- [ha_v1alpha1_homeassistantaddon_mariadb.yaml](config/samples/ha_v1alpha1_homeassistantaddon_mariadb.yaml)
-- [ha_v1alpha1_homeassistantaddon_nodered.yaml](config/samples/ha_v1alpha1_homeassistantaddon_nodered.yaml)
-- [ha_v1alpha1_homeassistantaddon_custom.yaml](config/samples/ha_v1alpha1_homeassistantaddon_custom.yaml) - Custom image (Zigbee2MQTT example)
 
 
 ### Uninstallation
