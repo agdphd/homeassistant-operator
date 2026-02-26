@@ -33,7 +33,7 @@ linters:
     rules:
       - linters:
           - misspell
-        text: "mosquitto"  # Eclipse Mosquitto MQTT broker - official product name
+        text: "(?i)mosquitto"  # Eclipse Mosquitto MQTT broker - official product name
       - linters:
           - lll
         path: api/*

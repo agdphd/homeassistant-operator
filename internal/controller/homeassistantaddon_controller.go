@@ -891,10 +891,14 @@ func (r *HomeAssistantAddonReconciler) buildPodSpec(
 
 	// Ports
 	for _, p := range resolved.Ports {
+		protocol := corev1.Protocol(p.Protocol)
+		if protocol == "" {
+			protocol = corev1.ProtocolTCP
+		}
 		container.Ports = append(container.Ports, corev1.ContainerPort{
 			Name:          p.Name,
 			ContainerPort: p.Port,
-			Protocol:      corev1.Protocol(p.Protocol),
+			Protocol:      protocol,
 		})
 	}
 
@@ -1007,14 +1011,17 @@ func serviceNeedsUpdate(existing, desired *corev1.Service) bool {
 	if existing.Spec.Type != desired.Spec.Type {
 		return true
 	}
-	// Compare ports (ignoring ClusterIP assigned by K8s)
+	// Compare ports by name to avoid spurious updates when slice order differs.
 	if len(existing.Spec.Ports) != len(desired.Spec.Ports) {
 		return true
 	}
-	for i := range desired.Spec.Ports {
-		e := existing.Spec.Ports[i]
-		d := desired.Spec.Ports[i]
-		if e.Name != d.Name || e.Port != d.Port || e.Protocol != d.Protocol {
+	existingByName := make(map[string]corev1.ServicePort, len(existing.Spec.Ports))
+	for _, p := range existing.Spec.Ports {
+		existingByName[p.Name] = p
+	}
+	for _, d := range desired.Spec.Ports {
+		e, found := existingByName[d.Name]
+		if !found || e.Port != d.Port || e.Protocol != d.Protocol {
 			return true
 		}
 	}
@@ -1088,7 +1095,10 @@ func (r *HomeAssistantAddonReconciler) findAddonsForHomeAssistant(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
-	ha := obj.(*hav1alpha1.HomeAssistant)
+	ha, ok := obj.(*hav1alpha1.HomeAssistant)
+	if !ok {
+		return []reconcile.Request{}
+	}
 
 	addonList := &hav1alpha1.HomeAssistantAddonList{}
 	if err := r.List(ctx, addonList, client.InNamespace(ha.Namespace)); err != nil {

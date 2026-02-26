@@ -61,7 +61,7 @@ var _ = Describe("HomeAssistantAddon E2E", Label("addon"), Ordered, func() {
 
 	// ---- Fast Tests: verify K8s resource creation, no pod startup required ----
 
-	Context("Mosquito Profile", Label("fast"), func() {
+	Context("Mosquitto Profile", Label("fast"), func() {
 		It("should create StatefulSet, Service, ConfigMap and set status fields", func() {
 			addonName := "test-mosquitto"
 			resourceName := haName + "-" + addonName
@@ -82,7 +82,7 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  profile: mosquito
+  profile: mosquitto
 `, addonName, namespace, haName)
 			Expect(utils.ApplyYAML(addonYAML, namespace)).To(Succeed())
 
@@ -433,7 +433,7 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  profile: mosquito
+  profile: mosquitto
 `, addonName, namespace, haName)
 			Expect(utils.ApplyYAML(addonYAML, namespace)).To(Succeed())
 
@@ -457,7 +457,7 @@ spec:
 
 	// ---- Slow Tests: require actual pod startup ----
 
-	Context("Mosquito + HA Bootstrap", Label("bootstrap", "slow"), func() {
+	Context("Mosquitto + HA Bootstrap", Label("bootstrap", "slow"), func() {
 		It("should verify mqtt section appears in HA configuration.yaml", func() {
 			addonName := "mosquitto"
 			configName := haName + "-config"
@@ -537,7 +537,7 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  profile: mosquito
+  profile: mosquitto
 `, addonName, namespace, haName)
 			Expect(utils.ApplyYAML(addonYAML, namespace)).To(Succeed())
 
