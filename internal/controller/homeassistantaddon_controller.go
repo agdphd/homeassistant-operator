@@ -799,19 +799,13 @@ func (r *HomeAssistantAddonReconciler) reconcileHAIntegration(
 		return fmt.Errorf("failed to update HomeAssistantConfiguration: %w", err)
 	}
 
-	meta.SetStatusCondition(&addon.Status.Conditions, metav1.Condition{
-		Type:               "HAIntegrationReady",
-		Status:             metav1.ConditionTrue,
-		Reason:             reasonHAIntegrationUpdated,
-		Message:            fmt.Sprintf("Integration section %q updated in HomeAssistantConfiguration", section),
-		ObservedGeneration: addon.Generation,
-	})
-
 	r.Recorder.Eventf(addon, nil, corev1.EventTypeNormal,
 		"HAIntegrationUpdated", "HAIntegrationUpdated",
 		"Updated section %q in HomeAssistantConfiguration %s", section, haConfigName.Name)
 
-	// Track the managed integration section so we can clean it up if the profile changes
+	// Track the managed integration section so we can clean it up if the profile changes.
+	// Must happen BEFORE setting status conditions, because r.Update overwrites the local
+	// object with the server response (which doesn't include in-memory status changes).
 	if addon.Annotations == nil {
 		addon.Annotations = make(map[string]string)
 	}
@@ -821,6 +815,14 @@ func (r *HomeAssistantAddonReconciler) reconcileHAIntegration(
 			return fmt.Errorf("failed to update managed-integration annotation: %w", err)
 		}
 	}
+
+	meta.SetStatusCondition(&addon.Status.Conditions, metav1.Condition{
+		Type:               "HAIntegrationReady",
+		Status:             metav1.ConditionTrue,
+		Reason:             reasonHAIntegrationUpdated,
+		Message:            fmt.Sprintf("Integration section %q updated in HomeAssistantConfiguration", section),
+		ObservedGeneration: addon.Generation,
+	})
 
 	log.Info("Updated HAIntegration section in HomeAssistantConfiguration",
 		"section", section, "haConfig", haConfigName.Name)
@@ -857,23 +859,25 @@ func (r *HomeAssistantAddonReconciler) cleanupStaleHAIntegration(
 		// Remove the section from HAConfig
 		existingConfig := make(map[string]interface{})
 		if haConfig.Spec.Configuration != "" {
-			if err := yaml.Unmarshal([]byte(haConfig.Spec.Configuration), &existingConfig); err == nil {
-				if _, exists := existingConfig[section]; exists {
-					delete(existingConfig, section)
-					updatedYAML, err := yaml.Marshal(existingConfig)
-					if err != nil {
-						return fmt.Errorf("failed to serialize configuration after stale cleanup: %w", err)
-					}
-					haConfig.Spec.Configuration = string(updatedYAML)
-					if err := r.Update(ctx, haConfig); err != nil {
-						return fmt.Errorf("failed to update HomeAssistantConfiguration after stale cleanup: %w", err)
-					}
-					r.Recorder.Eventf(addon, nil, corev1.EventTypeNormal,
-						"HAIntegrationRemoved", "HAIntegrationRemoved",
-						"Removed stale section %q from HomeAssistantConfiguration %s", section, haConfigName.Name)
-					log.Info("Removed stale HAIntegration section", "section", section, "haConfig", haConfigName.Name)
-				}
+			if err := yaml.Unmarshal([]byte(haConfig.Spec.Configuration), &existingConfig); err != nil {
+				return fmt.Errorf("failed to parse HAConfig %q YAML for stale cleanup: %w",
+					haConfigName.Name, err)
 			}
+		}
+		if _, exists := existingConfig[section]; exists {
+			delete(existingConfig, section)
+			updatedYAML, err := yaml.Marshal(existingConfig)
+			if err != nil {
+				return fmt.Errorf("failed to serialize configuration after stale cleanup: %w", err)
+			}
+			haConfig.Spec.Configuration = string(updatedYAML)
+			if err := r.Update(ctx, haConfig); err != nil {
+				return fmt.Errorf("failed to update HomeAssistantConfiguration after stale cleanup: %w", err)
+			}
+			r.Recorder.Eventf(addon, nil, corev1.EventTypeNormal,
+				"HAIntegrationRemoved", "HAIntegrationRemoved",
+				"Removed stale section %q from HomeAssistantConfiguration %s", section, haConfigName.Name)
+			log.Info("Removed stale HAIntegration section", "section", section, "haConfig", haConfigName.Name)
 		}
 	}
 
@@ -922,7 +926,8 @@ func (r *HomeAssistantAddonReconciler) cleanupHAIntegration(
 	existingConfig := make(map[string]interface{})
 	if haConfig.Spec.Configuration != "" {
 		if err := yaml.Unmarshal([]byte(haConfig.Spec.Configuration), &existingConfig); err != nil {
-			return nil // Can't parse; skip cleanup
+			return fmt.Errorf("failed to parse HAConfig %q YAML for deletion cleanup: %w",
+				haConfigName.Name, err)
 		}
 	}
 
