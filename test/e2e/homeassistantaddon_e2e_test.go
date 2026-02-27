@@ -67,11 +67,7 @@ var _ = Describe("HomeAssistantAddon E2E", Label("addon"), Ordered, func() {
 			resourceName := haName + "-" + addonName
 
 			By("Creating HomeAssistant CR")
-			Expect(utils.ApplyYAML(addonMinimalHAYAML(haName, namespace), namespace)).To(Succeed())
-			Eventually(func(g Gomega) {
-				out := utils.Kubectl("get", "ha", haName, "-n", namespace, "-o", "jsonpath={.metadata.name}")
-				g.Expect(out).To(Equal(haName))
-			}, utils.ResourceTimeout, addonReconcileInterval).Should(Succeed())
+			createAndWaitHA(haName, namespace)
 
 			By("Creating HomeAssistantAddon with mosquitto profile")
 			addonYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -144,11 +140,7 @@ spec:
 			resourceName := haName + "-" + addonName
 
 			By("Creating HomeAssistant CR")
-			Expect(utils.ApplyYAML(addonMinimalHAYAML(haName, namespace), namespace)).To(Succeed())
-			Eventually(func(g Gomega) {
-				out := utils.Kubectl("get", "ha", haName, "-n", namespace, "-o", "jsonpath={.metadata.name}")
-				g.Expect(out).To(Equal(haName))
-			}, utils.ResourceTimeout, addonReconcileInterval).Should(Succeed())
+			createAndWaitHA(haName, namespace)
 
 			By("Creating HomeAssistantAddon with mariadb profile")
 			addonYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -192,11 +184,7 @@ spec:
 			resourceName := haName + "-" + addonName
 
 			By("Creating HomeAssistant CR")
-			Expect(utils.ApplyYAML(addonMinimalHAYAML(haName, namespace), namespace)).To(Succeed())
-			Eventually(func(g Gomega) {
-				out := utils.Kubectl("get", "ha", haName, "-n", namespace, "-o", "jsonpath={.metadata.name}")
-				g.Expect(out).To(Equal(haName))
-			}, utils.ResourceTimeout, addonReconcileInterval).Should(Succeed())
+			createAndWaitHA(haName, namespace)
 
 			By("Creating HomeAssistantAddon with node-red profile")
 			addonYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -233,11 +221,7 @@ spec:
 			resourceName := haName + "-" + addonName
 
 			By("Creating HomeAssistant CR")
-			Expect(utils.ApplyYAML(addonMinimalHAYAML(haName, namespace), namespace)).To(Succeed())
-			Eventually(func(g Gomega) {
-				out := utils.Kubectl("get", "ha", haName, "-n", namespace, "-o", "jsonpath={.metadata.name}")
-				g.Expect(out).To(Equal(haName))
-			}, utils.ResourceTimeout, addonReconcileInterval).Should(Succeed())
+			createAndWaitHA(haName, namespace)
 
 			By("Creating HomeAssistantAddon with custom image and no storage")
 			addonYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -291,11 +275,7 @@ spec:
 			resourceName := haName + "-" + addonName
 
 			By("Creating HomeAssistant CR")
-			Expect(utils.ApplyYAML(addonMinimalHAYAML(haName, namespace), namespace)).To(Succeed())
-			Eventually(func(g Gomega) {
-				out := utils.Kubectl("get", "ha", haName, "-n", namespace, "-o", "jsonpath={.metadata.name}")
-				g.Expect(out).To(Equal(haName))
-			}, utils.ResourceTimeout, addonReconcileInterval).Should(Succeed())
+			createAndWaitHA(haName, namespace)
 
 			By("Creating HomeAssistantAddon with mariadb profile + custom resources")
 			addonYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -338,11 +318,7 @@ spec:
 			resourceName := haName + "-" + addonName
 
 			By("Creating HomeAssistant CR")
-			Expect(utils.ApplyYAML(addonMinimalHAYAML(haName, namespace), namespace)).To(Succeed())
-			Eventually(func(g Gomega) {
-				out := utils.Kubectl("get", "ha", haName, "-n", namespace, "-o", "jsonpath={.metadata.name}")
-				g.Expect(out).To(Equal(haName))
-			}, utils.ResourceTimeout, addonReconcileInterval).Should(Succeed())
+			createAndWaitHA(haName, namespace)
 
 			By("Creating HomeAssistantAddon with mariadb profile (StatefulSet + Service)")
 			addonYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -403,11 +379,7 @@ spec:
 			configName := haName + "-config"
 
 			By("Creating HomeAssistant CR")
-			Expect(utils.ApplyYAML(addonMinimalHAYAML(haName, namespace), namespace)).To(Succeed())
-			Eventually(func(g Gomega) {
-				out := utils.Kubectl("get", "ha", haName, "-n", namespace, "-o", "jsonpath={.metadata.name}")
-				g.Expect(out).To(Equal(haName))
-			}, utils.ResourceTimeout, addonReconcileInterval).Should(Succeed())
+			createAndWaitHA(haName, namespace)
 
 			By("Creating HomeAssistantConfiguration with name convention <ha-name>-config")
 			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -571,11 +543,7 @@ spec:
 			ingressHost := "nodered.e2e.test"
 
 			By("Creating HomeAssistant CR")
-			Expect(utils.ApplyYAML(addonMinimalHAYAML(haName, namespace), namespace)).To(Succeed())
-			Eventually(func(g Gomega) {
-				out := utils.Kubectl("get", "ha", haName, "-n", namespace, "-o", "jsonpath={.metadata.name}")
-				g.Expect(out).To(Equal(haName))
-			}, utils.ResourceTimeout, addonReconcileInterval).Should(Succeed())
+			createAndWaitHA(haName, namespace)
 
 			By("Creating Node-RED addon with Ingress enabled")
 			addonYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -636,6 +604,15 @@ spec:
 		})
 	})
 })
+
+// createAndWaitHA creates a minimal HomeAssistant CR and waits for it to be registered.
+func createAndWaitHA(haName, namespace string) {
+	Expect(utils.ApplyYAML(addonMinimalHAYAML(haName, namespace), namespace)).To(Succeed())
+	Eventually(func(g Gomega) {
+		out := utils.Kubectl("get", "ha", haName, "-n", namespace, "-o", "jsonpath={.metadata.name}")
+		g.Expect(out).To(Equal(haName))
+	}, utils.ResourceTimeout, addonReconcileInterval).Should(Succeed())
+}
 
 // addonMinimalHAYAML returns a minimal HomeAssistant YAML without bootstrap.
 // Used in fast tests that only need the HA CR to exist for addon controller validation.

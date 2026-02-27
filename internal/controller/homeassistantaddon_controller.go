@@ -47,7 +47,8 @@ import (
 )
 
 const (
-	addonFinalizerName = "ha.homeassistant.io/addon-finalizer"
+	addonFinalizerName                = "ha.homeassistant.io/addon-finalizer"
+	addonManagedIntegrationAnnotation = "ha.homeassistant.io/managed-integration"
 
 	// Condition reasons for HomeAssistantAddon
 	reasonAddonCreated         = "AddonCreated"
@@ -364,6 +365,8 @@ func (r *HomeAssistantAddonReconciler) reconcileDeployment(
 		if err := r.Delete(ctx, staleSts); err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete stale StatefulSet: %w", err)
 		}
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to get stale StatefulSet: %w", err)
 	}
 	replicas := int32(1)
 	desired := &appsv1.Deployment{
@@ -434,6 +437,8 @@ func (r *HomeAssistantAddonReconciler) reconcileStatefulSet(
 		if err := r.Delete(ctx, staleDeployment); err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete stale Deployment: %w", err)
 		}
+	} else if !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to get stale Deployment: %w", err)
 	}
 
 	storageSize := resolved.Storage.Size
@@ -710,7 +715,8 @@ func (r *HomeAssistantAddonReconciler) reconcileHAIntegration(
 	resolved *ResolvedAddonSpec,
 ) error {
 	if resolved.HAIntegration == nil {
-		return nil
+		// If we previously managed an integration section, clean it up
+		return r.cleanupStaleHAIntegration(ctx, addon)
 	}
 
 	log := logf.FromContext(ctx)
@@ -805,8 +811,77 @@ func (r *HomeAssistantAddonReconciler) reconcileHAIntegration(
 		"HAIntegrationUpdated", "HAIntegrationUpdated",
 		"Updated section %q in HomeAssistantConfiguration %s", section, haConfigName.Name)
 
+	// Track the managed integration section so we can clean it up if the profile changes
+	if addon.Annotations == nil {
+		addon.Annotations = make(map[string]string)
+	}
+	if addon.Annotations[addonManagedIntegrationAnnotation] != section {
+		addon.Annotations[addonManagedIntegrationAnnotation] = section
+		if err := r.Update(ctx, addon); err != nil {
+			return fmt.Errorf("failed to update managed-integration annotation: %w", err)
+		}
+	}
+
 	log.Info("Updated HAIntegration section in HomeAssistantConfiguration",
 		"section", section, "haConfig", haConfigName.Name)
+
+	return nil
+}
+
+// cleanupStaleHAIntegration removes a previously managed integration section when the addon
+// no longer specifies an HAIntegration (e.g., profile changed).
+func (r *HomeAssistantAddonReconciler) cleanupStaleHAIntegration(
+	ctx context.Context,
+	addon *hav1alpha1.HomeAssistantAddon,
+) error {
+	section, ok := addon.Annotations[addonManagedIntegrationAnnotation]
+	if !ok || section == "" {
+		return nil // Nothing was previously managed
+	}
+
+	log := logf.FromContext(ctx)
+	log.Info("Cleaning up stale HAIntegration section (no longer in spec)", "section", section)
+
+	haConfig := &hav1alpha1.HomeAssistantConfiguration{}
+	haConfigName := types.NamespacedName{
+		Name:      addon.Spec.HomeAssistantRef.Name + "-config",
+		Namespace: addon.Namespace,
+	}
+	if err := r.Get(ctx, haConfigName, haConfig); err != nil {
+		if errors.IsNotFound(err) {
+			// HAConfig gone, just clear the annotation
+		} else {
+			return fmt.Errorf("failed to get HomeAssistantConfiguration: %w", err)
+		}
+	} else {
+		// Remove the section from HAConfig
+		existingConfig := make(map[string]interface{})
+		if haConfig.Spec.Configuration != "" {
+			if err := yaml.Unmarshal([]byte(haConfig.Spec.Configuration), &existingConfig); err == nil {
+				if _, exists := existingConfig[section]; exists {
+					delete(existingConfig, section)
+					updatedYAML, err := yaml.Marshal(existingConfig)
+					if err != nil {
+						return fmt.Errorf("failed to serialize configuration after stale cleanup: %w", err)
+					}
+					haConfig.Spec.Configuration = string(updatedYAML)
+					if err := r.Update(ctx, haConfig); err != nil {
+						return fmt.Errorf("failed to update HomeAssistantConfiguration after stale cleanup: %w", err)
+					}
+					r.Recorder.Eventf(addon, nil, corev1.EventTypeNormal,
+						"HAIntegrationRemoved", "HAIntegrationRemoved",
+						"Removed stale section %q from HomeAssistantConfiguration %s", section, haConfigName.Name)
+					log.Info("Removed stale HAIntegration section", "section", section, "haConfig", haConfigName.Name)
+				}
+			}
+		}
+	}
+
+	// Clear the annotation
+	delete(addon.Annotations, addonManagedIntegrationAnnotation)
+	if err := r.Update(ctx, addon); err != nil {
+		return fmt.Errorf("failed to clear managed-integration annotation: %w", err)
+	}
 
 	return nil
 }
@@ -817,9 +892,17 @@ func (r *HomeAssistantAddonReconciler) cleanupHAIntegration(
 	ctx context.Context,
 	addon *hav1alpha1.HomeAssistantAddon,
 ) error {
+	// Determine the section to clean up: from resolved spec or from the tracked annotation
+	var section string
 	resolved, err := resolveAddonSpec(&addon.Spec)
-	if err != nil || resolved.HAIntegration == nil {
-		return nil
+	if err == nil && resolved.HAIntegration != nil {
+		section = resolved.HAIntegration.Section
+	}
+	if section == "" {
+		section = addon.Annotations[addonManagedIntegrationAnnotation]
+	}
+	if section == "" {
+		return nil // No integration to clean up
 	}
 
 	log := logf.FromContext(ctx)
@@ -843,7 +926,6 @@ func (r *HomeAssistantAddonReconciler) cleanupHAIntegration(
 		}
 	}
 
-	section := resolved.HAIntegration.Section
 	if _, ok := existingConfig[section]; !ok {
 		return nil // Section doesn't exist; nothing to clean up
 	}
@@ -1022,6 +1104,12 @@ func serviceNeedsUpdate(existing, desired *corev1.Service) bool {
 	for _, d := range desired.Spec.Ports {
 		e, found := existingByName[d.Name]
 		if !found || e.Port != d.Port || e.Protocol != d.Protocol {
+			return true
+		}
+		if e.NodePort != d.NodePort {
+			return true
+		}
+		if e.TargetPort != d.TargetPort {
 			return true
 		}
 	}
