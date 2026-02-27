@@ -769,41 +769,51 @@ func (r *HomeAssistantAddonReconciler) reconcileHAIntegration(
 		}
 	}
 
+	// If the managed section changed (e.g. profile switch), remove the old one
+	previousSection := addon.Annotations[addonManagedIntegrationAnnotation]
+	if previousSection != "" && previousSection != section {
+		delete(existingConfig, previousSection)
+	}
+
 	// Check if the section already matches (avoid unnecessary updates)
+	configChanged := true
 	if existing, ok := existingConfig[section]; ok {
 		existingBytes, _ := yaml.Marshal(existing)
 		desiredBytes, _ := yaml.Marshal(integrationConfig)
-		if string(existingBytes) == string(desiredBytes) {
-			log.V(1).Info("HAIntegration section unchanged, skipping update", "section", section)
-			return nil
+		if string(existingBytes) == string(desiredBytes) && previousSection == section {
+			configChanged = false
+			log.V(1).Info("HAIntegration section unchanged, skipping update",
+				"section", section)
 		}
 	}
 
-	existingConfig[section] = integrationConfig
+	if configChanged {
+		existingConfig[section] = integrationConfig
 
-	// Serialize back to YAML
-	updatedYAML, err := yaml.Marshal(existingConfig)
-	if err != nil {
-		return fmt.Errorf("failed to serialize updated configuration: %w", err)
+		// Serialize back to YAML
+		updatedYAML, err := yaml.Marshal(existingConfig)
+		if err != nil {
+			return fmt.Errorf("failed to serialize updated configuration: %w", err)
+		}
+
+		haConfig.Spec.Configuration = string(updatedYAML)
+		if err := r.Update(ctx, haConfig); err != nil {
+			meta.SetStatusCondition(&addon.Status.Conditions, metav1.Condition{
+				Type:               "HAIntegrationReady",
+				Status:             metav1.ConditionFalse,
+				Reason:             reasonHAIntegrationFailed,
+				Message:            fmt.Sprintf("Failed to update HomeAssistantConfiguration: %v", err),
+				ObservedGeneration: addon.Generation,
+			})
+			return fmt.Errorf("failed to update HomeAssistantConfiguration: %w", err)
+		}
+
+		r.Recorder.Eventf(addon, nil, corev1.EventTypeNormal,
+			"HAIntegrationUpdated", "HAIntegrationUpdated",
+			"Updated section %q in HomeAssistantConfiguration %s", section, haConfigName.Name)
 	}
 
-	haConfig.Spec.Configuration = string(updatedYAML)
-	if err := r.Update(ctx, haConfig); err != nil {
-		meta.SetStatusCondition(&addon.Status.Conditions, metav1.Condition{
-			Type:               "HAIntegrationReady",
-			Status:             metav1.ConditionFalse,
-			Reason:             reasonHAIntegrationFailed,
-			Message:            fmt.Sprintf("Failed to update HomeAssistantConfiguration: %v", err),
-			ObservedGeneration: addon.Generation,
-		})
-		return fmt.Errorf("failed to update HomeAssistantConfiguration: %w", err)
-	}
-
-	r.Recorder.Eventf(addon, nil, corev1.EventTypeNormal,
-		"HAIntegrationUpdated", "HAIntegrationUpdated",
-		"Updated section %q in HomeAssistantConfiguration %s", section, haConfigName.Name)
-
-	// Track the managed integration section so we can clean it up if the profile changes.
+	// Always reconcile the annotation so cleanup tracking stays accurate.
 	// Must happen BEFORE setting status conditions, because r.Update overwrites the local
 	// object with the server response (which doesn't include in-memory status changes).
 	if addon.Annotations == nil {
