@@ -742,25 +742,29 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 							LivenessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
-										Path: "/",
-										Port: intstr.FromInt(defaultPort),
+										Path:   "/",
+										Port:   intstr.FromInt(defaultPort),
+										Scheme: corev1.URISchemeHTTP,
 									},
 								},
 								InitialDelaySeconds: 30,
 								PeriodSeconds:       10,
 								TimeoutSeconds:      5,
+								SuccessThreshold:    1,
 								FailureThreshold:    3,
 							},
 							ReadinessProbe: &corev1.Probe{
 								ProbeHandler: corev1.ProbeHandler{
 									HTTPGet: &corev1.HTTPGetAction{
-										Path: "/",
-										Port: intstr.FromInt(defaultPort),
+										Path:   "/",
+										Port:   intstr.FromInt(defaultPort),
+										Scheme: corev1.URISchemeHTTP,
 									},
 								},
 								InitialDelaySeconds: 10,
 								PeriodSeconds:       5,
 								TimeoutSeconds:      3,
+								SuccessThreshold:    1,
 								FailureThreshold:    3,
 							},
 						},
@@ -947,9 +951,17 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 
 // needsUpdate checks if the StatefulSet needs to be updated
 func needsUpdate(current, desired *appsv1.StatefulSet) bool {
+	log := logf.Log.WithName("needsUpdate")
+
 	// Ensure containers exist
 	if len(current.Spec.Template.Spec.Containers) == 0 || len(desired.Spec.Template.Spec.Containers) == 0 {
-		return len(current.Spec.Template.Spec.Containers) != len(desired.Spec.Template.Spec.Containers)
+		if len(current.Spec.Template.Spec.Containers) != len(desired.Spec.Template.Spec.Containers) {
+			log.V(1).Info("Container count differs",
+				"current", len(current.Spec.Template.Spec.Containers),
+				"desired", len(desired.Spec.Template.Spec.Containers))
+			return true
+		}
+		return false
 	}
 
 	currentContainer := current.Spec.Template.Spec.Containers[0]
@@ -970,26 +982,39 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 		desiredHash = desiredAnnotations[configHashAnnotationKey]
 	}
 	if currentHash != desiredHash {
+		log.V(1).Info("Config hash differs",
+			"current", currentHash, "desired", desiredHash)
 		return true
 	}
 
 	// Check image
 	if currentContainer.Image != desiredContainer.Image {
+		log.V(1).Info("Image differs",
+			"current", currentContainer.Image, "desired", desiredContainer.Image)
 		return true
 	}
 
 	// Check volumes count (ConfigMap/Secret added or removed)
 	if len(current.Spec.Template.Spec.Volumes) != len(desired.Spec.Template.Spec.Volumes) {
+		log.V(1).Info("Volume count differs",
+			"current", len(current.Spec.Template.Spec.Volumes),
+			"desired", len(desired.Spec.Template.Spec.Volumes))
 		return true
 	}
 
 	// Check volume mounts count
 	if len(currentContainer.VolumeMounts) != len(desiredContainer.VolumeMounts) {
+		log.V(1).Info("VolumeMount count differs",
+			"current", len(currentContainer.VolumeMounts),
+			"desired", len(desiredContainer.VolumeMounts))
 		return true
 	}
 
 	// Check environment variables
 	if len(currentContainer.Env) != len(desiredContainer.Env) {
+		log.V(1).Info("Env count differs",
+			"current", len(currentContainer.Env),
+			"desired", len(desiredContainer.Env))
 		return true
 	}
 	for i, env := range currentContainer.Env {
@@ -997,22 +1022,33 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 			return true
 		}
 		if env.Name != desiredContainer.Env[i].Name || env.Value != desiredContainer.Env[i].Value {
+			log.V(1).Info("Env differs",
+				"index", i,
+				"currentName", env.Name, "desiredName", desiredContainer.Env[i].Name,
+				"currentVal", env.Value, "desiredVal", desiredContainer.Env[i].Value)
 			return true
 		}
 	}
 
 	// Check resource limits and requests
 	if !resourcesEqual(currentContainer.Resources, desiredContainer.Resources) {
+		log.V(1).Info("Resources differ",
+			"currentRequests", fmt.Sprintf("%v", currentContainer.Resources.Requests),
+			"desiredRequests", fmt.Sprintf("%v", desiredContainer.Resources.Requests),
+			"currentLimits", fmt.Sprintf("%v", currentContainer.Resources.Limits),
+			"desiredLimits", fmt.Sprintf("%v", desiredContainer.Resources.Limits))
 		return true
 	}
 
 	// Check liveness probe
 	if !probesEqual(currentContainer.LivenessProbe, desiredContainer.LivenessProbe) {
+		log.V(1).Info("LivenessProbe differs")
 		return true
 	}
 
 	// Check readiness probe
 	if !probesEqual(currentContainer.ReadinessProbe, desiredContainer.ReadinessProbe) {
+		log.V(1).Info("ReadinessProbe differs")
 		return true
 	}
 
