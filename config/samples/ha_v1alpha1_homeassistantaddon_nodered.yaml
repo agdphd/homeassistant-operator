@@ -1,0 +1,30 @@
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantAddon
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: node-red
+spec:
+  homeAssistantRef:
+    name: homeassistant-sample
+
+  # Use built-in Node-RED profile (nodered/node-red:latest)
+  # Provides: Node-RED UI on port 1880, 2Gi persistent storage
+  profile: node-red
+
+  # Optional: pin to a specific version (default: "latest")
+  # version: "4.1.5"
+
+  # Enable Ingress to expose Node-RED web UI externally.
+  # Requires an Ingress controller installed in the cluster (e.g., Traefik for k3s).
+  ingress:
+    enabled: true
+    host: nodered.example.com
+    # ingressClassName: traefik   # uncomment for k3s / Traefik
+    # tls: true                   # uncomment to enable HTTPS
+
+  # Node-RED connects to Home Assistant using its own built-in configuration UI.
+  # Install the node-red-contrib-home-assistant-websocket package from the
+  # Node-RED Palette Manager, then configure the HA connection via the UI.
+  # No haIntegration is required.

@@ -7,4 +7,8 @@ resources:
 - haconfig_hot_reload_strategy.yaml
 - haconfig_restart_strategy.yaml
 - complete_example_with_secrets.yaml
+- ha_v1alpha1_homeassistantaddon_mosquitto.yaml
+- ha_v1alpha1_homeassistantaddon_mariadb.yaml
+- ha_v1alpha1_homeassistantaddon_nodered.yaml
+- ha_v1alpha1_homeassistantaddon_custom.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

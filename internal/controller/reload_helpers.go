@@ -11,6 +11,8 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+const reloadMethodFailed = "failed"
+
 // ReloadConfig configures reload behavior
 type ReloadConfig struct {
 	MaxRetries    int
@@ -82,7 +84,7 @@ func PerformReloadWithRetry(
 			"component", config.ComponentName)
 		result.Success = false
 		result.Error = fmt.Errorf("component check failed: %w", err)
-		result.Method = "failed"
+		result.Method = reloadMethodFailed
 		return result
 	}
 
@@ -158,7 +160,7 @@ func PerformReloadWithRetry(
 	// All retries exhausted
 	result.Success = false
 	result.Error = fmt.Errorf("hot-reload failed after %d attempts: %w", config.MaxRetries, lastErr)
-	result.Method = "failed"
+	result.Method = reloadMethodFailed
 	return result
 }
 

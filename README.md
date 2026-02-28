@@ -31,6 +31,7 @@ The Home Assistant Operator automates the deployment and lifecycle management of
 | `HomeAssistantAutomation` | Alpha | Declarative automation management with smart detection & retry |
 | `HomeAssistantScene` | Alpha | Declarative scene management with smart detection & retry |
 | `HomeAssistantScript` | Alpha | Declarative script management with smart detection & retry |
+| `HomeAssistantAddon` | Alpha | Sidecar services (Mosquitto, MariaDB, Node-RED, custom) with profile-based defaults |
 
 ## Quick Start
 
@@ -61,6 +62,18 @@ See example configurations in [config/samples/](config/samples/):
 - [ha_v1alpha1_homeassistant_with_bootstrap.yaml](config/samples/ha_v1alpha1_homeassistant_with_bootstrap.yaml) - With automatic bootstrap
 - [ha_v1alpha1_homeassistant_with_config.yaml](config/samples/ha_v1alpha1_homeassistant_with_config.yaml) - With configuration management
 - [complete_example_with_secrets.yaml](config/samples/complete_example_with_secrets.yaml) - Complete example with secrets
+
+## Add-ons
+
+The `HomeAssistantAddon` CRD deploys companion services (MQTT brokers, databases, automation tools) as standalone Kubernetes workloads alongside Home Assistant. It supports built-in profiles with sensible defaults that can be overridden per-instance.
+
+### Built-in Profiles
+
+| Profile | Image | Workload | Ports | Storage |
+|---------|-------|----------|-------|---------|
+| `mosquitto` | `eclipse-mosquitto:2` | StatefulSet | 1883 (MQTT), 9001 (WS) | 1 Gi |
+| `mariadb` | `mariadb:11` | StatefulSet | 3306 (MySQL) | 5 Gi |
+| `node-red` | `nodered/node-red:latest` | StatefulSet | 1880 (HTTP) | 2 Gi |
 
 
 ### Uninstallation
