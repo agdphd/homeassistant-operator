@@ -2375,6 +2375,26 @@ prometheus:
 			Expect(result).To(BeTrue(), "adding content to empty config should require restart")
 		})
 	})
+
+	Context("Malformed YAML", func() {
+		It("should require restart and return error on malformed oldConfig", func() {
+			oldConfig := "homeassistant:\n  name: Test\n  bad: [unclosed"
+			newConfig := "homeassistant:\n  name: Test\n"
+
+			result, err := needsRestart(oldConfig, newConfig)
+			Expect(err).To(HaveOccurred())
+			Expect(result).To(BeTrue(), "malformed YAML should default to restart (safe fallback)")
+		})
+
+		It("should require restart and return error on malformed newConfig", func() {
+			oldConfig := "homeassistant:\n  name: Test\n"
+			newConfig := "homeassistant:\n  name: Test\n  bad: [unclosed"
+
+			result, err := needsRestart(oldConfig, newConfig)
+			Expect(err).To(HaveOccurred())
+			Expect(result).To(BeTrue(), "malformed YAML should default to restart (safe fallback)")
+		})
+	})
 })
 
 // Helper functions

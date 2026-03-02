@@ -50,6 +50,9 @@ spec:
   - name: http
     protocol: HTTP
     port: 80
+    allowedRoutes:
+      namespaces:
+        from: All
   - name: https
     protocol: HTTPS
     port: 443
@@ -58,6 +61,9 @@ spec:
       certificateRefs:
       - name: traefik-gateway-tls
     hostname: "*.example.com"
+    allowedRoutes:
+      namespaces:
+        from: All
 ---
 # ReferenceGrant is required when HTTPRoute (in homeassistant ns) references
 # a Gateway in a different namespace (gateway ns)
