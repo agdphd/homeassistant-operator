@@ -646,16 +646,25 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 		// Use oldConfig passed from Reconcile (captured before ConfigMap update)
 		// This ensures needsRestart compares actual old vs new, not new vs new
 
-		needsRestart, parseErr := needsRestart(oldConfig, config.Spec.Configuration)
-		if parseErr != nil {
-			log.Error(parseErr, "Failed to analyze config changes, defaulting to restart")
-			needsRestart = true
-		}
-
-		if needsRestart || tokenErr != nil {
+		// Retry safety: if ConfigMap was already updated in a previous reconcile attempt
+		// that failed before saving status, oldConfig == newConfig and we cannot determine
+		// what changed. Default to restart (safe) to avoid choosing hot-reload for changes
+		// that require a full restart (e.g. adding a new integration like prometheus:).
+		if oldConfig == config.Spec.Configuration {
+			log.Info("ConfigMap already synced (retry after partial failure), defaulting to restart")
 			strategy = reloadMethodRestart
 		} else {
-			strategy = reloadMethodHotReload
+			needsRestart, parseErr := needsRestart(oldConfig, config.Spec.Configuration)
+			if parseErr != nil {
+				log.Error(parseErr, "Failed to analyze config changes, defaulting to restart")
+				needsRestart = true
+			}
+
+			if needsRestart || tokenErr != nil {
+				strategy = reloadMethodRestart
+			} else {
+				strategy = reloadMethodHotReload
+			}
 		}
 	}
 

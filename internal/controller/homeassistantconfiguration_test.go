@@ -2271,6 +2271,112 @@ var _ = Describe("HomeAssistantConfiguration", func() {
 	})
 })
 
+var _ = Describe("needsRestart unit tests", func() {
+	Context("Adding a new top-level section", func() {
+		It("should require restart when adding prometheus: (regression: retry scenario bug)", func() {
+			oldConfig := `homeassistant:
+  name: Test
+default_config:
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 10.42.0.0/16`
+			newConfig := oldConfig + "\nprometheus:\n"
+
+			result, err := needsRestart(oldConfig, newConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeTrue(), "adding prometheus: should require restart")
+		})
+
+		It("should require restart when adding any unknown integration", func() {
+			oldConfig := "homeassistant:\n  name: Test\n"
+			newConfig := oldConfig + "mqtt:\n  broker: localhost\n"
+
+			result, err := needsRestart(oldConfig, newConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeTrue(), "adding unknown integration should require restart")
+		})
+
+		It("should NOT require restart when adding automation: (hot-reloadable)", func() {
+			oldConfig := "homeassistant:\n  name: Test\n"
+			newConfig := oldConfig + "automation: !include automations.yaml\n"
+
+			result, err := needsRestart(oldConfig, newConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeFalse(), "adding automation: should be hot-reloadable")
+		})
+
+		It("should return false when oldConfig equals newConfig (same content)", func() {
+			config := `homeassistant:
+  name: Test
+prometheus:
+`
+			result, err := needsRestart(config, config)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeFalse(), "identical configs should not require restart")
+		})
+	})
+
+	Context("Removing a section", func() {
+		It("should require restart when removing a section", func() {
+			oldConfig := "homeassistant:\n  name: Test\nprometheus:\n"
+			newConfig := "homeassistant:\n  name: Test\n"
+
+			result, err := needsRestart(oldConfig, newConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeTrue(), "removing a section should require restart")
+		})
+	})
+
+	Context("Changing critical homeassistant: keys", func() {
+		It("should require restart when changing time_zone", func() {
+			oldConfig := "homeassistant:\n  name: Test\n  time_zone: Europe/Warsaw\n"
+			newConfig := "homeassistant:\n  name: Test\n  time_zone: Europe/London\n"
+
+			result, err := needsRestart(oldConfig, newConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeTrue(), "changing time_zone should require restart")
+		})
+
+		It("should NOT require restart when changing customize (hot-reloadable key)", func() {
+			oldConfig := "homeassistant:\n  name: Test\n  customize:\n    light.test:\n      friendly_name: Test\n"
+			newConfig := "homeassistant:\n  name: Test\n  customize:\n    light.test:\n      friendly_name: Updated\n"
+
+			result, err := needsRestart(oldConfig, newConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeFalse(), "changing customize should be hot-reloadable")
+		})
+	})
+
+	Context("Changing http: keys", func() {
+		It("should NOT require restart when changing trusted_proxies (hot-reloadable)", func() {
+			oldConfig := "http:\n  trusted_proxies:\n    - 10.0.0.0/8\n"
+			newConfig := "http:\n  trusted_proxies:\n    - 10.0.0.0/8\n    - 192.168.0.0/16\n"
+
+			result, err := needsRestart(oldConfig, newConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeFalse(), "changing trusted_proxies should be hot-reloadable")
+		})
+
+		It("should require restart when changing ssl_certificate (critical key)", func() {
+			oldConfig := "http:\n  ssl_certificate: /ssl/cert.pem\n"
+			newConfig := "http:\n  ssl_certificate: /ssl/new-cert.pem\n"
+
+			result, err := needsRestart(oldConfig, newConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeTrue(), "changing ssl_certificate should require restart")
+		})
+	})
+
+	Context("Empty configs", func() {
+		It("should require restart when old config is empty and new config has content", func() {
+			result, err := needsRestart("", "homeassistant:\n  name: Test\n")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeTrue(), "adding content to empty config should require restart")
+		})
+	})
+})
+
 // Helper functions
 func boolPtr(b bool) *bool {
 	return &b
