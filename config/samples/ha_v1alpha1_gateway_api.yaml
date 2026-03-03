@@ -1,0 +1,144 @@
+# Example: Home Assistant exposed via Kubernetes Gateway API
+#
+# This example shows how to expose Home Assistant using Gateway API
+# (tested with Traefik v3+ as the gateway controller).
+#
+# Prerequisites:
+# - Gateway API CRDs installed (bundled with k3s, or install manually)
+# - A gateway controller supporting Gateway API (e.g. Traefik v3, Envoy Gateway)
+# - cert-manager with a ClusterIssuer for TLS (optional but recommended)
+#
+# Usage:
+#   # 1. Create the gateway namespace and Gateway resource (once per cluster)
+#   kubectl apply -f ha_v1alpha1_gateway_api.yaml
+#
+#   # 2. Wait for the certificate to be issued
+#   kubectl get certificate -n gateway
+#
+#   # 3. Access Home Assistant at https://ha.example.com
+#
+# Notes:
+# - The ReferenceGrant is required when HTTPRoute and Gateway are in different namespaces
+# - trusted_proxies in HomeAssistantConfiguration must cover your pod/service CIDRs
+#   so that Home Assistant accepts X-Forwarded-For headers from the gateway
+#   For k3s defaults: 10.42.0.0/16 (pods), 10.43.0.0/16 (services)
+#   Find your CIDRs: kubectl get nodes -o jsonpath='{.items[0].spec.podCIDR}'
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gateway
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: traefik
+spec:
+  controllerName: traefik.io/gateway-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: traefik-gateway
+  namespace: gateway
+  annotations:
+    # cert-manager will automatically create a Certificate for the wildcard domain
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  gatewayClassName: traefik
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: All
+  - name: https
+    protocol: HTTPS
+    port: 443
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: traefik-gateway-tls
+    hostname: "*.example.com"
+    allowedRoutes:
+      namespaces:
+        from: All
+---
+# ReferenceGrant is required when HTTPRoute (in homeassistant ns) references
+# a Gateway in a different namespace (gateway ns)
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-homeassistant-routes
+  namespace: gateway
+spec:
+  from:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: homeassistant
+  to:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: homeassistant
+---
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: home
+  namespace: homeassistant
+spec:
+  version: stable
+  timezone: Europe/Warsaw
+  storage:
+    size: 10Gi
+  service:
+    type: ClusterIP
+    port: 8123
+---
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: home-config
+  namespace: homeassistant
+spec:
+  homeAssistantRef:
+    name: home
+  configuration: |
+    homeassistant:
+      name: Home
+      unit_system: metric
+
+    default_config:
+
+    # Required when running behind a reverse proxy / gateway
+    # trusted_proxies must cover the pod and service network CIDRs of your cluster
+    # so that Home Assistant accepts X-Forwarded-For headers correctly.
+    # k3s defaults: pods 10.42.0.0/16, services 10.43.0.0/16
+    # Find your CIDRs: kubectl get nodes -o jsonpath='{.items[0].spec.podCIDR}'
+    http:
+      use_x_forwarded_for: true
+      trusted_proxies:
+        - 10.42.0.0/16
+        - 10.43.0.0/16
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: homeassistant
+  namespace: homeassistant
+spec:
+  parentRefs:
+  - name: traefik-gateway
+    namespace: gateway
+    sectionName: https
+  hostnames:
+  - ha.example.com
+  rules:
+  - backendRefs:
+    - name: home
+      port: 8123

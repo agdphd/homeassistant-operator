@@ -11,4 +11,5 @@ resources:
 - ha_v1alpha1_homeassistantaddon_mariadb.yaml
 - ha_v1alpha1_homeassistantaddon_nodered.yaml
 - ha_v1alpha1_homeassistantaddon_custom.yaml
+- ha_v1alpha1_gateway_api.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
