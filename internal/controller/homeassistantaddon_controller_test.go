@@ -639,7 +639,10 @@ var _ = Describe("HomeAssistantAddon Controller", func() {
 			_ = k8sClient.Delete(testCtx, haConfig)
 		})
 
-		It("adds mqtt section to HomeAssistantConfiguration for mosquitto profile", func() {
+		It("does NOT modify HomeAssistantConfiguration for mosquitto profile (HA 2025.x)", func() {
+			// HA 2025.x dropped support for 'broker' in configuration.yaml.
+			// The mosquitto profile no longer sets HAIntegration — users configure
+			// MQTT via the HA UI or Config Flow API (Phase 6).
 			addon := newAddon("addon-mqtt", "ha-integration", "mosquitto")
 			Expect(k8sClient.Create(testCtx, addon)).To(Succeed())
 			defer func() { _ = k8sClient.Delete(testCtx, addon) }()
@@ -647,20 +650,28 @@ var _ = Describe("HomeAssistantAddon Controller", func() {
 			_, err := reconcileAddon(addon.Name)
 			Expect(err).NotTo(HaveOccurred())
 
-			// HAConfig should now contain mqtt section
 			updatedConfig := &hav1alpha1.HomeAssistantConfiguration{}
-			Eventually(func() string {
+			Consistently(func() string {
 				_ = k8sClient.Get(testCtx, types.NamespacedName{
 					Name: "ha-integration-config", Namespace: ns,
 				}, updatedConfig)
 				return updatedConfig.Spec.Configuration
-			}, timeout, interval).Should(ContainSubstring("mqtt:"))
-
-			Expect(updatedConfig.Spec.Configuration).To(ContainSubstring("broker:"))
+			}, "2s", interval).ShouldNot(ContainSubstring("mqtt:"))
 		})
 
 		It("injects Service DNS as broker when mqtt section has no broker set", func() {
-			addon := newAddon("addon-mqtt-dns", "ha-integration", "mosquitto")
+			// Uses explicit haIntegration in spec (not mosquitto profile) to test
+			// the broker auto-injection logic in reconcileHAIntegration.
+			addon := &hav1alpha1.HomeAssistantAddon{
+				ObjectMeta: metav1.ObjectMeta{Name: "addon-mqtt-dns", Namespace: ns},
+				Spec: hav1alpha1.HomeAssistantAddonSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: "ha-integration"},
+					Image:            "eclipse-mosquitto:2",
+					HAIntegration: &hav1alpha1.HAIntegration{
+						Section: "mqtt",
+					},
+				},
+			}
 			Expect(k8sClient.Create(testCtx, addon)).To(Succeed())
 			defer func() { _ = k8sClient.Delete(testCtx, addon) }()
 
@@ -681,8 +692,17 @@ var _ = Describe("HomeAssistantAddon Controller", func() {
 			Expect(k8sClient.Create(testCtx, ha2)).To(Succeed())
 			defer func() { _ = k8sClient.Delete(testCtx, ha2) }()
 
-			// No HomeAssistantConfiguration for ha-no-config
-			addon := newAddon("addon-no-haconfig", "ha-no-config", "mosquitto")
+			// Uses explicit haIntegration to test graceful skip when HAConfig is missing.
+			addon := &hav1alpha1.HomeAssistantAddon{
+				ObjectMeta: metav1.ObjectMeta{Name: "addon-no-haconfig", Namespace: ns},
+				Spec: hav1alpha1.HomeAssistantAddonSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: "ha-no-config"},
+					Image:            "eclipse-mosquitto:2",
+					HAIntegration: &hav1alpha1.HAIntegration{
+						Section: "mqtt",
+					},
+				},
+			}
 			Expect(k8sClient.Create(testCtx, addon)).To(Succeed())
 			defer func() { _ = k8sClient.Delete(testCtx, addon) }()
 
@@ -693,7 +713,17 @@ var _ = Describe("HomeAssistantAddon Controller", func() {
 		})
 
 		It("removes integration section when addon is deleted", func() {
-			addon := newAddon("addon-mqtt-del", "ha-integration", "mosquitto")
+			// Uses explicit haIntegration to test finalizer cleanup logic.
+			addon := &hav1alpha1.HomeAssistantAddon{
+				ObjectMeta: metav1.ObjectMeta{Name: "addon-mqtt-del", Namespace: ns},
+				Spec: hav1alpha1.HomeAssistantAddonSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: "ha-integration"},
+					Image:            "eclipse-mosquitto:2",
+					HAIntegration: &hav1alpha1.HAIntegration{
+						Section: "mqtt",
+					},
+				},
+			}
 			Expect(k8sClient.Create(testCtx, addon)).To(Succeed())
 
 			// Reconcile to add the section
