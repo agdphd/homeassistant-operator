@@ -415,6 +415,7 @@ spec:
 			Consistently(func(g Gomega) {
 				out := utils.Kubectl("get", "haconfig", configName, "-n", namespace,
 					"-o", "jsonpath={.spec.configuration}")
+				g.Expect(out).NotTo(BeEmpty())
 				g.Expect(out).NotTo(ContainSubstring("mqtt:"))
 			}, "5s", addonReconcileInterval).Should(Succeed())
 
