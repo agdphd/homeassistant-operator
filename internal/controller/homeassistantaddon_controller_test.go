@@ -659,6 +659,40 @@ var _ = Describe("HomeAssistantAddon Controller", func() {
 			}, "2s", interval).ShouldNot(ContainSubstring("mqtt:"))
 		})
 
+		It("removes stale mqtt section when mosquitto addon previously managed it (migration path)", func() {
+			// Migration scenario: an existing mosquitto addon CR carries the
+			// ha.homeassistant.io/managed-integration: mqtt annotation from the
+			// old operator version. The HAConfig still has an mqtt: section.
+			// After upgrade the profile has HAIntegration=nil, so reconcileHAIntegration
+			// calls cleanupStaleHAIntegration which must remove the section automatically.
+			haConfigWithMQTT := &hav1alpha1.HomeAssistantConfiguration{}
+			Expect(k8sClient.Get(testCtx, types.NamespacedName{
+				Name: "ha-integration-config", Namespace: ns,
+			}, haConfigWithMQTT)).To(Succeed())
+			haConfigWithMQTT.Spec.Configuration += "mqtt:\n  broker: old-broker.svc\n"
+			Expect(k8sClient.Update(testCtx, haConfigWithMQTT)).To(Succeed())
+
+			// Addon has the managed-integration annotation (set by old operator version).
+			addon := newAddon("addon-mqtt-stale", "ha-integration", "mosquitto")
+			addon.Annotations = map[string]string{
+				"ha.homeassistant.io/managed-integration": "mqtt",
+			}
+			Expect(k8sClient.Create(testCtx, addon)).To(Succeed())
+			defer func() { _ = k8sClient.Delete(testCtx, addon) }()
+
+			_, err := reconcileAddon(addon.Name)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Stale mqtt section must be removed from HAConfig.
+			updatedConfig := &hav1alpha1.HomeAssistantConfiguration{}
+			Eventually(func() string {
+				_ = k8sClient.Get(testCtx, types.NamespacedName{
+					Name: "ha-integration-config", Namespace: ns,
+				}, updatedConfig)
+				return updatedConfig.Spec.Configuration
+			}, timeout, interval).ShouldNot(ContainSubstring("mqtt:"))
+		})
+
 		It("injects Service DNS as broker when mqtt section has no broker set", func() {
 			// Uses explicit haIntegration in spec (not mosquitto profile) to test
 			// the broker auto-injection logic in reconcileHAIntegration.
