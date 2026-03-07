@@ -167,10 +167,16 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 		oldConfig = existingConfigMap.Data[configurationYamlKey]
 	}
 
-	// Sync ConfigMap back to CRD state if it was modified externally (operator exclusivity)
-	if err := r.syncConfigMapFromCRD(ctx, config); err != nil {
-		log.Error(err, "Failed to sync ConfigMap from CRD")
-		// Continue - we'll try to update it in reconcileGeneratedConfigMap
+	// Sync ConfigMap back to CRD state if it was modified externally (operator exclusivity).
+	// Only when the spec has NOT changed: if spec changed, reconcileGeneratedConfigMap is the
+	// sole writer. Running both would cause a cache-stale conflict (syncConfigMapFromCRD writes
+	// version N→N+1; reconcileGeneratedConfigMap reads stale cache at N and gets a conflict),
+	// and on retry oldConfig == config.Spec.Configuration triggers the restart fallback instead
+	// of the correct hot-reload decision.
+	if config.Status.ConfigHash == configHash {
+		if err := r.syncConfigMapFromCRD(ctx, config); err != nil {
+			log.Error(err, "Failed to sync ConfigMap from CRD")
+		}
 	}
 
 	// Create or update the ConfigMap
