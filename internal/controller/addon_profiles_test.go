@@ -68,12 +68,11 @@ var _ = Describe("Addon Profile System", func() {
 				Expect(resolved.Config.Data).To(HaveKey("mosquitto.conf"))
 			})
 
-			It("includes HAIntegration with mqtt section", func() {
+			It("has no HAIntegration (HA 2025.x dropped broker support in configuration.yaml)", func() {
 				spec := &hav1alpha1.HomeAssistantAddonSpec{Profile: "mosquitto"}
 				resolved, err := resolveAddonSpec(spec)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(resolved.HAIntegration).NotTo(BeNil())
-				Expect(resolved.HAIntegration.Section).To(Equal("mqtt"))
+				Expect(resolved.HAIntegration).To(BeNil())
 			})
 
 			It("includes liveness probe on port 1883", func() {

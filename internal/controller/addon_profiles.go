@@ -127,12 +127,11 @@ var addonProfiles = map[string]AddonProfile{
 			InitialDelaySeconds: 10,
 			PeriodSeconds:       30,
 		},
-		// HAIntegration.Configuration is intentionally empty here.
-		// The broker address is computed dynamically from the Service DNS
-		// in reconcileHAIntegration() and injected at reconcile time.
-		HAIntegration: &hav1alpha1.HAIntegration{
-			Section: "mqtt",
-		},
+		// HAIntegration is intentionally nil for the mosquitto profile.
+		// HA 2025.x does not support MQTT broker configuration via configuration.yaml
+		// ('broker' is an invalid option). The MQTT integration must be configured
+		// via the Home Assistant UI (Settings → Integrations → MQTT) or via
+		// Config Flow API (planned in Phase 6).
 	},
 
 	"mariadb": {

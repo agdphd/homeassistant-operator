@@ -6,11 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## Unreleased
+## [Unreleased]
+
+## [0.5.1] - 2026-03-07
 
 ### Fixed
 
 - **HomeAssistantConfiguration: restart not triggered after adding new integration (e.g. `prometheus:`)** — when a reconcile attempt updated the ConfigMap content but failed before saving status, a subsequent retry would read `oldConfig == newConfig` and incorrectly choose hot-reload instead of restart. The controller now defaults to restart when the ConfigMap is already synced but status hash is stale.
+
+- **HomeAssistantAddon mosquitto profile: conflict with Flux GitOps and HA 2025.x incompatibility** — the mosquitto profile was writing `mqtt: broker: ...` to `HomeAssistantConfiguration` CR on every reconcile. HA 2025.x dropped support for the `broker` key in `configuration.yaml` (returns `'broker' is an invalid option`), and Flux GitOps would immediately revert the change, causing an infinite reconcile loop. The `HAIntegration` has been removed from the mosquitto profile. Configure the MQTT broker via the Home Assistant UI: **Settings → Integrations → MQTT**. Automatic setup via Config Flow API is planned in Phase 6.
 
 
 ## [0.5.0] - 2026-03-01
@@ -138,7 +142,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Primary: k3s on Raspberry Pi 4/5 (ARM64)
 - Also supported: Any Kubernetes cluster (AMD64/ARM64)
 
-[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/przemekhys/homeassistant-operator/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.5.0
 [0.4.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.4.0
 [0.3.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.3.0

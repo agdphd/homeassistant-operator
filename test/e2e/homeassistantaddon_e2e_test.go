@@ -373,15 +373,17 @@ spec:
 	})
 
 	Context("HAIntegration", Label("fast"), func() {
-		It("should inject mqtt broker into HomeAssistantConfiguration", func() {
+		It("should NOT modify HomeAssistantConfiguration for mosquitto profile (HA 2025.x)", func() {
+			// HA 2025.x dropped support for 'broker' key in configuration.yaml.
+			// The mosquitto profile no longer injects the mqtt section into HAConfig.
+			// Users must configure the MQTT broker via HA UI: Settings → Integrations → MQTT.
 			addonName := "test-mqtt"
-			// HAIntegration looks for HAConfig named "<ha-name>-config" by convention
 			configName := haName + "-config"
 
 			By("Creating HomeAssistant CR")
 			createAndWaitHA(haName, namespace)
 
-			By("Creating HomeAssistantConfiguration with name convention <ha-name>-config")
+			By("Creating HomeAssistantConfiguration")
 			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantConfiguration
 metadata:
@@ -396,7 +398,7 @@ spec:
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
-			By("Creating HomeAssistantAddon with mosquitto profile (includes haIntegration.mqtt)")
+			By("Creating HomeAssistantAddon with mosquitto profile")
 			addonYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantAddon
 metadata:
@@ -409,28 +411,27 @@ spec:
 `, addonName, namespace, haName)
 			Expect(utils.ApplyYAML(addonYAML, namespace)).To(Succeed())
 
-			By("Verifying HomeAssistantConfiguration has mqtt section with correct broker DNS")
-			expectedBroker := fmt.Sprintf("%s-%s.%s.svc.cluster.local", haName, addonName, namespace)
-			Eventually(func(g Gomega) {
+			By("Verifying HomeAssistantConfiguration is NOT modified by mosquitto profile")
+			Consistently(func(g Gomega) {
 				out := utils.Kubectl("get", "haconfig", configName, "-n", namespace,
 					"-o", "jsonpath={.spec.configuration}")
-				g.Expect(out).To(ContainSubstring("mqtt:"))
-				g.Expect(out).To(ContainSubstring(expectedBroker))
-			}, utils.ReconciliationTimeout, addonReconcileInterval).Should(Succeed())
+				g.Expect(out).NotTo(BeEmpty())
+				g.Expect(out).NotTo(ContainSubstring("mqtt:"))
+			}, "5s", addonReconcileInterval).Should(Succeed())
 
-			By("Verifying HAIntegrationReady condition is set")
+			By("Verifying addon StatefulSet and Service are created")
+			resourceName := haName + "-" + addonName
 			Eventually(func(g Gomega) {
-				out := utils.Kubectl("get", "haaddon", addonName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='HAIntegrationReady')].status}")
-				g.Expect(out).To(Equal("True"))
-			}, utils.StatusUpdateTimeout, addonReconcileInterval).Should(Succeed())
+				out := utils.Kubectl("get", "statefulset", resourceName, "-n", namespace, "--ignore-not-found")
+				g.Expect(out).NotTo(BeEmpty())
+			}, utils.ReconciliationTimeout, addonReconcileInterval).Should(Succeed())
 		})
 	})
 
 	// ---- Slow Tests: require actual pod startup ----
 
 	Context("Mosquitto + HA Bootstrap", Label("bootstrap", "slow"), func() {
-		It("should verify mqtt section appears in HA configuration.yaml", func() {
+		It("should start mosquitto pod and NOT inject mqtt into HomeAssistantConfiguration", func() {
 			addonName := "mosquitto"
 			configName := haName + "-config"
 
@@ -500,7 +501,7 @@ spec:
 				g.Expect(out).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, addonPodReadyInterval).Should(Succeed())
 
-			By("Creating mosquitto addon with haIntegration")
+			By("Creating mosquitto addon")
 			addonYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantAddon
 metadata:
@@ -513,26 +514,28 @@ spec:
 `, addonName, namespace, haName)
 			Expect(utils.ApplyYAML(addonYAML, namespace)).To(Succeed())
 
-			By("Verifying mqtt broker is injected into HomeAssistantConfiguration")
-			expectedBroker := fmt.Sprintf("%s-%s.%s.svc.cluster.local", haName, addonName, namespace)
+			By("Verifying mosquitto pod is Running")
+			resourceName := haName + "-" + addonName
 			Eventually(func(g Gomega) {
+				out := utils.Kubectl("get", "pod", resourceName+"-0", "-n", namespace,
+					"-o", "jsonpath={.status.phase}")
+				g.Expect(out).To(Equal("Running"))
+			}, utils.HAPodReadyTimeout, addonPodReadyInterval).Should(Succeed())
+
+			By("Verifying HomeAssistantConfiguration does NOT contain mqtt section (HA 2025.x)")
+			// HA 2025.x dropped 'broker' key support in configuration.yaml.
+			// MQTT broker must be configured via HA UI: Settings → Integrations → MQTT.
+			Consistently(func(g Gomega) {
 				out := utils.Kubectl("get", "haconfig", configName, "-n", namespace,
 					"-o", "jsonpath={.spec.configuration}")
-				g.Expect(out).To(ContainSubstring("mqtt:"))
-				g.Expect(out).To(ContainSubstring(expectedBroker))
-			}, utils.ReconciliationTimeout, addonReconcileInterval).Should(Succeed())
+				g.Expect(out).NotTo(ContainSubstring("mqtt:"))
+			}, "5s", addonReconcileInterval).Should(Succeed())
 
-			By("Verifying generated ConfigMap contains mqtt section")
-			// configuration.yaml is mounted with subPath, so kubelet does NOT propagate
-			// ConfigMap updates to the pod's mounted file. Instead, verify the ConfigMap
-			// that the controller generated — this is the source of truth for HA config.
+			By("Verifying generated ConfigMap does NOT contain mqtt section")
 			configMapName := haName + "-configuration"
-			Eventually(func(g Gomega) {
-				out := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.configuration\\.yaml}")
-				g.Expect(out).To(ContainSubstring("mqtt:"))
-				g.Expect(out).To(ContainSubstring(expectedBroker))
-			}, utils.HotReloadTimeout, addonReconcileInterval).Should(Succeed())
+			out := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
+				"-o", "jsonpath={.data.configuration\\.yaml}")
+			Expect(out).NotTo(ContainSubstring("mqtt:"))
 		})
 	})
 
