@@ -46,10 +46,10 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 	)
 
 	var (
-		reconciler   *HomeAssistantAutomationReconciler
-		mockServer   *httptest.Server
-		putRequests  chan string
-		delRequests  chan string
+		reconciler  *HomeAssistantAutomationReconciler
+		mockServer  *httptest.Server
+		putRequests chan string
+		delRequests chan string
 	)
 
 	// Helper to create a test automation CR
@@ -257,7 +257,8 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			// Ready condition should NOT be True
 			Consistently(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-no-token", Namespace: namespace}, updated)).To(Succeed())
+				nn := types.NamespacedName{Name: "auto-no-token", Namespace: namespace}
+				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
 				g.Expect(condition).To(Or(BeNil(), WithTransform(
 					func(c *metav1.Condition) metav1.ConditionStatus { return c.Status },
@@ -323,7 +324,8 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			var firstHash string
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-stable-hash", Namespace: namespace}, updated)).To(Succeed())
+				nn := types.NamespacedName{Name: "auto-stable-hash", Namespace: namespace}
+				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				firstHash = updated.Status.AutomationHash
 				g.Expect(firstHash).NotTo(BeEmpty())
 			}, timeout, interval).Should(Succeed())
@@ -332,7 +334,8 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-stable-hash", Namespace: namespace}, updated)).To(Succeed())
+				nn := types.NamespacedName{Name: "auto-stable-hash", Namespace: namespace}
+				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				g.Expect(updated.Status.AutomationHash).To(Equal(firstHash))
 			}, timeout, interval).Should(Succeed())
 		})
@@ -346,7 +349,8 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			var initialHash string
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}, updated)).To(Succeed())
+				nn := types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}
+				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				initialHash = updated.Status.AutomationHash
 				g.Expect(initialHash).NotTo(BeEmpty())
 			}, timeout, interval).Should(Succeed())
@@ -354,7 +358,8 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			// Update triggers
 			Eventually(func() error {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}, updated); err != nil {
+				nn := types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}
+				if err := k8sClient.Get(ctx, nn, updated); err != nil {
 					return err
 				}
 				updated.Spec.Triggers = []hav1alpha1.AutomationTrigger{
@@ -367,7 +372,8 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}, updated)).To(Succeed())
+				nn := types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}
+				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				g.Expect(updated.Status.AutomationHash).NotTo(Equal(initialHash))
 			}, timeout, interval).Should(Succeed())
 		})
@@ -428,7 +434,8 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-put-fail", Namespace: namespace}, updated)).To(Succeed())
+				nn := types.NamespacedName{Name: "auto-put-fail", Namespace: namespace}
+				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
 				g.Expect(condition).NotTo(BeNil())
 				g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
@@ -443,11 +450,18 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 					rawExt(map[string]interface{}{"platform": "sun", "event": "sunset"}),
 				},
 				[]runtime.RawExtension{
-					rawExt(map[string]interface{}{"service": "light.turn_on", "target": map[string]interface{}{"entity_id": "light.porch"}}),
+					rawExt(map[string]interface{}{
+						"service": "light.turn_on",
+						"target":  map[string]interface{}{"entity_id": "light.porch"},
+					}),
 				},
 			)
 			auto.Spec.Conditions = []hav1alpha1.AutomationCondition{
-				{RawExtension: rawExt(map[string]interface{}{"condition": "state", "entity_id": "input_boolean.guest_mode", "state": "on"})},
+				{RawExtension: rawExt(map[string]interface{}{
+					"condition": "state",
+					"entity_id": "input_boolean.guest_mode",
+					"state":     "on",
+				})},
 			}
 
 			yamlMap, err := reconciler.automationToYaml(auto)
@@ -489,7 +503,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			yamlMap, err := reconciler.automationToYaml(auto)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(yamlMap["max_exceeded"]).To(Equal("error"))
-			Expect(yamlMap["initial_state"]).To(Equal(true))
+			Expect(yamlMap["initial_state"]).To(BeTrue())
 			Expect(yamlMap["mode"]).To(Equal("parallel"))
 			Expect(yamlMap["max"]).To(Equal(int32(5)))
 		})
