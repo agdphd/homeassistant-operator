@@ -21,7 +21,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -56,8 +55,18 @@ const (
 // HomeAssistantScriptReconciler reconciles a HomeAssistantScript object
 type HomeAssistantScriptReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder events.EventRecorder
+	Scheme      *runtime.Scheme
+	Recorder    events.EventRecorder
+	NewHAClient func(baseURL string) *haclient.Client // overridable for testing
+}
+
+// haClientFor returns a HA API client for the given HomeAssistant instance.
+func (r *HomeAssistantScriptReconciler) haClientFor(ha *hav1alpha1.HomeAssistant) *haclient.Client {
+	haURL := buildHomeAssistantURL(ha)
+	if r.NewHAClient != nil {
+		return r.NewHAClient(haURL)
+	}
+	return haclient.NewClient(haURL)
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscripts,verbs=get;list;watch
@@ -89,12 +98,26 @@ func (r *HomeAssistantScriptReconciler) Reconcile(ctx context.Context, req ctrl.
 	if !script.DeletionTimestamp.IsZero() {
 		// Resource is being deleted
 		if controllerutil.ContainsFinalizer(script, scriptFinalizerName) {
-			log.Info("Handling deletion - regenerating ConfigMap without this script")
+			log.Info("Handling deletion - deleting script via HA REST API")
 
-			// Regenerate the aggregated ConfigMap without this script
-			if err := r.reconcileScriptsConfigMap(ctx, script); err != nil {
-				log.Error(err, "Failed to update ConfigMap during deletion")
-				return ctrl.Result{}, err
+			// Delete script via HA REST API (best effort — proceed even if HA is unavailable)
+			haRef := types.NamespacedName{
+				Name:      script.Spec.HomeAssistantRef.Name,
+				Namespace: script.Namespace,
+			}
+			if ha, haErr := r.validateHomeAssistantRef(ctx, haRef, script); haErr == nil {
+				if token, tokenErr := getApiToken(ctx, r.Client, ha); tokenErr == nil {
+					haClient := r.haClientFor(ha)
+					id := script.Spec.ID
+					if id == "" {
+						id = script.Name
+					}
+					if delErr := haClient.DeleteScript(ctx, token, id); delErr != nil {
+						log.Info("Failed to delete script via HA API (proceeding with finalizer removal)", "error", delErr)
+					}
+				} else {
+					log.Info("API token not available during deletion, proceeding with finalizer removal")
+				}
 			}
 
 			// Remove finalizer to allow deletion
@@ -137,20 +160,37 @@ func (r *HomeAssistantScriptReconciler) Reconcile(ctx context.Context, req ctrl.
 		return ctrl.Result{}, err
 	}
 
-	// Reconcile the aggregated scripts ConfigMap
-	if err := r.reconcileScriptsConfigMap(ctx, script); err != nil {
-		log.Error(err, "Failed to reconcile scripts ConfigMap")
+	// Get API token — requeue if not available yet (bootstrap may still be running)
+	token, tokenErr := getApiToken(ctx, r.Client, ha)
+	if tokenErr != nil {
+		log.Info("API token not available, requeueing")
+		meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: script.Generation,
+			Reason:             reasonTokenNotAvailable,
+			Message:            errMsgTokenNotAvailable,
+		})
+		if statusErr := r.Status().Update(ctx, script); statusErr != nil {
+			log.Error(statusErr, "Failed to update status")
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	// PUT script via HA REST API
+	if err := r.reconcileScriptViaAPI(ctx, script, ha, token); err != nil {
+		log.Error(err, "Failed to PUT script via HA REST API")
 		meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
 			Status:             metav1.ConditionFalse,
 			Reason:             "ReconciliationFailed",
-			Message:            fmt.Sprintf("Failed to create/update scripts ConfigMap: %v", err),
+			Message:            fmt.Sprintf("Failed to PUT script via HA API: %v", err),
 			ObservedGeneration: script.Generation,
 		})
 		if statusErr := r.Status().Update(ctx, script); statusErr != nil {
 			log.Error(statusErr, "Failed to update status")
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	// Perform hot-reload if enabled and hash changed
@@ -181,139 +221,6 @@ func (r *HomeAssistantScriptReconciler) Reconcile(ctx context.Context, req ctrl.
 
 	log.Info("Successfully reconciled HomeAssistantScript")
 	return ctrl.Result{}, nil
-}
-
-// reconcileScriptsConfigMap creates or updates the aggregated
-// scripts.yaml ConfigMap. This ConfigMap contains ALL scripts
-// for a given HomeAssistant instance.
-func (r *HomeAssistantScriptReconciler) reconcileScriptsConfigMap(
-	ctx context.Context,
-	script *hav1alpha1.HomeAssistantScript,
-) error {
-	log := logf.FromContext(ctx)
-
-	configMapName := script.Spec.HomeAssistantRef.Name + generatedScriptsSuffix
-
-	// Fetch all HomeAssistantScript resources for this HomeAssistant instance
-	scriptList := &hav1alpha1.HomeAssistantScriptList{}
-	if err := r.List(ctx, scriptList, client.InNamespace(script.Namespace)); err != nil {
-		return fmt.Errorf("failed to list HomeAssistantScript resources: %w", err)
-	}
-
-	// Filter scripts for this HomeAssistant instance and convert to map
-	// Home Assistant expects scripts as a map: { script_id: { ... } }
-	scriptsMap := make(map[string]interface{})
-	for _, sc := range scriptList.Items {
-		if sc.Spec.HomeAssistantRef.Name != script.Spec.HomeAssistantRef.Name {
-			continue
-		}
-		// Skip scripts being deleted
-		if !sc.DeletionTimestamp.IsZero() {
-			log.Info("Skipping script being deleted", "name", sc.Name)
-			continue
-		}
-
-		// Convert script to YAML-compatible map
-		scriptID := sc.Spec.ID
-		if scriptID == "" {
-			scriptID = sc.Name
-		}
-
-		scriptYaml, err := r.scriptToYaml(&sc)
-		if err != nil {
-			log.Error(err, "Failed to convert script to YAML", "name", sc.Name)
-			r.Recorder.Eventf(&sc, nil, corev1.EventTypeWarning,
-				"YamlConversionFailed", "YamlConversionFailed",
-				"Failed to convert script to YAML: %v", err)
-			continue
-		}
-		scriptsMap[scriptID] = scriptYaml
-	}
-
-	// Generate scripts.yaml content
-	yamlData, err := yaml.Marshal(scriptsMap)
-	if err != nil {
-		return fmt.Errorf("failed to marshal scripts to YAML: %w", err)
-	}
-
-	// Create or update ConfigMap
-	configMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      configMapName,
-			Namespace: script.Namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":       "homeassistant",
-				"app.kubernetes.io/instance":   script.Spec.HomeAssistantRef.Name,
-				"app.kubernetes.io/managed-by": "homeassistant-operator",
-				"app.kubernetes.io/component":  "scripts",
-			},
-		},
-		Data: map[string]string{
-			scriptsYamlKey: string(yamlData),
-		},
-	}
-
-	// Get HomeAssistant to set owner reference
-	ha := &hav1alpha1.HomeAssistant{}
-	haRef := types.NamespacedName{Name: script.Spec.HomeAssistantRef.Name, Namespace: script.Namespace}
-	if err := r.Get(ctx, haRef, ha); err != nil {
-		// If HA doesn't exist, we can't create/update ConfigMap with proper owner reference
-		// This is expected during cleanup/deletion scenarios
-		if errors.IsNotFound(err) {
-			log.V(1).Info("HomeAssistant not found, skipping ConfigMap reconciliation", "ha", haRef.Name)
-			return nil
-		}
-		return fmt.Errorf("failed to get HomeAssistant: %w", err)
-	}
-
-	// Set owner reference to HomeAssistant (not to individual script)
-	if err := controllerutil.SetControllerReference(ha, configMap, r.Scheme); err != nil {
-		return fmt.Errorf("failed to set owner reference: %w", err)
-	}
-
-	// Check if ConfigMap exists
-	existingConfigMap := &corev1.ConfigMap{}
-	err = r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: script.Namespace}, existingConfigMap)
-	if err != nil && errors.IsNotFound(err) {
-		// Create new ConfigMap
-		log.Info("Creating scripts ConfigMap", "name", configMapName)
-		if err := r.Create(ctx, configMap); err != nil {
-			return fmt.Errorf("failed to create ConfigMap: %w", err)
-		}
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("failed to get existing ConfigMap: %w", err)
-	}
-
-	// Compare Data, Labels and OwnerReferences to determine if update is needed
-	needsUpdate := false
-	if !reflect.DeepEqual(existingConfigMap.Data, configMap.Data) {
-		needsUpdate = true
-		log.V(1).Info("ConfigMap Data changed")
-	}
-	if !reflect.DeepEqual(existingConfigMap.Labels, configMap.Labels) {
-		needsUpdate = true
-		log.V(1).Info("ConfigMap Labels changed")
-	}
-	if !reflect.DeepEqual(existingConfigMap.OwnerReferences, configMap.OwnerReferences) {
-		needsUpdate = true
-		log.V(1).Info("ConfigMap OwnerReferences changed")
-	}
-
-	// Only update if something actually changed
-	if needsUpdate {
-		existingConfigMap.Data = configMap.Data
-		existingConfigMap.Labels = configMap.Labels
-		existingConfigMap.OwnerReferences = configMap.OwnerReferences
-		log.Info("Updating scripts ConfigMap", "name", configMapName)
-		if err := r.Update(ctx, existingConfigMap); err != nil {
-			return fmt.Errorf("failed to update ConfigMap: %w", err)
-		}
-	} else {
-		log.V(1).Info("ConfigMap unchanged, skipping update", "name", configMapName)
-	}
-
-	return nil
 }
 
 // scriptToYaml converts HomeAssistantScript CR to YAML-compatible map
@@ -377,6 +284,31 @@ func (r *HomeAssistantScriptReconciler) scriptToYaml(
 	return result, nil
 }
 
+// reconcileScriptViaAPI creates or updates this script in Home Assistant
+// via REST API (PUT /api/config/script/config/{id}).
+// scriptToYaml returns the script config without the ID key, which is
+// what the REST API expects (id is passed in the URL path).
+// HA writes the result to scripts.yaml on the PVC (writable).
+func (r *HomeAssistantScriptReconciler) reconcileScriptViaAPI(
+	ctx context.Context,
+	script *hav1alpha1.HomeAssistantScript,
+	ha *hav1alpha1.HomeAssistant,
+	token string,
+) error {
+	scriptData, err := r.scriptToYaml(script)
+	if err != nil {
+		return fmt.Errorf("failed to convert script to map: %w", err)
+	}
+
+	id := script.Spec.ID
+	if id == "" {
+		id = script.Name
+	}
+
+	haClient := r.haClientFor(ha)
+	return haClient.PutScript(ctx, token, id, scriptData)
+}
+
 // performScriptReload triggers hot-reload of scripts via Home Assistant REST API
 // Uses smart component detection and retry mechanism for reliability
 //
@@ -419,9 +351,8 @@ func (r *HomeAssistantScriptReconciler) performScriptReload(
 		return nil
 	}
 
-	// Build Home Assistant URL and client
-	haURL := buildHomeAssistantURL(ha)
-	haClient := haclient.NewClient(haURL)
+	// Build Home Assistant client
+	haClient := r.haClientFor(ha)
 
 	// Perform reload with retry and smart detection
 	reloadConfig := ReloadConfig{

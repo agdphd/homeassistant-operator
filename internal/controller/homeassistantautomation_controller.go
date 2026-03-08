@@ -21,7 +21,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -63,8 +62,19 @@ const (
 // HomeAssistantAutomationReconciler reconciles a HomeAssistantAutomation object
 type HomeAssistantAutomationReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder events.EventRecorder
+	Scheme      *runtime.Scheme
+	Recorder    events.EventRecorder
+	NewHAClient func(baseURL string) *haclient.Client // overridable for testing
+}
+
+// haClientFor returns a HA API client for the given HomeAssistant instance.
+// Uses NewHAClient if set (tests), otherwise the default haclient.NewClient.
+func (r *HomeAssistantAutomationReconciler) haClientFor(ha *hav1alpha1.HomeAssistant) *haclient.Client {
+	haURL := buildHomeAssistantURL(ha)
+	if r.NewHAClient != nil {
+		return r.NewHAClient(haURL)
+	}
+	return haclient.NewClient(haURL)
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantautomations,verbs=get;list;watch
@@ -98,12 +108,26 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 	if !automation.DeletionTimestamp.IsZero() {
 		// Resource is being deleted
 		if controllerutil.ContainsFinalizer(automation, automationFinalizerName) {
-			log.Info("Handling deletion - regenerating ConfigMap without this automation")
+			log.Info("Handling deletion - deleting automation via HA REST API")
 
-			// Regenerate the aggregated ConfigMap without this automation
-			if err := r.reconcileAutomationsConfigMap(ctx, automation); err != nil {
-				log.Error(err, "Failed to update ConfigMap during deletion")
-				return ctrl.Result{}, err
+			// Delete automation via HA REST API (best effort — proceed even if HA is unavailable)
+			haRef := types.NamespacedName{
+				Name:      automation.Spec.HomeAssistantRef.Name,
+				Namespace: automation.Namespace,
+			}
+			if ha, haErr := r.validateHomeAssistantRef(ctx, haRef, automation); haErr == nil {
+				if token, tokenErr := getApiToken(ctx, r.Client, ha); tokenErr == nil {
+					haClient := r.haClientFor(ha)
+					id := automation.Spec.ID
+					if id == "" {
+						id = automation.Name
+					}
+					if delErr := haClient.DeleteAutomation(ctx, token, id); delErr != nil {
+						log.Info("Failed to delete automation via HA API (proceeding with finalizer removal)", "error", delErr)
+					}
+				} else {
+					log.Info("API token not available during deletion, proceeding with finalizer removal")
+				}
 			}
 
 			// Remove finalizer to allow deletion
@@ -148,20 +172,37 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 		return ctrl.Result{}, err
 	}
 
-	// Reconcile the aggregated automations ConfigMap
-	if err := r.reconcileAutomationsConfigMap(ctx, automation); err != nil {
-		log.Error(err, "Failed to reconcile automations ConfigMap")
+	// Get API token — requeue if not available yet (bootstrap may still be running)
+	token, tokenErr := getApiToken(ctx, r.Client, ha)
+	if tokenErr != nil {
+		log.Info("API token not available, requeueing")
+		meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: automation.Generation,
+			Reason:             reasonTokenNotAvailable,
+			Message:            errMsgTokenNotAvailable,
+		})
+		if statusErr := r.Status().Update(ctx, automation); statusErr != nil {
+			log.Error(statusErr, "Failed to update status")
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	// PUT automation via HA REST API
+	if err := r.reconcileAutomationViaAPI(ctx, automation, ha, token); err != nil {
+		log.Error(err, "Failed to PUT automation via HA REST API")
 		meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
 			Status:             metav1.ConditionFalse,
 			Reason:             "ReconciliationFailed",
-			Message:            fmt.Sprintf("Failed to create/update automations ConfigMap: %v", err),
+			Message:            fmt.Sprintf("Failed to PUT automation via HA API: %v", err),
 			ObservedGeneration: automation.Generation,
 		})
 		if statusErr := r.Status().Update(ctx, automation); statusErr != nil {
 			log.Error(statusErr, "Failed to update status")
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	// Perform hot-reload if hash changed OR reload is pending (token was previously unavailable)
@@ -211,137 +252,6 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 		}
 	}
 	return ctrl.Result{}, nil
-}
-
-// reconcileAutomationsConfigMap creates or updates the aggregated
-// automations.yaml ConfigMap. This ConfigMap contains ALL automations
-// for a given HomeAssistant instance.
-func (r *HomeAssistantAutomationReconciler) reconcileAutomationsConfigMap(
-	ctx context.Context,
-	automation *hav1alpha1.HomeAssistantAutomation,
-) error {
-	log := logf.FromContext(ctx)
-
-	configMapName := automation.Spec.HomeAssistantRef.Name + generatedAutomationsSuffix
-
-	// Fetch all HomeAssistantAutomation resources for this HomeAssistant instance
-	automationList := &hav1alpha1.HomeAssistantAutomationList{}
-	if err := r.List(ctx, automationList, client.InNamespace(automation.Namespace)); err != nil {
-		return fmt.Errorf("failed to list HomeAssistantAutomation resources: %w", err)
-	}
-
-	// Filter automations for this HomeAssistant instance and that are enabled
-	var automations []map[string]interface{}
-	for _, auto := range automationList.Items {
-		if auto.Spec.HomeAssistantRef.Name != automation.Spec.HomeAssistantRef.Name {
-			continue
-		}
-		// Skip automations being deleted
-		if !auto.DeletionTimestamp.IsZero() {
-			log.Info("Skipping automation being deleted", "name", auto.Name)
-			continue
-		}
-		// Skip disabled automations
-		if auto.Spec.Enabled != nil && !*auto.Spec.Enabled {
-			log.Info("Skipping disabled automation", "name", auto.Name)
-			continue
-		}
-
-		// Convert automation to YAML-compatible map
-		autoYaml, err := r.automationToYaml(&auto)
-		if err != nil {
-			log.Error(err, "Failed to convert automation to YAML", "name", auto.Name)
-			continue
-		}
-		automations = append(automations, autoYaml)
-	}
-
-	// Generate automations.yaml content
-	yamlData, err := yaml.Marshal(automations)
-	if err != nil {
-		return fmt.Errorf("failed to marshal automations to YAML: %w", err)
-	}
-
-	// Create or update ConfigMap
-	configMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      configMapName,
-			Namespace: automation.Namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":       "homeassistant",
-				"app.kubernetes.io/instance":   automation.Spec.HomeAssistantRef.Name,
-				"app.kubernetes.io/managed-by": "homeassistant-operator",
-				"app.kubernetes.io/component":  "automations",
-			},
-		},
-		Data: map[string]string{
-			automationsYamlKey: string(yamlData),
-		},
-	}
-
-	// Get HomeAssistant to set owner reference
-	ha := &hav1alpha1.HomeAssistant{}
-	haRef := types.NamespacedName{Name: automation.Spec.HomeAssistantRef.Name, Namespace: automation.Namespace}
-	if err := r.Get(ctx, haRef, ha); err != nil {
-		// If HA doesn't exist, we can't create/update ConfigMap with proper owner reference
-		// This is expected during cleanup/deletion scenarios
-		if k8serrors.IsNotFound(err) {
-			log.V(1).Info("HomeAssistant not found, skipping ConfigMap reconciliation", "ha", haRef.Name)
-			return nil
-		}
-		return fmt.Errorf("failed to get HomeAssistant: %w", err)
-	}
-
-	// Set owner reference to HomeAssistant (not to individual automation)
-	if err := controllerutil.SetControllerReference(ha, configMap, r.Scheme); err != nil {
-		return fmt.Errorf("failed to set owner reference: %w", err)
-	}
-
-	// Check if ConfigMap exists
-	existingConfigMap := &corev1.ConfigMap{}
-	err = r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: automation.Namespace}, existingConfigMap)
-	if err != nil && k8serrors.IsNotFound(err) {
-		// Create new ConfigMap
-		log.Info("Creating automations ConfigMap", "name", configMapName)
-		if err := r.Create(ctx, configMap); err != nil {
-			return fmt.Errorf("failed to create ConfigMap: %w", err)
-		}
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("failed to get existing ConfigMap: %w", err)
-	}
-
-	// Compare Data, Labels and OwnerReferences to determine if update is needed
-	needsUpdate := false
-	if !reflect.DeepEqual(existingConfigMap.Data, configMap.Data) {
-		needsUpdate = true
-		log.V(1).Info("ConfigMap Data changed")
-	}
-	if !reflect.DeepEqual(existingConfigMap.Labels, configMap.Labels) {
-		needsUpdate = true
-		log.V(1).Info("ConfigMap Labels changed")
-	}
-	if !reflect.DeepEqual(existingConfigMap.OwnerReferences, configMap.OwnerReferences) {
-		needsUpdate = true
-		log.V(1).Info("ConfigMap OwnerReferences changed")
-	}
-
-	// Only update if something actually changed
-	if needsUpdate {
-		existingConfigMap.Data = configMap.Data
-		existingConfigMap.Labels = configMap.Labels
-		existingConfigMap.OwnerReferences = configMap.OwnerReferences
-		log.Info("Updating automations ConfigMap", "name", configMapName)
-		if err := r.Update(ctx, existingConfigMap); err != nil {
-			return fmt.Errorf("failed to update ConfigMap: %w", err)
-		}
-		// Note: Hot-reload is handled in Reconcile() after hash comparison
-		// This avoids duplicate reload calls when multiple automations change
-	} else {
-		log.V(1).Info("ConfigMap unchanged, skipping update", "name", configMapName)
-	}
-
-	return nil
 }
 
 // automationToYaml converts HomeAssistantAutomation CR to YAML-compatible map
@@ -431,6 +341,29 @@ func (r *HomeAssistantAutomationReconciler) automationToYaml(
 	return result, nil
 }
 
+// reconcileAutomationViaAPI creates or updates this automation in Home Assistant
+// via REST API (PUT /api/config/automation/config/{id}).
+// HA writes the result to automations.yaml on the PVC (writable).
+func (r *HomeAssistantAutomationReconciler) reconcileAutomationViaAPI(
+	ctx context.Context,
+	automation *hav1alpha1.HomeAssistantAutomation,
+	ha *hav1alpha1.HomeAssistant,
+	token string,
+) error {
+	automationData, err := r.automationToYaml(automation)
+	if err != nil {
+		return fmt.Errorf("failed to convert automation to map: %w", err)
+	}
+
+	id := automation.Spec.ID
+	if id == "" {
+		id = automation.Name
+	}
+
+	haClient := r.haClientFor(ha)
+	return haClient.PutAutomation(ctx, token, id, automationData)
+}
+
 // calculateAutomationHash computes SHA256 hash of the automation spec
 func (r *HomeAssistantAutomationReconciler) calculateAutomationHash(
 	automation *hav1alpha1.HomeAssistantAutomation,
@@ -454,7 +387,6 @@ func (r *HomeAssistantAutomationReconciler) calculateAutomationHash(
 func (r *HomeAssistantAutomationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hav1alpha1.HomeAssistantAutomation{}).
-		Owns(&corev1.ConfigMap{}).
 		Watches(
 			&hav1alpha1.HomeAssistant{},
 			handler.EnqueueRequestsFromMapFunc(r.findAutomationsForHomeAssistant),
@@ -561,9 +493,8 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 		return nil
 	}
 
-	// Build Home Assistant URL and client
-	haURL := buildHomeAssistantURL(ha)
-	haClient := haclient.NewClient(haURL)
+	// Build Home Assistant client
+	haClient := r.haClientFor(ha)
 
 	// Perform reload with retry and smart detection
 	reloadConfig := ReloadConfig{

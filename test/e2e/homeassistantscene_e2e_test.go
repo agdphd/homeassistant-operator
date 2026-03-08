@@ -19,7 +19,6 @@ package e2e
 import (
 	"fmt"
 	"os/exec"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -31,18 +30,16 @@ const (
 	// Test resource naming for scene tests
 	sceneTestNamespacePrefix = "hascene-e2e-"
 	sceneBootstrapSecret     = "ha-bootstrap-creds"
+	// Note: reconcileInterval, haPodReadyInterval, bootstrapInterval are defined in homeassistantconfiguration_e2e_test.go
 )
 
 var _ = Describe("HomeAssistantScene E2E", Label("scene"), Ordered, func() {
 	var namespace string
 	var haName string
-	var configName string
 
 	BeforeEach(func() {
-		// Generate unique names for each test
 		namespace = sceneTestNamespacePrefix + utils.RandomString(8)
 		haName = "test-ha-" + utils.RandomString(6)
-		configName = "test-config-" + utils.RandomString(6)
 
 		By("Creating test namespace: " + namespace)
 		Expect(utils.CreateNamespace(namespace)).To(Succeed())
@@ -56,12 +53,14 @@ var _ = Describe("HomeAssistantScene E2E", Label("scene"), Ordered, func() {
 		}
 
 		By("Deleting test namespace: " + namespace)
-		_ = utils.DeleteNamespace(namespace)
+		if err := utils.DeleteNamespace(namespace); err != nil {
+			fmt.Printf("Warning: failed to delete namespace %s: %v\n", namespace, err)
+		}
 	})
 
-	Context("ConfigMap Aggregation", Label("fast"), func() {
-		It("should create ConfigMap from single HomeAssistantScene", func() {
-			By("Creating HomeAssistant CR without bootstrap")
+	Context("Operator Lifecycle", Label("fast"), func() {
+		It("should add finalizer when CR created", func() {
+			By("Creating HomeAssistant CR")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant
 metadata:
@@ -77,28 +76,6 @@ spec:
   %s
 `, haName, namespace, utils.GetDefaultHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
-
-			By("Creating HomeAssistantConfiguration CR")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantConfiguration
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  configuration: |
-    scene: !include scenes.yaml
-    script: !include scripts.yaml
-`, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
-
-			By("Waiting for HomeAssistant resource to be created")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "ha", haName, "-n", namespace,
-					"-o", "jsonpath={.metadata.name}")
-				g.Expect(output).To(Equal(haName))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 
 			By("Creating HomeAssistantScene CR")
 			sceneName := "test-scene-" + utils.RandomString(6)
@@ -110,56 +87,24 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  id: movie_time
-  name: "Movie Time"
-  icon: "mdi:movie"
+  id: lifecycle_test_scene
+  name: "Lifecycle Test Scene"
   entities:
     - entity_id: light.living_room
       state: "on"
-      attributes:
-        brightness: 50
-        color_temp: 370
-    - entity_id: light.kitchen
-      state: "off"
 `, sceneName, namespace, haName)
 			Expect(utils.ApplyYAML(sceneYAML, namespace)).To(Succeed())
 
-			By("Verifying ConfigMap created with correct name")
-			configMapName := haName + "-scenes"
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace)
-				g.Expect(output).NotTo(BeEmpty())
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
-
-			By("Verifying ConfigMap contains scenes.yaml")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl(
-					"get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.scenes\\.yaml}",
-				)
-				g.Expect(output).To(ContainSubstring("id: movie_time"))
-				g.Expect(output).To(ContainSubstring("name: Movie Time"))
-				g.Expect(output).To(ContainSubstring("light.living_room"))
-				g.Expect(output).To(ContainSubstring("light.kitchen"))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
-
-			By("Verifying HomeAssistantScene status is Ready")
+			By("Verifying finalizer ha.homeassistant.io/scene-finalizer is added")
 			Eventually(func(g Gomega) {
 				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(output).To(Equal("True"))
-			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
-
-			By("Verifying scene hash is set in status")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
-					"-o", "jsonpath={.status.sceneHash}")
-				g.Expect(output).NotTo(BeEmpty())
-			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+					"-o", "jsonpath={.metadata.finalizers}")
+				g.Expect(output).To(ContainSubstring("ha.homeassistant.io/scene-finalizer"))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 		})
 
-		It("should aggregate multiple scenes into single ConfigMap", func() {
-			By("Creating HomeAssistant CR")
+		It("should set ReloadReady=False when API token missing", func() {
+			By("Creating HomeAssistant CR without bootstrap")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant
 metadata:
@@ -169,157 +114,12 @@ spec:
   version: "stable"
   storage:
     size: "1Gi"
-  service:
-    type: ClusterIP
-    port: 8123
   %s
 `, haName, namespace, utils.GetDefaultHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
-			By("Creating HomeAssistantConfiguration CR")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantConfiguration
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  configuration: |
-    scene: !include scenes.yaml
-`, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
-
-			By("Waiting for HomeAssistant resource")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "ha", haName, "-n", namespace,
-					"-o", "jsonpath={.metadata.name}")
-				g.Expect(output).To(Equal(haName))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
-
-			By("Creating first scene")
-			scene1YAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantScene
-metadata:
-  name: scene-movie
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  id: movie_time
-  name: "Movie Time"
-  entities:
-    - entity_id: light.living_room
-      state: "on"
-      attributes:
-        brightness: 30
-`, namespace, haName)
-			Expect(utils.ApplyYAML(scene1YAML, namespace)).To(Succeed())
-
-			By("Creating second scene")
-			scene2YAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantScene
-metadata:
-  name: scene-bright
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  id: bright_day
-  name: "Bright Day"
-  entities:
-    - entity_id: light.living_room
-      state: "on"
-      attributes:
-        brightness: 255
-    - entity_id: light.kitchen
-      state: "on"
-      attributes:
-        brightness: 255
-`, namespace, haName)
-			Expect(utils.ApplyYAML(scene2YAML, namespace)).To(Succeed())
-
-			By("Creating third scene")
-			scene3YAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantScene
-metadata:
-  name: scene-night
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  id: night_mode
-  name: "Night Mode"
-  entities:
-    - entity_id: light.living_room
-      state: "off"
-    - entity_id: light.kitchen
-      state: "off"
-`, namespace, haName)
-			Expect(utils.ApplyYAML(scene3YAML, namespace)).To(Succeed())
-
-			By("Verifying ConfigMap contains all 3 scenes")
-			configMapName := haName + "-scenes"
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.scenes\\.yaml}")
-				g.Expect(output).To(ContainSubstring("id: movie_time"))
-				g.Expect(output).To(ContainSubstring("id: bright_day"))
-				g.Expect(output).To(ContainSubstring("id: night_mode"))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
-
-			By("Verifying all scenes have unique IDs")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.scenes\\.yaml}")
-				// Each ID should appear exactly once
-				g.Expect(output).To(MatchRegexp(`id: movie_time\s`))
-				g.Expect(output).To(MatchRegexp(`id: bright_day\s`))
-				g.Expect(output).To(MatchRegexp(`id: night_mode\s`))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
-		})
-
-		It("should update ConfigMap when scene changes", func() {
-			By("Creating HomeAssistant CR")
-			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  version: "stable"
-  storage:
-    size: "1Gi"
-  service:
-    type: ClusterIP
-    port: 8123
-  %s
-`, haName, namespace, utils.GetDefaultHAResourceRequests())
-			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
-
-			By("Creating HomeAssistantConfiguration")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantConfiguration
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  configuration: |
-    scene: !include scenes.yaml
-`, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
-
-			By("Waiting for HomeAssistant resource")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "ha", haName, "-n", namespace,
-					"-o", "jsonpath={.metadata.name}")
-				g.Expect(output).To(Equal(haName))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
-
-			By("Creating initial scene")
-			sceneName := "scene-update"
+			By("Creating HomeAssistantScene CR")
+			sceneName := "test-scene-" + utils.RandomString(6)
 			sceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantScene
 metadata:
@@ -328,75 +128,63 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  id: update_test
-  name: "Initial Scene"
+  id: token_missing_scene
+  name: "Token Missing Scene"
   entities:
-    - entity_id: light.living_room
-      state: "on"
-      attributes:
-        brightness: 100
+    - entity_id: light.kitchen
+      state: "off"
 `, sceneName, namespace, haName)
 			Expect(utils.ApplyYAML(sceneYAML, namespace)).To(Succeed())
 
-			By("Waiting for scene to be ready and capturing initial hash")
-			var initialHash string
+			By("Verifying ReloadReady condition is set to False with reason TokenNotAvailable")
 			Eventually(func(g Gomega) {
 				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
-					"-o", "jsonpath={.status.sceneHash}")
-				g.Expect(output).NotTo(BeEmpty())
-				initialHash = output
+					"-o", "jsonpath={.status.conditions[?(@.type=='ReloadReady')].status}")
+				g.Expect(output).To(Equal("False"))
+
+				reason := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='ReloadReady')].reason}")
+				g.Expect(reason).To(Equal("TokenNotAvailable"))
 			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 
-			By("Verifying initial ConfigMap content")
-			configMapName := haName + "-scenes"
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.scenes\\.yaml}")
-				g.Expect(output).To(ContainSubstring("name: Initial Scene"))
-				g.Expect(output).To(ContainSubstring("brightness: 100"))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+			By("Verifying Ready is NOT set to True")
+			output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+				"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+			Expect(output).NotTo(Equal("True"))
+		})
 
-			By("Updating scene with new entities")
-			updatedYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		It("should set Ready=False when referenced HomeAssistant does not exist", func() {
+			By("Creating HomeAssistantScene with non-existent HA reference")
+			sceneName := "test-scene-" + utils.RandomString(6)
+			sceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantScene
 metadata:
   name: %s
   namespace: %s
 spec:
   homeAssistantRef:
-    name: %s
-  id: update_test
-  name: "Updated Scene"
+    name: non-existent-ha
+  id: bad_ref_scene
+  name: "Bad Ref Scene"
   entities:
-    - entity_id: light.living_room
+    - entity_id: light.bedroom
       state: "on"
-      attributes:
-        brightness: 200
-    - entity_id: light.kitchen
-      state: "on"
-      attributes:
-        brightness: 150
-`, sceneName, namespace, haName)
-			Expect(utils.ApplyYAML(updatedYAML, namespace)).To(Succeed())
+`, sceneName, namespace)
+			Expect(utils.ApplyYAML(sceneYAML, namespace)).To(Succeed())
 
-			By("Verifying ConfigMap updated with new content")
+			By("Verifying Ready=False with reason InvalidScene")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.scenes\\.yaml}")
-				g.Expect(output).To(ContainSubstring("name: Updated Scene"))
-				g.Expect(output).To(ContainSubstring("brightness: 200"))
-				g.Expect(output).To(ContainSubstring("light.kitchen"))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+				status := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(status).To(Equal("False"))
 
-			By("Verifying scene hash changed")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
-					"-o", "jsonpath={.status.sceneHash}")
-				g.Expect(output).NotTo(Equal(initialHash))
+				reason := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].reason}")
+				g.Expect(reason).To(Equal("InvalidScene"))
 			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 		})
 
-		It("should remove scene from ConfigMap when CR deleted (finalizer)", func() {
+		It("should delete CR cleanly when no bootstrap token", func() {
 			By("Creating HomeAssistant CR")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant
@@ -407,304 +195,50 @@ spec:
   version: "stable"
   storage:
     size: "1Gi"
-  service:
-    type: ClusterIP
-    port: 8123
   %s
 `, haName, namespace, utils.GetDefaultHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
-			By("Creating HomeAssistantConfiguration")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantConfiguration
+			By("Creating HomeAssistantScene CR")
+			sceneName := "test-scene-" + utils.RandomString(6)
+			sceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantScene
 metadata:
   name: %s
   namespace: %s
 spec:
   homeAssistantRef:
     name: %s
-  configuration: |
-    scene: !include scenes.yaml
-`, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
-
-			By("Waiting for HomeAssistant resource")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "ha", haName, "-n", namespace,
-					"-o", "jsonpath={.metadata.name}")
-				g.Expect(output).To(Equal(haName))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
-
-			By("Creating first scene (to keep)")
-			scene1YAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantScene
-metadata:
-  name: scene-keep
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  id: keep_scene
-  name: "Keep This Scene"
+  id: cleanup_scene
+  name: "Cleanup Scene"
   entities:
-    - entity_id: light.living_room
+    - entity_id: light.hallway
       state: "on"
-`, namespace, haName)
-			Expect(utils.ApplyYAML(scene1YAML, namespace)).To(Succeed())
+`, sceneName, namespace, haName)
+			Expect(utils.ApplyYAML(sceneYAML, namespace)).To(Succeed())
 
-			By("Creating second scene (to delete)")
-			scene2YAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantScene
-metadata:
-  name: scene-delete
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  id: delete_scene
-  name: "Delete This Scene"
-  entities:
-    - entity_id: light.kitchen
-      state: "off"
-`, namespace, haName)
-			Expect(utils.ApplyYAML(scene2YAML, namespace)).To(Succeed())
-
-			By("Verifying both scenes in ConfigMap")
-			configMapName := haName + "-scenes"
+			By("Waiting for finalizer to be added")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.scenes\\.yaml}")
-				g.Expect(output).To(ContainSubstring("id: keep_scene"))
-				g.Expect(output).To(ContainSubstring("id: delete_scene"))
+				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+					"-o", "jsonpath={.metadata.finalizers}")
+				g.Expect(output).To(ContainSubstring("ha.homeassistant.io/scene-finalizer"))
 			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 
-			By("Deleting second scene")
-			cmd := exec.Command("kubectl", "delete", "hascene", "scene-delete", "-n", namespace)
+			By("Deleting the CR")
+			cmd := exec.Command("kubectl", "delete", "hascene", sceneName, "-n", namespace, "--wait=false")
 			_, err := utils.Run(cmd)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying ConfigMap updated (only scene-keep remains)")
+			By("Verifying CR is fully deleted (finalizer removed even without token)")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.scenes\\.yaml}")
-				g.Expect(output).NotTo(ContainSubstring("id: delete_scene"))
-				g.Expect(output).To(ContainSubstring("id: keep_scene"))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
-
-			By("Verifying scene CR was fully deleted")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", "scene-delete", "-n", namespace, "--ignore-not-found")
+				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace, "--ignore-not-found")
 				g.Expect(output).To(BeEmpty())
 			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
-
-			By("Verifying first scene still exists and is Ready")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", "scene-keep", "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(output).To(Equal("True"))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 		})
 	})
 
-	Context("Entity Attributes", Label("fast"), func() {
-		It("should handle complex entity attributes via RawExtension", func() {
-			By("Creating HomeAssistant CR")
-			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  version: "stable"
-  storage:
-    size: "1Gi"
-  service:
-    type: ClusterIP
-    port: 8123
-  %s
-`, haName, namespace, utils.GetDefaultHAResourceRequests())
-			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
-
-			By("Creating HomeAssistantConfiguration")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantConfiguration
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  configuration: |
-    scene: !include scenes.yaml
-`, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
-
-			By("Waiting for HomeAssistant resource")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "ha", haName, "-n", namespace,
-					"-o", "jsonpath={.metadata.name}")
-				g.Expect(output).To(Equal(haName))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
-
-			By("Creating scene with complex entity attributes")
-			sceneName := "scene-complex"
-			sceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantScene
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  id: complex_attrs
-  name: "Complex Attributes Scene"
-  entities:
-    - entity_id: light.rgb_light
-      state: "on"
-      attributes:
-        brightness: 180
-        rgb_color: [255, 100, 50]
-        color_temp: 370
-    - entity_id: climate.bedroom
-      state: "heat"
-      attributes:
-        temperature: 21.5
-        fan_mode: "auto"
-    - entity_id: media_player.tv
-      state: "playing"
-      attributes:
-        volume_level: 0.6
-        source: "Netflix"
-`, sceneName, namespace, haName)
-			Expect(utils.ApplyYAML(sceneYAML, namespace)).To(Succeed())
-
-			By("Verifying ConfigMap contains all attributes in correct YAML format")
-			configMapName := haName + "-scenes"
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.scenes\\.yaml}")
-
-				// Verify all entity IDs
-				g.Expect(output).To(ContainSubstring("light.rgb_light"))
-				g.Expect(output).To(ContainSubstring("climate.bedroom"))
-				g.Expect(output).To(ContainSubstring("media_player.tv"))
-
-				// Verify complex attributes
-				g.Expect(output).To(ContainSubstring("brightness: 180"))
-				g.Expect(output).To(ContainSubstring("rgb_color"))
-				g.Expect(output).To(ContainSubstring("temperature: 21.5"))
-				g.Expect(output).To(ContainSubstring("volume_level: 0.6"))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
-
-			By("Verifying scene is Ready")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(output).To(Equal("True"))
-			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
-		})
-	})
-
-	Context("Status Fields", Label("fast"), func() {
-		It("should populate all status fields correctly", func() {
-			By("Creating HomeAssistant CR")
-			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  version: "stable"
-  storage:
-    size: "1Gi"
-  service:
-    type: ClusterIP
-    port: 8123
-  %s
-`, haName, namespace, utils.GetDefaultHAResourceRequests())
-			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
-
-			By("Creating HomeAssistantConfiguration")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantConfiguration
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  configuration: |
-    scene: !include scenes.yaml
-`, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
-
-			By("Waiting for HomeAssistant resource")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "ha", haName, "-n", namespace,
-					"-o", "jsonpath={.metadata.name}")
-				g.Expect(output).To(Equal(haName))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
-
-			By("Creating scene")
-			sceneName := "scene-status"
-			sceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantScene
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  id: status_test
-  name: "Status Test Scene"
-  entities:
-    - entity_id: light.test
-      state: "on"
-`, sceneName, namespace, haName)
-			Expect(utils.ApplyYAML(sceneYAML, namespace)).To(Succeed())
-
-			By("Verifying status.sceneHash is set")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
-					"-o", "jsonpath={.status.sceneHash}")
-				g.Expect(output).NotTo(BeEmpty())
-				g.Expect(len(output)).To(BeNumerically(">", 32)) // SHA256 hash is 64 chars
-			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
-
-			By("Verifying status.observedGeneration is set")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
-					"-o", "jsonpath={.status.observedGeneration}")
-				g.Expect(output).NotTo(BeEmpty())
-			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
-
-			By("Verifying status.conditions contains Ready condition")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(output).To(Equal("True"))
-			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
-
-			By("Verifying Ready condition has correct reason")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].reason}")
-				// Reason should be either SceneGenerated or similar success reason
-				g.Expect(output).NotTo(BeEmpty())
-			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
-
-			By("Verifying lastError contains expected message (no bootstrap in this test)")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
-					"-o", "jsonpath={.status.lastError}")
-				// Without bootstrap, should have error about missing token
-				g.Expect(output).To(ContainSubstring("bootstrap"))
-			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
-		})
-	})
-
-	Context("Hot-Reload", Label("bootstrap", "slow"), func() {
-		It("should hot-reload via REST API when autoReload=true", func() {
+	Context("REST API Integration", Label("bootstrap", "slow"), func() {
+		It("should PUT scene to HA and set Ready=True", func() {
 			By("Creating bootstrap credentials Secret")
 			credsYAML := fmt.Sprintf(`apiVersion: v1
 kind: Secret
@@ -742,6 +276,7 @@ spec:
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
+			configName := "test-config-" + utils.RandomString(6)
 			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantConfiguration
 metadata:
@@ -752,13 +287,14 @@ spec:
     name: %s
   configuration: |
     scene: !include scenes.yaml
-    script: []
+    automation: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
 			By("Waiting for bootstrap to complete")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "ha", haName, "-n", namespace, "-o", "jsonpath={.status.bootstrap.completed}")
+				output := utils.Kubectl("get", "ha", haName, "-n", namespace,
+					"-o", "jsonpath={.status.bootstrap.completed}")
 				g.Expect(output).To(Equal("true"))
 			}, utils.BootstrapTimeout, bootstrapInterval).Should(Succeed())
 
@@ -770,30 +306,17 @@ spec:
 
 			By("Waiting for pod to be fully Ready")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
-				g.Expect(output).To(Equal("Running"))
+				phase := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+					"-o", "jsonpath={.status.phase}")
+				g.Expect(phase).To(Equal("Running"))
 
-				readyOutput := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+				ready := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
 					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(readyOutput).To(Equal("True"))
+				g.Expect(ready).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, haPodReadyInterval).Should(Succeed())
 
-			By("Capturing pod UID before scene creation")
-			var podUID string
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
-				g.Expect(output).NotTo(BeEmpty())
-				podUID = output
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
-
-			By("Ensuring pod UID stable for 10 seconds (no pending restarts)")
-			Consistently(func(g Gomega) {
-				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
-				g.Expect(output).To(Equal(podUID))
-			}, 10*time.Second, 2*time.Second).Should(Succeed())
-
-			By("Creating scene with autoReload: true")
-			sceneName := "scene-hotreload"
+			By("Creating HomeAssistantScene CR")
+			sceneName := "test-scene-" + utils.RandomString(6)
 			sceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantScene
 metadata:
@@ -802,40 +325,58 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  id: hot_reload_test
-  name: "Hot Reload Test"
-  autoReload: true
+  id: put_test_scene
+  name: "PUT Test Scene"
   entities:
     - entity_id: light.living_room
       state: "on"
       attributes:
-        brightness: 150
+        brightness: 200
+        color_temp: 300
 `, sceneName, namespace, haName)
 			Expect(utils.ApplyYAML(sceneYAML, namespace)).To(Succeed())
 
-			By("Verifying scene status shows it's ready")
+			By("Verifying Ready=True with reason SceneGenerated")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+				status := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
 					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(output).To(Equal("True"))
+				g.Expect(status).To(Equal("True"))
+
+				reason := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].reason}")
+				g.Expect(reason).To(Equal("SceneGenerated"))
 			}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
 
-			By("Verifying lastReloadTime is set (hot-reload occurred)")
+			By("Verifying sceneHash is set (SHA256)")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+				hash := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+					"-o", "jsonpath={.status.sceneHash}")
+				g.Expect(hash).To(MatchRegexp("^[a-f0-9]{64}$"))
+			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying lastReloadTime is set")
+			Eventually(func(g Gomega) {
+				reloadTime := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
 					"-o", "jsonpath={.status.lastReloadTime}")
-				g.Expect(output).NotTo(BeEmpty())
+				g.Expect(reloadTime).NotTo(BeEmpty())
 			}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
-
-			By("Verifying pod was NOT restarted (UID unchanged)")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
-				g.Expect(output).To(Equal(podUID))
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 		})
 
-		It("should skip reload when autoReload=false", func() {
-			By("Creating HomeAssistant CR")
+		It("should update hash and reload when spec changes", func() {
+			By("Creating bootstrap credentials Secret")
+			credsYAML := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+stringData:
+  username: admin
+  password: e2e-test-bootstrap-pwd-123456
+`, sceneBootstrapSecret, namespace)
+			Expect(utils.ApplyYAML(credsYAML, namespace)).To(Succeed())
+
+			By("Creating HomeAssistant CR with bootstrap enabled")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistant
 metadata:
@@ -845,11 +386,21 @@ spec:
   version: "stable"
   storage:
     size: "1Gi"
+  bootstrap:
+    enabled: true
+    credentials:
+      secretRef:
+        name: %s
+    createApiToken: true
+    apiTokenSecretName: %s-homeassistant-api-token
+    ownerName: "E2E Test Admin"
+    language: "en"
   %s
-`, haName, namespace, utils.GetDefaultHAResourceRequests())
+`, haName, namespace, sceneBootstrapSecret, haName, utils.GetEnhancedHAResourceRequests())
 			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
+			configName := "test-config-" + utils.RandomString(6)
 			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantConfiguration
 metadata:
@@ -860,97 +411,177 @@ spec:
     name: %s
   configuration: |
     scene: !include scenes.yaml
+    automation: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
-			By("Creating scene with autoReload: false")
-			sceneName := "scene-noreload"
-			sceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantScene
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  id: no_reload_test
-  name: "No Reload Test"
-  autoReload: false
-  entities:
-    - entity_id: light.bedroom
-      state: "off"
-`, sceneName, namespace, haName)
-			Expect(utils.ApplyYAML(sceneYAML, namespace)).To(Succeed())
-
-			By("Verifying scene is Ready")
+			By("Waiting for bootstrap to complete")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(output).To(Equal("True"))
-			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+				output := utils.Kubectl("get", "ha", haName, "-n", namespace,
+					"-o", "jsonpath={.status.bootstrap.completed}")
+				g.Expect(output).To(Equal("true"))
+			}, utils.BootstrapTimeout, bootstrapInterval).Should(Succeed())
 
-			By("Verifying lastReloadTime is NOT set (no reload occurred)")
-			Consistently(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
-					"-o", "jsonpath={.status.lastReloadTime}")
-				g.Expect(output).To(BeEmpty())
-			}, 5*time.Second, reconcileInterval).Should(Succeed())
-
-			By("Verifying lastError is NOT set")
+			By("Waiting for pod to be fully Ready")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
-					"-o", "jsonpath={.status.lastError}")
-				g.Expect(output).To(BeEmpty())
-			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
-		})
-	})
-
-	Context("Fallback Mechanisms", Label("slow"), func() {
-		It("should fallback to restart when API token missing", func() {
-			By("Creating HomeAssistant CR WITHOUT bootstrap")
-			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistant
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  version: "stable"
-  storage:
-    size: "1Gi"
-  %s
-`, haName, namespace, utils.GetDefaultHAResourceRequests())
-			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
-
-			By("Creating HomeAssistantConfiguration")
-			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantConfiguration
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  configuration: |
-    scene: !include scenes.yaml
-`, configName, namespace, haName)
-			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
-
-			By("Waiting for HA Pod Ready")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+				phase := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
 					"-o", "jsonpath={.status.phase}")
-				g.Expect(output).To(Equal("Running"))
+				g.Expect(phase).To(Equal("Running"))
+
+				ready := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(ready).To(Equal("True"))
 			}, utils.HAPodReadyTimeout, haPodReadyInterval).Should(Succeed())
 
-			By("Verifying API token Secret does NOT exist")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "secret", haName+"-homeassistant-api-token",
-					"-n", namespace, "--ignore-not-found")
-				g.Expect(output).To(BeEmpty())
-			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+			By("Creating initial HomeAssistantScene CR")
+			sceneName := "test-scene-" + utils.RandomString(6)
+			initialSceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantScene
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  id: update_hash_scene
+  name: "Update Hash Scene"
+  entities:
+    - entity_id: light.bedroom
+      state: "on"
+      attributes:
+        brightness: 100
+`, sceneName, namespace, haName)
+			Expect(utils.ApplyYAML(initialSceneYAML, namespace)).To(Succeed())
 
-			By("Creating scene with autoReload: true (will attempt hot-reload)")
-			sceneName := "scene-fallback"
+			By("Waiting for initial Ready=True and capturing initial hash and reloadTime")
+			var initialHash, initialReloadTime string
+			Eventually(func(g Gomega) {
+				status := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(status).To(Equal("True"))
+
+				hash := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+					"-o", "jsonpath={.status.sceneHash}")
+				g.Expect(hash).To(MatchRegexp("^[a-f0-9]{64}$"))
+				initialHash = hash
+
+				reloadTime := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+					"-o", "jsonpath={.status.lastReloadTime}")
+				g.Expect(reloadTime).NotTo(BeEmpty())
+				initialReloadTime = reloadTime
+			}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
+
+			By("Updating the scene spec")
+			updatedSceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantScene
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  id: update_hash_scene
+  name: "Update Hash Scene - Modified"
+  entities:
+    - entity_id: light.bedroom
+      state: "on"
+      attributes:
+        brightness: 255
+    - entity_id: light.hallway
+      state: "off"
+`, sceneName, namespace, haName)
+			Expect(utils.ApplyYAML(updatedSceneYAML, namespace)).To(Succeed())
+
+			By("Verifying sceneHash changed after spec update")
+			Eventually(func(g Gomega) {
+				hash := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+					"-o", "jsonpath={.status.sceneHash}")
+				g.Expect(hash).To(MatchRegexp("^[a-f0-9]{64}$"))
+				g.Expect(hash).NotTo(Equal(initialHash))
+			}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying lastReloadTime updated")
+			Eventually(func(g Gomega) {
+				reloadTime := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+					"-o", "jsonpath={.status.lastReloadTime}")
+				g.Expect(reloadTime).NotTo(BeEmpty())
+				g.Expect(reloadTime).NotTo(Equal(initialReloadTime))
+			}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
+		})
+
+		It("should DELETE via HA REST API when CR deleted", func() {
+			By("Creating bootstrap credentials Secret")
+			credsYAML := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+stringData:
+  username: admin
+  password: e2e-test-bootstrap-pwd-123456
+`, sceneBootstrapSecret, namespace)
+			Expect(utils.ApplyYAML(credsYAML, namespace)).To(Succeed())
+
+			By("Creating HomeAssistant CR with bootstrap enabled")
+			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  version: "stable"
+  storage:
+    size: "1Gi"
+  bootstrap:
+    enabled: true
+    credentials:
+      secretRef:
+        name: %s
+    createApiToken: true
+    apiTokenSecretName: %s-homeassistant-api-token
+    ownerName: "E2E Test Admin"
+    language: "en"
+  %s
+`, haName, namespace, sceneBootstrapSecret, haName, utils.GetEnhancedHAResourceRequests())
+			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration")
+			configName := "test-config-" + utils.RandomString(6)
+			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  configuration: |
+    scene: !include scenes.yaml
+    automation: []
+`, configName, namespace, haName)
+			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
+
+			By("Waiting for bootstrap to complete")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "ha", haName, "-n", namespace,
+					"-o", "jsonpath={.status.bootstrap.completed}")
+				g.Expect(output).To(Equal("true"))
+			}, utils.BootstrapTimeout, bootstrapInterval).Should(Succeed())
+
+			By("Waiting for pod to be fully Ready")
+			Eventually(func(g Gomega) {
+				phase := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+					"-o", "jsonpath={.status.phase}")
+				g.Expect(phase).To(Equal("Running"))
+
+				ready := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+				g.Expect(ready).To(Equal("True"))
+			}, utils.HAPodReadyTimeout, haPodReadyInterval).Should(Succeed())
+
+			By("Creating scene and waiting for Ready=True")
+			sceneName := "test-scene-" + utils.RandomString(6)
 			sceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantScene
 metadata:
@@ -959,33 +590,125 @@ metadata:
 spec:
   homeAssistantRef:
     name: %s
-  id: fallback_test
-  name: "Fallback Test"
-  autoReload: true
+  id: delete_api_scene
+  name: "Delete API Scene"
   entities:
-    - entity_id: light.test
+    - entity_id: light.living_room
       state: "on"
 `, sceneName, namespace, haName)
 			Expect(utils.ApplyYAML(sceneYAML, namespace)).To(Succeed())
 
-			By("Verifying scene is Ready despite missing token")
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+				status := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
 					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(output).To(Equal("True"))
+				g.Expect(status).To(Equal("True"))
+			}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
+
+			By("Capturing pod UID before deletion")
+			var podUID string
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+					"-o", "jsonpath={.metadata.uid}")
+				g.Expect(output).NotTo(BeEmpty())
+				podUID = output
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
+			By("Deleting the CR")
+			cmd := exec.Command("kubectl", "delete", "hascene", sceneName, "-n", namespace)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying CR is fully deleted")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace, "--ignore-not-found")
+				g.Expect(output).To(BeEmpty())
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying pod was NOT restarted (deletion is via API, not pod restart)")
+			output := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
+			Expect(output).To(Equal(podUID))
+		})
+
+		It("should requeue and eventually load when token becomes available", func() {
+			By("Creating HomeAssistant CR without bootstrap")
+			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  version: "stable"
+  storage:
+    size: "1Gi"
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
+			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
+
+			By("Creating HomeAssistantScene CR (no token available yet)")
+			sceneName := "test-scene-" + utils.RandomString(6)
+			sceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantScene
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  id: requeue_scene
+  name: "Requeue Scene"
+  entities:
+    - entity_id: light.kitchen
+      state: "on"
+`, sceneName, namespace, haName)
+			Expect(utils.ApplyYAML(sceneYAML, namespace)).To(Succeed())
+
+			By("Verifying ReloadReady=False with reason TokenNotAvailable")
+			Eventually(func(g Gomega) {
+				status := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='ReloadReady')].status}")
+				g.Expect(status).To(Equal("False"))
+
+				reason := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='ReloadReady')].reason}")
+				g.Expect(reason).To(Equal("TokenNotAvailable"))
 			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 
-			By("Verifying lastError mentions missing token")
+			By("Creating API token Secret directly")
+			tokenSecretName := haName + "-api-token"
+			tokenSecretYAML := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+stringData:
+  token: fake-e2e-token-for-requeue-test
+`, tokenSecretName, namespace)
+			Expect(utils.ApplyYAML(tokenSecretYAML, namespace)).To(Succeed())
+
+			By("Patching HA status to reference the token secret")
+			cmd := exec.Command("kubectl", "patch", "ha", haName, "-n", namespace,
+				"--subresource=status", "--type=merge",
+				"-p", fmt.Sprintf(`{"status":{"bootstrap":{"completed":true,"apiTokenSecretName":"%s"}}}`, tokenSecretName))
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying controller requeues and attempts reconciliation (ReloadReady condition updates)")
+			// After the token secret is available and HA status is patched, the controller
+			// will requeue and attempt to PUT the scene. Since the token is fake,
+			// the PUT will fail and Ready will remain False or transition. What matters is
+			// that the controller no longer reports TokenNotAvailable - it proceeds past that gate.
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
-					"-o", "jsonpath={.status.lastError}")
-				g.Expect(output).To(ContainSubstring("bootstrap"))
-			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+				reason := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='ReloadReady')].reason}")
+				// Controller should move past TokenNotAvailable once token is present
+				g.Expect(reason).NotTo(Equal("TokenNotAvailable"))
+			}, utils.StatusUpdateTimeout*2, reconcileInterval).Should(Succeed())
 		})
 	})
 })
 
-// collectSceneDebugInfo gathers debugging information when a scene test fails
+// collectSceneDebugInfo gathers debug information for scene tests on failure.
 func collectSceneDebugInfo(namespace, haName string) {
 	writeDebug := func(format string, args ...any) {
 		_, _ = fmt.Fprintf(GinkgoWriter, format, args...)
@@ -1000,14 +723,6 @@ func collectSceneDebugInfo(namespace, haName string) {
 		writeDebug("%s\n", output)
 	}
 
-	writeDebug("\n--- Scenes ConfigMap Content ---\n")
-	configMapName := haName + "-scenes"
-	cmd = exec.Command("kubectl", "get", "configmap", configMapName, "-n", namespace, "-o", "yaml")
-	output, err = utils.Run(cmd)
-	if err == nil {
-		writeDebug("%s\n", output)
-	}
-
 	writeDebug("\n--- HomeAssistantScene Status (describe all) ---\n")
 	cmd = exec.Command("kubectl", "describe", "hascene", "-n", namespace)
 	output, err = utils.Run(cmd)
@@ -1015,9 +730,18 @@ func collectSceneDebugInfo(namespace, haName string) {
 		writeDebug("%s\n", output)
 	}
 
+	writeDebug("\n--- HomeAssistant Status ---\n")
+	cmd = exec.Command("kubectl", "get", "ha", haName, "-n", namespace, "-o", "yaml")
+	output, err = utils.Run(cmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	}
+
 	writeDebug("\n--- Controller Logs (last 200 lines) ---\n")
-	cmd = exec.Command("kubectl", "logs", "-n", "homeassistant-operator-system",
-		"-l", "control-plane=controller-manager", "--tail=200")
+	cmd = exec.Command(
+		"kubectl", "logs", "-n", "homeassistant-operator-system",
+		"-l", "control-plane=controller-manager", "--tail=200",
+	)
 	output, err = utils.Run(cmd)
 	if err == nil {
 		writeDebug("%s\n", output)

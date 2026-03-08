@@ -17,9 +17,8 @@ limitations under the License.
 package controller
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -31,23 +30,28 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
+
+// simpleScriptAction is a raw JSON action for use in script tests
+var simpleScriptAction = hav1alpha1.ScriptAction{
+	RawExtension: runtime.RawExtension{Raw: []byte(`{"service":"test.service"}`)},
+}
 
 var _ = Describe("HomeAssistantScript Controller", func() {
 	const (
-		timeout  = time.Second * 10
-		interval = time.Millisecond * 250
+		scriptTimeout  = time.Second * 10
+		scriptInterval = time.Millisecond * 250
 	)
 
 	var (
-		ctx        context.Context
-		namespace  string
 		reconciler *HomeAssistantScriptReconciler
+		mockServer *httptest.Server
 	)
 
-	// Helper to create test script
 	createTestScript := func(
-		name, haRef, alias string,
+		name, namespace, haRef, alias string,
 		sequence []hav1alpha1.ScriptAction,
 	) *hav1alpha1.HomeAssistantScript {
 		return &hav1alpha1.HomeAssistantScript{
@@ -63,355 +67,179 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 		}
 	}
 
-	// Helper to create test action
-	createTestAction := func(data map[string]interface{}) hav1alpha1.ScriptAction {
-		raw, err := json.Marshal(data)
-		Expect(err).NotTo(HaveOccurred())
-		return hav1alpha1.ScriptAction{
-			RawExtension: runtime.RawExtension{Raw: raw},
-		}
-	}
-
-	// Helper to reconcile
-	reconcileScript := func(name string) (reconcile.Result, error) {
+	reconcileScript := func(name, namespace string) (reconcile.Result, error) {
 		return reconciler.Reconcile(ctx, reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Name:      name,
-				Namespace: namespace,
-			},
+			NamespacedName: types.NamespacedName{Name: name, Namespace: namespace},
 		})
 	}
 
+	setupScriptToken := func(haName, namespace string) {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      haName + "-api-token",
+				Namespace: namespace,
+			},
+			Data: map[string][]byte{"token": []byte("test-token")},
+		}
+		Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+		ha := &hav1alpha1.HomeAssistant{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, ha)).To(Succeed())
+		ha.Status.Bootstrap = &hav1alpha1.BootstrapStatus{
+			ApiTokenSecretName: haName + "-api-token",
+		}
+		Expect(k8sClient.Status().Update(ctx, ha)).To(Succeed())
+	}
+
 	BeforeEach(func() {
-		ctx = context.Background()
-		namespace = "default"
+		mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodPut:
+				w.WriteHeader(http.StatusOK)
+			case r.Method == http.MethodDelete:
+				w.WriteHeader(http.StatusOK)
+			case r.Method == http.MethodGet && r.URL.Path == "/api/config":
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"components":["script"],"version":"2024.1.0"}`))
+			case r.Method == http.MethodPost:
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[]`))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
 
 		reconciler = &HomeAssistantScriptReconciler{
 			Client:   k8sClient,
 			Scheme:   k8sClient.Scheme(),
 			Recorder: events.NewFakeRecorder(100),
+			NewHAClient: func(_ string) *haclient.Client {
+				return haclient.NewClient(mockServer.URL)
+			},
 		}
 	})
 
-	Context("ConfigMap Aggregation", func() {
-		var ha *hav1alpha1.HomeAssistant
+	AfterEach(func() {
+		// Cleanup scripts
+		scriptList := &hav1alpha1.HomeAssistantScriptList{}
+		_ = k8sClient.List(ctx, scriptList)
+		for i := range scriptList.Items {
+			ns := scriptList.Items[i].Namespace
+			name := scriptList.Items[i].Name
+			_ = k8sClient.Delete(ctx, &scriptList.Items[i])
+			_, _ = reconcileScript(name, ns)
+		}
 
-		BeforeEach(func() {
-			ha = &hav1alpha1.HomeAssistant{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-ha",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSpec{},
-			}
-			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+		// Cleanup secrets
+		secretList := &corev1.SecretList{}
+		_ = k8sClient.List(ctx, secretList)
+		for i := range secretList.Items {
+			_ = k8sClient.Delete(ctx, &secretList.Items[i])
+		}
 
-			// Wait for HA to be created
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      ha.Name,
-					Namespace: ha.Namespace,
-				}, ha)
-			}, timeout, interval).Should(Succeed())
-		})
+		// Cleanup HAs
+		haList := &hav1alpha1.HomeAssistantList{}
+		_ = k8sClient.List(ctx, haList)
+		for i := range haList.Items {
+			_ = k8sClient.Delete(ctx, &haList.Items[i])
+		}
 
-		AfterEach(func() {
-			// Cleanup
-			_ = k8sClient.Delete(ctx, ha)
-		})
-
-		It("should create ConfigMap when script is created", func() {
-			actions := []hav1alpha1.ScriptAction{
-				createTestAction(map[string]interface{}{
-					"service": "notify.mobile_app",
-					"data": map[string]interface{}{
-						"message": "Test",
-					},
-				}),
-			}
-
-			script := createTestScript("test-script", ha.Name, "Test Script", actions)
-			Expect(k8sClient.Create(ctx, script)).To(Succeed())
-
-			// Reconcile
-			result, err := reconcileScript(script.Name)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(BeZero())
-
-			// Verify ConfigMap was created
-			cm := &corev1.ConfigMap{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      ha.Name + generatedScriptsSuffix,
-					Namespace: namespace,
-				}, cm)
-			}, timeout, interval).Should(Succeed())
-
-			// Verify ConfigMap contains script
-			Expect(cm.Data).To(HaveKey(scriptsYamlKey))
-			Expect(cm.Data[scriptsYamlKey]).To(ContainSubstring("Test Script"))
-			Expect(cm.Data[scriptsYamlKey]).To(ContainSubstring("notify.mobile_app"))
-
-			// Cleanup
-			_ = k8sClient.Delete(ctx, script)
-		})
-
-		It("should aggregate multiple scripts into one ConfigMap", func() {
-			actions := []hav1alpha1.ScriptAction{
-				createTestAction(map[string]interface{}{
-					"service": "light.turn_on",
-				}),
-			}
-
-			script1 := createTestScript("script-1", ha.Name, "Script One", actions)
-			script2 := createTestScript("script-2", ha.Name, "Script Two", actions)
-
-			Expect(k8sClient.Create(ctx, script1)).To(Succeed())
-			Expect(k8sClient.Create(ctx, script2)).To(Succeed())
-
-			// Reconcile both
-			_, err := reconcileScript(script1.Name)
-			Expect(err).NotTo(HaveOccurred())
-			_, err = reconcileScript(script2.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify single ConfigMap contains both
-			cm := &corev1.ConfigMap{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      ha.Name + generatedScriptsSuffix,
-					Namespace: namespace,
-				}, cm)
-			}, timeout, interval).Should(Succeed())
-
-			yamlContent := cm.Data[scriptsYamlKey]
-			Expect(yamlContent).To(ContainSubstring("Script One"))
-			Expect(yamlContent).To(ContainSubstring("Script Two"))
-
-			// Cleanup
-			_ = k8sClient.Delete(ctx, script1)
-			_ = k8sClient.Delete(ctx, script2)
-		})
-
-		It("should handle script with fields (input parameters)", func() {
-			fieldSpec := hav1alpha1.ScriptField{}
-			raw, _ := json.Marshal(map[string]interface{}{
-				"description": "Message to send",
-				"example":     "Hello",
-			})
-			fieldSpec.Raw = raw
-
-			actions := []hav1alpha1.ScriptAction{
-				createTestAction(map[string]interface{}{
-					"service": "notify.mobile_app",
-					"data": map[string]interface{}{
-						"message": "{{ message }}",
-					},
-				}),
-			}
-
-			script := &hav1alpha1.HomeAssistantScript{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "script-with-fields",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantScriptSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: ha.Name},
-					Alias:            "Script With Fields",
-					Fields: map[string]hav1alpha1.ScriptField{
-						"message": fieldSpec,
-					},
-					Sequence: actions,
-				},
-			}
-
-			Expect(k8sClient.Create(ctx, script)).To(Succeed())
-
-			// Reconcile
-			_, err := reconcileScript(script.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify ConfigMap contains fields
-			cm := &corev1.ConfigMap{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      ha.Name + generatedScriptsSuffix,
-					Namespace: namespace,
-				}, cm)
-			}, timeout, interval).Should(Succeed())
-
-			yamlContent := cm.Data[scriptsYamlKey]
-			Expect(yamlContent).To(ContainSubstring("fields"))
-			Expect(yamlContent).To(ContainSubstring("message"))
-
-			// Cleanup
-			_ = k8sClient.Delete(ctx, script)
-		})
-
-		It("should handle different script modes", func() {
-			actions := []hav1alpha1.ScriptAction{
-				createTestAction(map[string]interface{}{
-					"delay": map[string]interface{}{
-						"seconds": 1,
-					},
-				}),
-			}
-
-			modes := []hav1alpha1.ScriptMode{
-				hav1alpha1.ScriptModeSingle,
-				hav1alpha1.ScriptModeRestart,
-				hav1alpha1.ScriptModeQueued,
-				hav1alpha1.ScriptModeParallel,
-			}
-
-			for _, mode := range modes {
-				script := &hav1alpha1.HomeAssistantScript{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      string(mode) + "-script",
-						Namespace: namespace,
-					},
-					Spec: hav1alpha1.HomeAssistantScriptSpec{
-						HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: ha.Name},
-						Alias:            string(mode) + " Script",
-						Mode:             mode,
-						Sequence:         actions,
-					},
-				}
-
-				Expect(k8sClient.Create(ctx, script)).To(Succeed())
-				_, err := reconcileScript(script.Name)
-				Expect(err).NotTo(HaveOccurred())
-
-				// Verify ConfigMap contains mode
-				cm := &corev1.ConfigMap{}
-				Eventually(func() error {
-					if err := k8sClient.Get(ctx, types.NamespacedName{
-						Name:      ha.Name + generatedScriptsSuffix,
-						Namespace: namespace,
-					}, cm); err != nil {
-						return err
-					}
-					if cm.Data[scriptsYamlKey] == "" {
-						return fmt.Errorf("scriptsYamlKey is empty")
-					}
-					return nil
-				}, timeout, interval).Should(Succeed())
-
-				yamlContent := cm.Data[scriptsYamlKey]
-				Expect(yamlContent).To(ContainSubstring(string(mode)))
-
-				// Cleanup: delete then reconcile to trigger finalizer removal
-				_ = k8sClient.Delete(ctx, script)
-				_, _ = reconcileScript(script.Name)
-			}
-		})
-	})
-
-	Context("Status Updates", func() {
-		var ha *hav1alpha1.HomeAssistant
-
-		BeforeEach(func() {
-			ha = &hav1alpha1.HomeAssistant{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-ha-status",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSpec{},
-			}
-			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
-		})
-
-		AfterEach(func() {
-			_ = k8sClient.Delete(ctx, ha)
-		})
-
-		It("should set Ready condition after successful reconciliation", func() {
-			actions := []hav1alpha1.ScriptAction{
-				createTestAction(map[string]interface{}{
-					"service": "test.service",
-				}),
-			}
-
-			script := createTestScript("status-script", ha.Name, "Status Test", actions)
-			Expect(k8sClient.Create(ctx, script)).To(Succeed())
-
-			// Reconcile
-			_, err := reconcileScript(script.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Check status
-			Eventually(func() bool {
-				if err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      script.Name,
-					Namespace: namespace,
-				}, script); err != nil {
-					return false
-				}
-
-				for _, cond := range script.Status.Conditions {
-					if cond.Type == conditionTypeReady && cond.Status == metav1.ConditionTrue {
-						return true
-					}
-				}
-				return false
-			}, timeout, interval).Should(BeTrue())
-
-			// Cleanup
-			_ = k8sClient.Delete(ctx, script)
-		})
+		mockServer.Close()
 	})
 
 	Context("Finalizer Handling", func() {
-		var ha *hav1alpha1.HomeAssistant
+		const ns = "default"
 
 		BeforeEach(func() {
-			ha = &hav1alpha1.HomeAssistant{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-ha-finalizer",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSpec{},
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-ha-script-fin", Namespace: ns},
+				Spec:       hav1alpha1.HomeAssistantSpec{},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 		})
 
-		AfterEach(func() {
-			_ = k8sClient.Delete(ctx, ha)
-		})
-
-		It("should add finalizer on creation", func() {
-			actions := []hav1alpha1.ScriptAction{
-				createTestAction(map[string]interface{}{
-					"service": "test.service",
-				}),
-			}
-
-			script := createTestScript("finalizer-script", ha.Name, "Finalizer Test", actions)
+		It("should add finalizer on first reconcile", func() {
+			script := createTestScript("finalizer-script", ns, "test-ha-script-fin", "Finalizer Test",
+				[]hav1alpha1.ScriptAction{simpleScriptAction})
 			Expect(k8sClient.Create(ctx, script)).To(Succeed())
 
-			// Reconcile
-			_, err := reconcileScript(script.Name)
+			// First reconcile adds finalizer
+			_, err := reconcileScript(script.Name, ns)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Verify finalizer was added
 			Eventually(func() bool {
-				if err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      script.Name,
-					Namespace: namespace,
-				}, script); err != nil {
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: script.Name, Namespace: ns}, script); err != nil {
 					return false
 				}
-
 				for _, f := range script.Finalizers {
 					if f == scriptFinalizerName {
 						return true
 					}
 				}
 				return false
-			}, timeout, interval).Should(BeTrue())
+			}, scriptTimeout, scriptInterval).Should(BeTrue())
+		})
+	})
 
-			// Cleanup
-			_ = k8sClient.Delete(ctx, script)
+	Context("Status Updates (with mock HA server)", func() {
+		const haStatusName = "test-ha-script-status"
+		const ns = "default"
+
+		BeforeEach(func() {
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: haStatusName, Namespace: ns},
+				Spec:       hav1alpha1.HomeAssistantSpec{},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+			setupScriptToken(haStatusName, ns)
+		})
+
+		It("should set Ready condition after successful reconciliation", func() {
+			script := createTestScript("status-script", ns, haStatusName, "Status Test",
+				[]hav1alpha1.ScriptAction{simpleScriptAction})
+			Expect(k8sClient.Create(ctx, script)).To(Succeed())
+
+			// Two reconciles: finalizer + actual reconciliation
+			_, err := reconcileScript(script.Name, ns)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = reconcileScript(script.Name, ns)
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() bool {
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: script.Name, Namespace: ns}, script); err != nil {
+					return false
+				}
+				for _, cond := range script.Status.Conditions {
+					if cond.Type == conditionTypeReady && cond.Status == metav1.ConditionTrue {
+						return true
+					}
+				}
+				return false
+			}, scriptTimeout, scriptInterval).Should(BeTrue())
+		})
+	})
+
+	Context("Validation", func() {
+		const ns = "default"
+
+		It("should requeue 30s when API token missing", func() {
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-ha-script-notoken", Namespace: ns},
+				Spec:       hav1alpha1.HomeAssistantSpec{},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			script := createTestScript("script-no-token", ns, ha.Name, "No Token",
+				[]hav1alpha1.ScriptAction{simpleScriptAction})
+			Expect(k8sClient.Create(ctx, script)).To(Succeed())
+
+			// First reconcile adds finalizer
+			_, err := reconcileScript(script.Name, ns)
+			Expect(err).NotTo(HaveOccurred())
+			// Second reconcile hits token check
+			result, err := reconcileScript(script.Name, ns)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 		})
 	})
 })

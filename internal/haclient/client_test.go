@@ -1017,4 +1017,151 @@ var _ = Describe("HAClient", func() {
 			Expect(loaded).To(BeFalse())
 		})
 	})
+
+	Describe("PutAutomation", func() {
+		automationData := map[string]interface{}{
+			"alias": "Test automation",
+			"trigger": []interface{}{
+				map[string]interface{}{"trigger": "sun", "event": "sunset"},
+			},
+			"action": []interface{}{
+				map[string]interface{}{"action": "light.turn_on", "target": map[string]interface{}{"area_id": "living_room"}},
+			},
+		}
+
+		It("Should PUT automation successfully", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.Method).To(Equal("PUT"))
+				Expect(r.URL.Path).To(Equal("/api/config/automation/config/test-id"))
+				Expect(r.Header.Get("Authorization")).To(Equal("Bearer test-token"))
+				Expect(r.Header.Get("Content-Type")).To(Equal("application/json"))
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"result": "ok"}`))
+			}))
+
+			client = NewClient(server.URL)
+			err := client.PutAutomation(ctx, "test-token", "test-id", automationData)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should return error on non-200 response", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"message": "invalid automation"}`))
+			}))
+
+			client = NewClient(server.URL)
+			err := client.PutAutomation(ctx, "test-token", "test-id", automationData)
+			Expect(err).To(HaveOccurred())
+			Expect(err.(*Error).StatusCode).To(Equal(http.StatusBadRequest))
+		})
+
+		It("Should return NotReady error when HA is unreachable", func() {
+			client = NewClient("http://localhost:19999")
+			err := client.PutAutomation(ctx, "test-token", "test-id", automationData)
+			Expect(err).To(HaveOccurred())
+			Expect(IsNotReady(err)).To(BeTrue())
+		})
+	})
+
+	Describe("DeleteAutomation", func() {
+		It("Should DELETE automation successfully", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.Method).To(Equal("DELETE"))
+				Expect(r.URL.Path).To(Equal("/api/config/automation/config/test-id"))
+				Expect(r.Header.Get("Authorization")).To(Equal("Bearer test-token"))
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			client = NewClient(server.URL)
+			err := client.DeleteAutomation(ctx, "test-token", "test-id")
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should return nil when automation not found (404 — idempotent)", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			}))
+
+			client = NewClient(server.URL)
+			err := client.DeleteAutomation(ctx, "test-token", "test-id")
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should return error on 500 response", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"message": "internal error"}`))
+			}))
+
+			client = NewClient(server.URL)
+			err := client.DeleteAutomation(ctx, "test-token", "test-id")
+			Expect(err).To(HaveOccurred())
+			Expect(err.(*Error).StatusCode).To(Equal(http.StatusInternalServerError))
+		})
+	})
+
+	Describe("PutScene", func() {
+		sceneData := map[string]interface{}{
+			"name": "Evening",
+			"entities": map[string]interface{}{
+				"light.living_room": map[string]interface{}{"state": "on", "brightness": 100},
+			},
+		}
+
+		It("Should PUT scene successfully", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.Method).To(Equal("PUT"))
+				Expect(r.URL.Path).To(Equal("/api/config/scene/config/test-scene-id"))
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"result": "ok"}`))
+			}))
+
+			client = NewClient(server.URL)
+			err := client.PutScene(ctx, "test-token", "test-scene-id", sceneData)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should return nil on DELETE 404 (idempotent)", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			}))
+
+			client = NewClient(server.URL)
+			err := client.DeleteScene(ctx, "test-token", "test-scene-id")
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Describe("PutScript", func() {
+		scriptData := map[string]interface{}{
+			"alias": "Morning routine",
+			"sequence": []interface{}{
+				map[string]interface{}{"action": "light.turn_on", "target": map[string]interface{}{"entity_id": "light.bedroom"}},
+			},
+		}
+
+		It("Should PUT script successfully", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.Method).To(Equal("PUT"))
+				Expect(r.URL.Path).To(Equal("/api/config/script/config/test-script-id"))
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"result": "ok"}`))
+			}))
+
+			client = NewClient(server.URL)
+			err := client.PutScript(ctx, "test-token", "test-script-id", scriptData)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should return nil on DELETE 404 (idempotent)", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			}))
+
+			client = NewClient(server.URL)
+			err := client.DeleteScript(ctx, "test-token", "test-script-id")
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
 })

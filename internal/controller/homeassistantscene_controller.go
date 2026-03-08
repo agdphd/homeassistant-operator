@@ -21,7 +21,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -58,8 +57,18 @@ const (
 // HomeAssistantSceneReconciler reconciles a HomeAssistantScene object
 type HomeAssistantSceneReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder events.EventRecorder
+	Scheme      *runtime.Scheme
+	Recorder    events.EventRecorder
+	NewHAClient func(baseURL string) *haclient.Client // overridable for testing
+}
+
+// haClientFor returns a HA API client for the given HomeAssistant instance.
+func (r *HomeAssistantSceneReconciler) haClientFor(ha *hav1alpha1.HomeAssistant) *haclient.Client {
+	haURL := buildHomeAssistantURL(ha)
+	if r.NewHAClient != nil {
+		return r.NewHAClient(haURL)
+	}
+	return haclient.NewClient(haURL)
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscenes,verbs=get;list;watch
@@ -91,12 +100,26 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 	if !scene.DeletionTimestamp.IsZero() {
 		// Resource is being deleted
 		if controllerutil.ContainsFinalizer(scene, sceneFinalizerName) {
-			log.Info("Handling deletion - regenerating ConfigMap without this scene")
+			log.Info("Handling deletion - deleting scene via HA REST API")
 
-			// Regenerate the aggregated ConfigMap without this scene
-			if err := r.reconcileScenesConfigMap(ctx, scene); err != nil {
-				log.Error(err, "Failed to update ConfigMap during deletion")
-				return ctrl.Result{}, err
+			// Delete scene via HA REST API (best effort — proceed even if HA is unavailable)
+			haRef := types.NamespacedName{
+				Name:      scene.Spec.HomeAssistantRef.Name,
+				Namespace: scene.Namespace,
+			}
+			if ha, haErr := r.validateHomeAssistantRef(ctx, haRef, scene); haErr == nil {
+				if token, tokenErr := getApiToken(ctx, r.Client, ha); tokenErr == nil {
+					haClient := r.haClientFor(ha)
+					id := scene.Spec.ID
+					if id == "" {
+						id = scene.Name
+					}
+					if delErr := haClient.DeleteScene(ctx, token, id); delErr != nil {
+						log.Info("Failed to delete scene via HA API (proceeding with finalizer removal)", "error", delErr)
+					}
+				} else {
+					log.Info("API token not available during deletion, proceeding with finalizer removal")
+				}
 			}
 
 			// Remove finalizer to allow deletion
@@ -139,20 +162,37 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 
-	// Reconcile the aggregated scenes ConfigMap
-	if err := r.reconcileScenesConfigMap(ctx, scene); err != nil {
-		log.Error(err, "Failed to reconcile scenes ConfigMap")
+	// Get API token — requeue if not available yet (bootstrap may still be running)
+	token, tokenErr := getApiToken(ctx, r.Client, ha)
+	if tokenErr != nil {
+		log.Info("API token not available, requeueing")
+		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: scene.Generation,
+			Reason:             reasonTokenNotAvailable,
+			Message:            errMsgTokenNotAvailable,
+		})
+		if statusErr := r.Status().Update(ctx, scene); statusErr != nil {
+			log.Error(statusErr, "Failed to update status")
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	// PUT scene via HA REST API
+	if err := r.reconcileSceneViaAPI(ctx, scene, ha, token); err != nil {
+		log.Error(err, "Failed to PUT scene via HA REST API")
 		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
 			Status:             metav1.ConditionFalse,
 			Reason:             "ReconciliationFailed",
-			Message:            fmt.Sprintf("Failed to create/update scenes ConfigMap: %v", err),
+			Message:            fmt.Sprintf("Failed to PUT scene via HA API: %v", err),
 			ObservedGeneration: scene.Generation,
 		})
 		if statusErr := r.Status().Update(ctx, scene); statusErr != nil {
 			log.Error(statusErr, "Failed to update status")
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	// Perform hot-reload if hash changed OR reload is pending (token was previously unavailable)
@@ -196,130 +236,6 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 	}
 	return ctrl.Result{}, nil
-}
-
-// reconcileScenesConfigMap creates or updates the aggregated
-// scenes.yaml ConfigMap. This ConfigMap contains ALL scenes
-// for a given HomeAssistant instance.
-func (r *HomeAssistantSceneReconciler) reconcileScenesConfigMap(
-	ctx context.Context,
-	scene *hav1alpha1.HomeAssistantScene,
-) error {
-	log := logf.FromContext(ctx)
-
-	configMapName := scene.Spec.HomeAssistantRef.Name + generatedScenesSuffix
-
-	// Fetch all HomeAssistantScene resources for this HomeAssistant instance
-	sceneList := &hav1alpha1.HomeAssistantSceneList{}
-	if err := r.List(ctx, sceneList, client.InNamespace(scene.Namespace)); err != nil {
-		return fmt.Errorf("failed to list HomeAssistantScene resources: %w", err)
-	}
-
-	// Filter scenes for this HomeAssistant instance
-	var scenes []map[string]interface{}
-	for _, sc := range sceneList.Items {
-		if sc.Spec.HomeAssistantRef.Name != scene.Spec.HomeAssistantRef.Name {
-			continue
-		}
-		// Skip scenes being deleted
-		if !sc.DeletionTimestamp.IsZero() {
-			log.Info("Skipping scene being deleted", "name", sc.Name)
-			continue
-		}
-
-		// Convert scene to YAML-compatible map
-		sceneYaml, err := r.sceneToYaml(&sc)
-		if err != nil {
-			log.Error(err, "Failed to convert scene to YAML", "name", sc.Name)
-			continue
-		}
-		scenes = append(scenes, sceneYaml)
-	}
-
-	// Generate scenes.yaml content
-	yamlData, err := yaml.Marshal(scenes)
-	if err != nil {
-		return fmt.Errorf("failed to marshal scenes to YAML: %w", err)
-	}
-
-	// Create or update ConfigMap
-	configMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      configMapName,
-			Namespace: scene.Namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":       "homeassistant",
-				"app.kubernetes.io/instance":   scene.Spec.HomeAssistantRef.Name,
-				"app.kubernetes.io/managed-by": "homeassistant-operator",
-				"app.kubernetes.io/component":  "scenes",
-			},
-		},
-		Data: map[string]string{
-			scenesYamlKey: string(yamlData),
-		},
-	}
-
-	// Get HomeAssistant to set owner reference
-	ha := &hav1alpha1.HomeAssistant{}
-	haRef := types.NamespacedName{Name: scene.Spec.HomeAssistantRef.Name, Namespace: scene.Namespace}
-	if err := r.Get(ctx, haRef, ha); err != nil {
-		// If HA doesn't exist, we can't create/update ConfigMap with proper owner reference
-		// This is expected during cleanup/deletion scenarios
-		if errors.IsNotFound(err) {
-			log.V(1).Info("HomeAssistant not found, skipping ConfigMap reconciliation", "ha", haRef.Name)
-			return nil
-		}
-		return fmt.Errorf("failed to get HomeAssistant: %w", err)
-	}
-
-	// Set owner reference to HomeAssistant (not to individual scene)
-	if err := controllerutil.SetControllerReference(ha, configMap, r.Scheme); err != nil {
-		return fmt.Errorf("failed to set owner reference: %w", err)
-	}
-
-	// Check if ConfigMap exists
-	existingConfigMap := &corev1.ConfigMap{}
-	err = r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: scene.Namespace}, existingConfigMap)
-	if err != nil && errors.IsNotFound(err) {
-		// Create new ConfigMap
-		log.Info("Creating scenes ConfigMap", "name", configMapName)
-		if err := r.Create(ctx, configMap); err != nil {
-			return fmt.Errorf("failed to create ConfigMap: %w", err)
-		}
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("failed to get existing ConfigMap: %w", err)
-	}
-
-	// Compare Data, Labels and OwnerReferences to determine if update is needed
-	needsUpdate := false
-	if !reflect.DeepEqual(existingConfigMap.Data, configMap.Data) {
-		needsUpdate = true
-		log.V(1).Info("ConfigMap Data changed")
-	}
-	if !reflect.DeepEqual(existingConfigMap.Labels, configMap.Labels) {
-		needsUpdate = true
-		log.V(1).Info("ConfigMap Labels changed")
-	}
-	if !reflect.DeepEqual(existingConfigMap.OwnerReferences, configMap.OwnerReferences) {
-		needsUpdate = true
-		log.V(1).Info("ConfigMap OwnerReferences changed")
-	}
-
-	// Only update if something actually changed
-	if needsUpdate {
-		existingConfigMap.Data = configMap.Data
-		existingConfigMap.Labels = configMap.Labels
-		existingConfigMap.OwnerReferences = configMap.OwnerReferences
-		log.Info("Updating scenes ConfigMap", "name", configMapName)
-		if err := r.Update(ctx, existingConfigMap); err != nil {
-			return fmt.Errorf("failed to update ConfigMap: %w", err)
-		}
-	} else {
-		log.V(1).Info("ConfigMap unchanged, skipping update", "name", configMapName)
-	}
-
-	return nil
 }
 
 // sceneToYaml converts HomeAssistantScene CR to YAML-compatible map
@@ -373,6 +289,29 @@ func (r *HomeAssistantSceneReconciler) sceneToYaml(
 	return result, nil
 }
 
+// reconcileSceneViaAPI creates or updates this scene in Home Assistant
+// via REST API (PUT /api/config/scene/config/{id}).
+// HA writes the result to scenes.yaml on the PVC (writable).
+func (r *HomeAssistantSceneReconciler) reconcileSceneViaAPI(
+	ctx context.Context,
+	scene *hav1alpha1.HomeAssistantScene,
+	ha *hav1alpha1.HomeAssistant,
+	token string,
+) error {
+	sceneData, err := r.sceneToYaml(scene)
+	if err != nil {
+		return fmt.Errorf("failed to convert scene to map: %w", err)
+	}
+
+	id := scene.Spec.ID
+	if id == "" {
+		id = scene.Name
+	}
+
+	haClient := r.haClientFor(ha)
+	return haClient.PutScene(ctx, token, id, sceneData)
+}
+
 // performSceneReload triggers hot-reload of scenes via Home Assistant REST API
 //
 // nolint:gocyclo
@@ -415,9 +354,8 @@ func (r *HomeAssistantSceneReconciler) performSceneReload(
 		return nil
 	}
 
-	// Build Home Assistant URL
-	haURL := buildHomeAssistantURL(ha)
-	haClient := haclient.NewClient(haURL)
+	// Build Home Assistant client
+	haClient := r.haClientFor(ha)
 
 	// Use PerformReloadWithRetry with smart detection
 	config := ReloadConfig{
@@ -523,7 +461,6 @@ func (r *HomeAssistantSceneReconciler) calculateSceneHash(
 func (r *HomeAssistantSceneReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hav1alpha1.HomeAssistantScene{}).
-		Owns(&corev1.ConfigMap{}).
 		Watches(
 			&hav1alpha1.HomeAssistant{},
 			handler.EnqueueRequestsFromMapFunc(r.findScenesForHomeAssistant),

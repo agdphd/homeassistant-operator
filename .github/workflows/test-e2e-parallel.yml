@@ -93,6 +93,18 @@ jobs:
             procs: 4
             timeout: 45
 
+          # Script tests - fast path (no bootstrap)
+          - name: script-fast
+            label: "script && fast"
+            procs: 4
+            timeout: 20
+
+          # Script tests - slow path (with bootstrap/hot-reload)
+          - name: script-slow
+            label: "script && slow"
+            procs: 4
+            timeout: 45
+
           # Addon tests - fast path (resource creation, no pod startup)
           - name: addon-fast
             label: "addon && fast"

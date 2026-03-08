@@ -18,6 +18,8 @@ package controller
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -29,10 +31,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
 var _ = Describe("HomeAssistantAutomation Controller", func() {
@@ -43,7 +45,12 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 		interval  = time.Millisecond * 250
 	)
 
-	var reconciler *HomeAssistantAutomationReconciler
+	var (
+		reconciler   *HomeAssistantAutomationReconciler
+		mockServer   *httptest.Server
+		putRequests  chan string
+		delRequests  chan string
+	)
 
 	// Helper to create a test automation CR
 	createTestAutomation := func(
@@ -77,14 +84,12 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 		}
 	}
 
-	// Helper for simple trigger/action raw extensions
 	rawExt := func(data map[string]interface{}) runtime.RawExtension {
 		raw, err := json.Marshal(data)
 		Expect(err).NotTo(HaveOccurred())
 		return runtime.RawExtension{Raw: raw}
 	}
 
-	// Default trigger and action
 	defaultTrigger := func() runtime.RawExtension {
 		return rawExt(map[string]interface{}{"platform": "sun", "event": "sunset"})
 	}
@@ -98,105 +103,131 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 
 	reconcileAutomation := func(name string) (reconcile.Result, error) {
 		return reconciler.Reconcile(ctx, reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Name:      name,
-				Namespace: namespace,
-			},
+			NamespacedName: types.NamespacedName{Name: name, Namespace: namespace},
 		})
 	}
 
-	// reconcileAutomationTwice calls reconcile twice - first for finalizer, second for actual reconciliation
-	// This is needed because after adding finalizer, the reconciler returns early
 	reconcileAutomationTwice := func(name string) error {
-		// First reconcile - adds finalizer
-		_, err := reconcileAutomation(name)
-		if err != nil {
+		if _, err := reconcileAutomation(name); err != nil {
 			return err
 		}
-		// Second reconcile - actual reconciliation
-		_, err = reconcileAutomation(name)
+		_, err := reconcileAutomation(name)
 		return err
 	}
 
+	// Sets up the API token for tests that need a successful PUT
+	setupToken := func() {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      haName + "-api-token",
+				Namespace: namespace,
+			},
+			Data: map[string][]byte{
+				"token": []byte("test-token"),
+			},
+		}
+		Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+		ha := &hav1alpha1.HomeAssistant{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, ha)).To(Succeed())
+		ha.Status.Bootstrap = &hav1alpha1.BootstrapStatus{
+			ApiTokenSecretName: haName + "-api-token",
+		}
+		Expect(k8sClient.Status().Update(ctx, ha)).To(Succeed())
+	}
+
 	BeforeEach(func() {
+		putRequests = make(chan string, 20)
+		delRequests = make(chan string, 20)
+
+		// Start mock HA server
+		mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodPut:
+				// PUT /api/config/automation/config/{id}
+				putRequests <- r.URL.Path
+				w.WriteHeader(http.StatusOK)
+			case r.Method == http.MethodDelete:
+				// DELETE /api/config/automation/config/{id}
+				delRequests <- r.URL.Path
+				w.WriteHeader(http.StatusOK)
+			case r.Method == http.MethodGet && r.URL.Path == "/api/config":
+				// IsComponentLoaded check
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"components":["automation","scene","script"],"version":"2024.1.0"}`))
+			case r.Method == http.MethodPost:
+				// Service calls for hot-reload
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[]`))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+
 		reconciler = &HomeAssistantAutomationReconciler{
 			Client:   k8sClient,
 			Scheme:   k8sClient.Scheme(),
 			Recorder: events.NewFakeRecorder(100),
+			NewHAClient: func(_ string) *haclient.Client {
+				return haclient.NewClient(mockServer.URL)
+			},
 		}
 
-		// Create HomeAssistant resource
 		ha := &hav1alpha1.HomeAssistant{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      haName,
 				Namespace: namespace,
 			},
-			Spec: hav1alpha1.HomeAssistantSpec{
-				Version: "stable",
-			},
+			Spec: hav1alpha1.HomeAssistantSpec{Version: "stable"},
 		}
 		Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 	})
 
 	AfterEach(func() {
-		// Cleanup HomeAssistantAutomation resources first (before HA)
+		// Cleanup automations (trigger finalizer reconcile)
 		autoList := &hav1alpha1.HomeAssistantAutomationList{}
-		_ = k8sClient.List(ctx, autoList, &client.ListOptions{Namespace: namespace})
-		for _, auto := range autoList.Items {
-			autoToDelete := auto // Create a copy for the closure
-			_ = k8sClient.Delete(ctx, &autoToDelete)
-			// Trigger reconcile to handle finalizer cleanup
-			_, _ = reconcileAutomation(autoToDelete.Name)
+		_ = k8sClient.List(ctx, autoList)
+		for i := range autoList.Items {
+			_ = k8sClient.Delete(ctx, &autoList.Items[i])
+			_, _ = reconcileAutomation(autoList.Items[i].Name)
 		}
-
-		// Wait for automations to be fully deleted
 		Eventually(func() int {
-			autoList := &hav1alpha1.HomeAssistantAutomationList{}
-			_ = k8sClient.List(ctx, autoList, &client.ListOptions{Namespace: namespace})
-			return len(autoList.Items)
+			list := &hav1alpha1.HomeAssistantAutomationList{}
+			_ = k8sClient.List(ctx, list)
+			return len(list.Items)
 		}, timeout, interval).Should(Equal(0))
 
-		// Cleanup ConfigMaps
-		cmList := &corev1.ConfigMapList{}
-		_ = k8sClient.List(ctx, cmList, &client.ListOptions{Namespace: namespace})
-		for _, cm := range cmList.Items {
-			_ = k8sClient.Delete(ctx, &cm)
-		}
-
-		// Cleanup Secrets
+		// Cleanup secrets
 		secretList := &corev1.SecretList{}
-		_ = k8sClient.List(ctx, secretList, &client.ListOptions{Namespace: namespace})
-		for _, secret := range secretList.Items {
-			_ = k8sClient.Delete(ctx, &secret)
+		_ = k8sClient.List(ctx, secretList)
+		for i := range secretList.Items {
+			_ = k8sClient.Delete(ctx, &secretList.Items[i])
 		}
 
-		// Cleanup HomeAssistant last (after automations are gone)
+		// Cleanup HAs
 		haList := &hav1alpha1.HomeAssistantList{}
-		_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
-		for _, ha := range haList.Items {
-			_ = k8sClient.Delete(ctx, &ha)
+		_ = k8sClient.List(ctx, haList)
+		for i := range haList.Items {
+			_ = k8sClient.Delete(ctx, &haList.Items[i])
 		}
+
+		mockServer.Close()
 	})
 
 	Context("When validating HomeAssistant reference", func() {
 		It("should set Ready=False when referenced HomeAssistant does not exist", func() {
-			By("Creating an automation referencing non-existent HA")
-			auto := createTestAutomation("auto-no-ha", "non-existent-ha", "Test Auto",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
+			auto := createTestAutomation("auto-no-ha", "non-existent-ha", "Test",
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
-			By("Reconciling the resource")
-			// First reconcile - adds finalizer
+			// First reconcile adds finalizer
 			_, err := reconcileAutomation("auto-no-ha")
 			Expect(err).NotTo(HaveOccurred())
-			// Second reconcile - validates HA ref and sets RequeueAfter
+			// Second reconcile validates HA ref
 			result, err := reconcileAutomation("auto-no-ha")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(5 * time.Second))
 
-			By("Verifying status is Ready=False with InvalidAutomation reason")
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-no-ha", Namespace: namespace}, updated)).To(Succeed())
@@ -204,452 +235,126 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 				g.Expect(condition).NotTo(BeNil())
 				g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
 				g.Expect(condition.Reason).To(Equal(reasonInvalidAutomation))
-				g.Expect(condition.Message).To(ContainSubstring("not found"))
 			}, timeout, interval).Should(Succeed())
 		})
+	})
 
-		It("should set Ready=True when HomeAssistant exists", func() {
-			By("Creating an automation referencing existing HA")
-			auto := createTestAutomation("auto-with-ha", haName, "Test Auto",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
+	Context("When API token not available", func() {
+		It("should requeue 30s without setting Ready=True", func() {
+			// No token set up — ha.Status.Bootstrap is nil
+			auto := createTestAutomation("auto-no-token", haName, "No Token",
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
-			By("Reconciling the resource")
-			Expect(reconcileAutomationTwice("auto-with-ha")).To(Succeed())
+			// First reconcile adds finalizer
+			_, err := reconcileAutomation("auto-no-token")
+			Expect(err).NotTo(HaveOccurred())
+			// Second reconcile hits token check
+			result, err := reconcileAutomation("auto-no-token")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
-			By("Verifying status is Ready=True")
+			// Ready condition should NOT be True
+			Consistently(func(g Gomega) {
+				updated := &hav1alpha1.HomeAssistantAutomation{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-no-token", Namespace: namespace}, updated)).To(Succeed())
+				condition := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(condition).To(Or(BeNil(), WithTransform(
+					func(c *metav1.Condition) metav1.ConditionStatus { return c.Status },
+					Equal(metav1.ConditionFalse),
+				)))
+			}, time.Second*2, interval).Should(Succeed())
+		})
+	})
+
+	Context("When PUT succeeds (with mock HA server)", func() {
+		BeforeEach(func() {
+			setupToken()
+		})
+
+		It("should set Ready=True after successful reconcile", func() {
+			auto := createTestAutomation("auto-ready", haName, "Sunset Lights",
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
+			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
+			Expect(reconcileAutomationTwice("auto-ready")).To(Succeed())
+
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(
-					ctx,
-					types.NamespacedName{Name: "auto-with-ha", Namespace: namespace},
-					updated,
-				)).To(Succeed())
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-ready", Namespace: namespace}, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
 				g.Expect(condition).NotTo(BeNil())
 				g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
 				g.Expect(condition.Reason).To(Equal(reasonAutomationGenerated))
 			}, timeout, interval).Should(Succeed())
 		})
-	})
 
-	Context("When generating ConfigMap (aggregation)", func() {
-		It("should create ConfigMap with a single automation", func() {
-			By("Creating one automation")
-			auto := createTestAutomation("auto-single", haName, "Sunset Lights",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
+		It("should set AutomationHash in status", func() {
+			auto := createTestAutomation("auto-hash", haName, "Hash Test",
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
+			Expect(reconcileAutomationTwice("auto-hash")).To(Succeed())
 
-			By("Reconciling")
-			Expect(reconcileAutomationTwice("auto-single")).To(Succeed())
-
-			By("Verifying ConfigMap was created with automation content")
 			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.Data).To(HaveKey("automations.yaml"))
-				yamlContent := cm.Data["automations.yaml"]
-				g.Expect(yamlContent).To(ContainSubstring("alias: Sunset Lights"))
-				g.Expect(yamlContent).To(ContainSubstring("platform: sun"))
-				g.Expect(yamlContent).To(ContainSubstring("light.turn_on"))
-			}, timeout, interval).Should(Succeed())
-		})
-
-		It("should aggregate two automations into one ConfigMap", func() {
-			By("Creating first automation")
-			auto1 := createTestAutomation("auto-agg-1", haName, "Sunrise Lights",
-				[]runtime.RawExtension{rawExt(map[string]interface{}{"platform": "sun", "event": "sunrise"})},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			Expect(k8sClient.Create(ctx, auto1)).To(Succeed())
-
-			By("Creating second automation")
-			auto2 := createTestAutomation("auto-agg-2", haName, "Motion Sensor",
-				[]runtime.RawExtension{rawExt(map[string]interface{}{
-					"platform": "state", "entity_id": "binary_sensor.motion",
-				})},
-				[]runtime.RawExtension{rawExt(map[string]interface{}{
-					"service": "notify.notify",
-					"data":    map[string]interface{}{"message": "Motion detected"},
-				})},
-			)
-			Expect(k8sClient.Create(ctx, auto2)).To(Succeed())
-
-			By("Reconciling both automations")
-			Expect(reconcileAutomationTwice("auto-agg-1")).To(Succeed())
-			Expect(reconcileAutomationTwice("auto-agg-2")).To(Succeed())
-
-			By("Verifying ConfigMap contains both automations")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				yamlContent := cm.Data["automations.yaml"]
-				g.Expect(yamlContent).To(ContainSubstring("Sunrise Lights"))
-				g.Expect(yamlContent).To(ContainSubstring("Motion Sensor"))
-			}, timeout, interval).Should(Succeed())
-		})
-
-		It("should skip disabled automations in ConfigMap", func() {
-			By("Creating an enabled automation")
-			auto1 := createTestAutomation("auto-enabled", haName, "Enabled Auto",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			Expect(k8sClient.Create(ctx, auto1)).To(Succeed())
-
-			By("Creating a disabled automation")
-			auto2 := createTestAutomation("auto-disabled", haName, "Disabled Auto",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			auto2.Spec.Enabled = ptr.To(false)
-			Expect(k8sClient.Create(ctx, auto2)).To(Succeed())
-
-			By("Reconciling both")
-			Expect(reconcileAutomationTwice("auto-enabled")).To(Succeed())
-			Expect(reconcileAutomationTwice("auto-disabled")).To(Succeed())
-
-			By("Verifying ConfigMap contains only the enabled automation")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				yamlContent := cm.Data["automations.yaml"]
-				g.Expect(yamlContent).To(ContainSubstring("Enabled Auto"))
-				g.Expect(yamlContent).NotTo(ContainSubstring("Disabled Auto"))
-			}, timeout, interval).Should(Succeed())
-		})
-
-		It("should update ConfigMap when automation spec changes (two-phase)", func() {
-			By("Creating an automation")
-			auto := createTestAutomation("auto-update", haName, "Original Alias",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
-
-			By("Reconciling (phase 1)")
-			Expect(reconcileAutomationTwice("auto-update")).To(Succeed())
-
-			By("Capturing initial ConfigMap content")
-			var initialContent string
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				initialContent = cm.Data["automations.yaml"]
-				g.Expect(initialContent).To(ContainSubstring("Original Alias"))
-			}, timeout, interval).Should(Succeed())
-
-			By("Updating the automation alias")
-			Eventually(func() error {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "auto-update", Namespace: namespace}, updated); err != nil {
-					return err
-				}
-				updated.Spec.Alias = "Updated Alias"
-				return k8sClient.Update(ctx, updated)
-			}, timeout, interval).Should(Succeed())
-
-			By("Reconciling (phase 2)")
-			Expect(reconcileAutomationTwice("auto-update")).To(Succeed())
-
-			By("Verifying ConfigMap content changed")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.Data["automations.yaml"]).To(ContainSubstring("Updated Alias"))
-				g.Expect(cm.Data["automations.yaml"]).NotTo(ContainSubstring("Original Alias"))
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-hash", Namespace: namespace}, updated)).To(Succeed())
+				g.Expect(updated.Status.AutomationHash).NotTo(BeEmpty())
 			}, timeout, interval).Should(Succeed())
 		})
 
-		It("should set owner reference to HomeAssistant on ConfigMap", func() {
-			By("Creating an automation")
-			auto := createTestAutomation("auto-owner", haName, "Owner Test",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
+		It("should set ObservedGeneration matching metadata.generation", func() {
+			auto := createTestAutomation("auto-obsgen", haName, "ObsGen",
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
+			Expect(reconcileAutomationTwice("auto-obsgen")).To(Succeed())
 
-			By("Reconciling")
-			Expect(reconcileAutomationTwice("auto-owner")).To(Succeed())
-
-			By("Verifying owner reference points to HomeAssistant")
 			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.OwnerReferences).To(HaveLen(1))
-				g.Expect(cm.OwnerReferences[0].Kind).To(Equal("HomeAssistant"))
-				g.Expect(cm.OwnerReferences[0].Name).To(Equal(haName))
+				updated := &hav1alpha1.HomeAssistantAutomation{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-obsgen", Namespace: namespace}, updated)).To(Succeed())
+				g.Expect(updated.Status.ObservedGeneration).To(Equal(updated.Generation))
 			}, timeout, interval).Should(Succeed())
 		})
 
-		It("should auto-generate ID from CR name when spec.id is not set", func() {
-			By("Creating an automation without explicit ID")
-			auto := createTestAutomation("my-sunset-automation", haName, "Sunset Lights",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
+		It("should produce stable hash on repeated reconciles", func() {
+			auto := createTestAutomation("auto-stable-hash", haName, "Stable",
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
-
-			By("Reconciling")
-			Expect(reconcileAutomationTwice("my-sunset-automation")).To(Succeed())
-
-			By("Verifying ID in ConfigMap equals CR name")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.Data["automations.yaml"]).To(ContainSubstring("id: my-sunset-automation"))
-			}, timeout, interval).Should(Succeed())
-		})
-
-		It("should use explicit spec.id when set", func() {
-			By("Creating an automation with explicit ID")
-			auto := createTestAutomation("auto-explicit-id", haName, "Custom ID Auto",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			auto.Spec.ID = "custom-automation-id"
-			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
-
-			By("Reconciling")
-			Expect(reconcileAutomationTwice("auto-explicit-id")).To(Succeed())
-
-			By("Verifying ID in ConfigMap uses explicit ID")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.Data["automations.yaml"]).To(ContainSubstring("id: custom-automation-id"))
-				g.Expect(cm.Data["automations.yaml"]).NotTo(ContainSubstring("id: auto-explicit-id"))
-			}, timeout, interval).Should(Succeed())
-		})
-	})
-
-	Context("When converting automationToYaml", func() {
-		It("should correctly convert triggers, conditions, and actions", func() {
-			By("Creating automation with trigger, condition, and action")
-			auto := createTestAutomation("auto-full", haName, "Full Auto",
-				[]runtime.RawExtension{
-					rawExt(map[string]interface{}{
-						"platform": "sun", "event": "sunset", "offset": "-00:30:00",
-					}),
-				},
-				[]runtime.RawExtension{
-					rawExt(map[string]interface{}{
-						"service": "light.turn_on",
-						"target":  map[string]interface{}{"entity_id": "light.porch"},
-					}),
-				},
-			)
-			auto.Spec.Conditions = []hav1alpha1.AutomationCondition{
-				{RawExtension: rawExt(map[string]interface{}{
-					"condition": "state",
-					"entity_id": "input_boolean.guest_mode",
-					"state":     "on",
-				})},
-			}
-			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
-
-			By("Reconciling")
-			Expect(reconcileAutomationTwice("auto-full")).To(Succeed())
-
-			By("Verifying all sections are present in ConfigMap")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				yamlContent := cm.Data["automations.yaml"]
-				g.Expect(yamlContent).To(ContainSubstring("trigger:"))
-				g.Expect(yamlContent).To(ContainSubstring("platform: sun"))
-				g.Expect(yamlContent).To(ContainSubstring("condition:"))
-				g.Expect(yamlContent).To(ContainSubstring("input_boolean.guest_mode"))
-				g.Expect(yamlContent).To(ContainSubstring("action:"))
-				g.Expect(yamlContent).To(ContainSubstring("light.turn_on"))
-			}, timeout, interval).Should(Succeed())
-		})
-
-		It("should omit conditions key when no conditions specified", func() {
-			By("Creating automation without conditions")
-			auto := createTestAutomation("auto-no-cond", haName, "No Conditions",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
-
-			By("Reconciling")
-			Expect(reconcileAutomationTwice("auto-no-cond")).To(Succeed())
-
-			By("Verifying conditions key is absent")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				yamlContent := cm.Data["automations.yaml"]
-				g.Expect(yamlContent).NotTo(ContainSubstring("conditions:"))
-			}, timeout, interval).Should(Succeed())
-		})
-
-		It("should map Go field names to Home Assistant format", func() {
-			By("Creating automation with maxExceeded and initialState")
-			auto := createTestAutomation("auto-field-map", haName, "Field Mapping",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			auto.Spec.MaxExceeded = "error"
-			auto.Spec.InitialState = ptr.To(true)
-			auto.Spec.Mode = hav1alpha1.AutomationModeParallel
-			max := int32(5)
-			auto.Spec.Max = &max
-			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
-
-			By("Reconciling")
-			Expect(reconcileAutomationTwice("auto-field-map")).To(Succeed())
-
-			By("Verifying snake_case field names in YAML")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				yamlContent := cm.Data["automations.yaml"]
-				g.Expect(yamlContent).To(ContainSubstring("max_exceeded: error"))
-				g.Expect(yamlContent).To(ContainSubstring("initial_state: true"))
-				g.Expect(yamlContent).To(ContainSubstring("mode: parallel"))
-				g.Expect(yamlContent).To(ContainSubstring("max: 5"))
-			}, timeout, interval).Should(Succeed())
-		})
-
-		It("should omit optional fields when not set and include kubebuilder defaults", func() {
-			By("Creating automation with minimal fields")
-			auto := createTestAutomation("auto-minimal", haName, "Minimal Auto",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			// No description, initialState explicitly set
-			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
-
-			By("Reconciling")
-			Expect(reconcileAutomationTwice("auto-minimal")).To(Succeed())
-
-			By("Verifying truly optional fields are absent and kubebuilder defaults are present")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				yamlContent := cm.Data["automations.yaml"]
-				// Truly optional - no kubebuilder default
-				g.Expect(yamlContent).NotTo(ContainSubstring("description:"))
-				g.Expect(yamlContent).NotTo(ContainSubstring("initial_state:"))
-				// Kubebuilder defaults are applied by API server
-				g.Expect(yamlContent).To(ContainSubstring("mode: single"))
-				g.Expect(yamlContent).To(ContainSubstring("max_exceeded: warning"))
-				g.Expect(yamlContent).To(ContainSubstring("max: 10"))
-			}, timeout, interval).Should(Succeed())
-		})
-	})
-
-	Context("When tracking hash and change detection", func() {
-		It("should produce a stable hash for the same spec (idempotent)", func() {
-			By("Creating an automation")
-			auto := createTestAutomation("auto-hash-stable", haName, "Stable Hash",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
-
-			By("Reconciling twice")
-			Expect(reconcileAutomationTwice("auto-hash-stable")).To(Succeed())
+			Expect(reconcileAutomationTwice("auto-stable-hash")).To(Succeed())
 
 			var firstHash string
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(
-					ctx,
-					types.NamespacedName{Name: "auto-hash-stable", Namespace: namespace},
-					updated,
-				)).To(Succeed())
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-stable-hash", Namespace: namespace}, updated)).To(Succeed())
 				firstHash = updated.Status.AutomationHash
 				g.Expect(firstHash).NotTo(BeEmpty())
 			}, timeout, interval).Should(Succeed())
 
-			Expect(reconcileAutomationTwice("auto-hash-stable")).To(Succeed())
+			Expect(reconcileAutomationTwice("auto-stable-hash")).To(Succeed())
 
-			By("Verifying hash did not change")
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(
-					ctx,
-					types.NamespacedName{Name: "auto-hash-stable", Namespace: namespace},
-					updated,
-				)).To(Succeed())
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-stable-hash", Namespace: namespace}, updated)).To(Succeed())
 				g.Expect(updated.Status.AutomationHash).To(Equal(firstHash))
 			}, timeout, interval).Should(Succeed())
 		})
 
 		It("should change hash when triggers change", func() {
-			By("Creating an automation")
 			auto := createTestAutomation("auto-hash-change", haName, "Hash Change",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
-
-			By("Reconciling (phase 1)")
 			Expect(reconcileAutomationTwice("auto-hash-change")).To(Succeed())
 
 			var initialHash string
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(
-					ctx,
-					types.NamespacedName{Name: "auto-hash-change", Namespace: namespace},
-					updated,
-				)).To(Succeed())
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}, updated)).To(Succeed())
 				initialHash = updated.Status.AutomationHash
 				g.Expect(initialHash).NotTo(BeEmpty())
 			}, timeout, interval).Should(Succeed())
 
-			By("Updating triggers")
+			// Update triggers
 			Eventually(func() error {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				if err := k8sClient.Get(
-					ctx,
-					types.NamespacedName{Name: "auto-hash-change", Namespace: namespace},
-					updated,
-				); err != nil {
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}, updated); err != nil {
 					return err
 				}
 				updated.Spec.Triggers = []hav1alpha1.AutomationTrigger{
@@ -658,422 +363,154 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 				return k8sClient.Update(ctx, updated)
 			}, timeout, interval).Should(Succeed())
 
-			By("Reconciling (phase 2)")
 			Expect(reconcileAutomationTwice("auto-hash-change")).To(Succeed())
 
-			By("Verifying hash changed")
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(
-					ctx,
-					types.NamespacedName{Name: "auto-hash-change", Namespace: namespace},
-					updated,
-				)).To(Succeed())
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}, updated)).To(Succeed())
 				g.Expect(updated.Status.AutomationHash).NotTo(Equal(initialHash))
 			}, timeout, interval).Should(Succeed())
 		})
-	})
 
-	Context("When handling hot-reload (autoReload)", func() {
-		It("should skip reload when autoReload is disabled", func() {
-			By("Creating an automation with autoReload=false")
-			auto := createTestAutomation("auto-no-reload", haName, "No Reload",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			auto.Spec.AutoReload = ptr.To(false)
+		It("should call PutAutomation via HA API on reconcile", func() {
+			auto := createTestAutomation("auto-put-check", haName, "PUT Check",
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
+			Expect(reconcileAutomationTwice("auto-put-check")).To(Succeed())
 
-			By("Reconciling")
-			Expect(reconcileAutomationTwice("auto-no-reload")).To(Succeed())
-
-			By("Verifying no lastReloadTime and no lastError")
-			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(
-					ctx,
-					types.NamespacedName{Name: "auto-no-reload", Namespace: namespace},
-					updated,
-				)).To(Succeed())
-				g.Expect(updated.Status.LastReloadTime).To(BeNil())
-				g.Expect(updated.Status.LastError).To(BeEmpty())
-				condition := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
-				g.Expect(condition).NotTo(BeNil())
-				g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
-			}, timeout, interval).Should(Succeed())
+			Eventually(putRequests, timeout, interval).Should(Receive(ContainSubstring("auto-put-check")))
 		})
 
-		It("should gracefully handle missing API token", func() {
-			By("Creating an automation with autoReload=true (default)")
-			auto := createTestAutomation("auto-no-token", haName, "No Token",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
+		It("should call DeleteAutomation via HA API when resource deleted", func() {
+			auto := createTestAutomation("auto-del-api", haName, "Delete API",
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
 			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
+			Expect(reconcileAutomationTwice("auto-del-api")).To(Succeed())
 
-			By("Reconciling (no API token secret exists)")
-			Expect(reconcileAutomationTwice("auto-no-token")).To(Succeed())
-
-			By("Verifying graceful skip with lastError set")
-			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(
-					ctx,
-					types.NamespacedName{Name: "auto-no-token", Namespace: namespace},
-					updated,
-				)).To(Succeed())
-				g.Expect(updated.Status.LastError).To(ContainSubstring("API token"))
-				// Should still be Ready since reload failure is graceful
-				condition := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
-				g.Expect(condition).NotTo(BeNil())
-				g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))
-			}, timeout, interval).Should(Succeed())
-		})
-	})
-
-	Context("When verifying idempotency", func() {
-		It("should not update ConfigMap on repeated reconciles without changes", func() {
-			By("Creating an automation")
-			auto := createTestAutomation("auto-idempotent", haName, "Idempotent Auto",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
-
-			By("Reconciling initially")
-			Expect(reconcileAutomationTwice("auto-idempotent")).To(Succeed())
-
-			By("Capturing initial ConfigMap resourceVersion")
-			var initialVersion string
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				initialVersion = cm.ResourceVersion
-				g.Expect(initialVersion).NotTo(BeEmpty())
-			}, timeout, interval).Should(Succeed())
-
-			By("Reconciling multiple times")
-			for i := 0; i < 3; i++ {
-				Expect(reconcileAutomationTwice("auto-idempotent")).To(Succeed())
-			}
-
-			By("Verifying ConfigMap resourceVersion did not change")
-			Consistently(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.ResourceVersion).To(Equal(initialVersion))
-			}, time.Second*2, interval).Should(Succeed())
-		})
-	})
-
-	Context("When deleting and toggling automations", func() {
-		It("should remove deleted automation from ConfigMap", func() {
-			By("Creating two automations")
-			auto1 := createTestAutomation("auto-del-1", haName, "First Auto",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			auto2 := createTestAutomation("auto-del-2", haName, "Second Auto",
-				[]runtime.RawExtension{rawExt(map[string]interface{}{"platform": "time", "at": "12:00:00"})},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			Expect(k8sClient.Create(ctx, auto1)).To(Succeed())
-			Expect(k8sClient.Create(ctx, auto2)).To(Succeed())
-
-			By("Reconciling both")
-			Expect(reconcileAutomationTwice("auto-del-1")).To(Succeed())
-			Expect(reconcileAutomationTwice("auto-del-2")).To(Succeed())
-
-			By("Verifying both are in ConfigMap")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.Data["automations.yaml"]).To(ContainSubstring("First Auto"))
-				g.Expect(cm.Data["automations.yaml"]).To(ContainSubstring("Second Auto"))
-			}, timeout, interval).Should(Succeed())
-
-			By("Deleting first automation")
+			// Delete the CR
 			toDelete := &hav1alpha1.HomeAssistantAutomation{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-del-1", Namespace: namespace}, toDelete)).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-del-api", Namespace: namespace}, toDelete)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, toDelete)).To(Succeed())
 
-			By("Reconciling to handle finalizer cleanup")
-			Expect(reconcileAutomationTwice("auto-del-1")).To(Succeed())
+			// Reconcile to trigger finalizer
+			_, _ = reconcileAutomation("auto-del-api")
 
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{Name: "auto-del-1", Namespace: namespace}, toDelete)
-				return err != nil
-			}, timeout, interval).Should(BeTrue())
-
-			By("Reconciling remaining automation")
-			Expect(reconcileAutomationTwice("auto-del-2")).To(Succeed())
-
-			By("Verifying ConfigMap contains only the remaining automation")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.Data["automations.yaml"]).NotTo(ContainSubstring("First Auto"))
-				g.Expect(cm.Data["automations.yaml"]).To(ContainSubstring("Second Auto"))
-			}, timeout, interval).Should(Succeed())
-		})
-
-		It("should add automation back when toggled from disabled to enabled", func() {
-			By("Creating a disabled automation")
-			auto := createTestAutomation("auto-toggle", haName, "Toggle Auto",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			auto.Spec.Enabled = ptr.To(false)
-			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
-
-			By("Reconciling (disabled)")
-			Expect(reconcileAutomationTwice("auto-toggle")).To(Succeed())
-
-			By("Verifying automation is not in ConfigMap")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.Data["automations.yaml"]).NotTo(ContainSubstring("Toggle Auto"))
-			}, timeout, interval).Should(Succeed())
-
-			By("Enabling the automation")
-			Eventually(func() error {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
-				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "auto-toggle", Namespace: namespace}, updated); err != nil {
-					return err
-				}
-				updated.Spec.Enabled = ptr.To(true)
-				return k8sClient.Update(ctx, updated)
-			}, timeout, interval).Should(Succeed())
-
-			By("Reconciling (enabled)")
-			Expect(reconcileAutomationTwice("auto-toggle")).To(Succeed())
-
-			By("Verifying automation is now in ConfigMap")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.Data["automations.yaml"]).To(ContainSubstring("Toggle Auto"))
-			}, timeout, interval).Should(Succeed())
-		})
-
-		It("should remove automation from ConfigMap when toggled from enabled to disabled", func() {
-			By("Creating an enabled automation")
-			auto := createTestAutomation("auto-disable", haName, "Disable Me",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
-
-			By("Reconciling (enabled)")
-			Expect(reconcileAutomationTwice("auto-disable")).To(Succeed())
-
-			By("Verifying automation is in ConfigMap")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.Data["automations.yaml"]).To(ContainSubstring("Disable Me"))
-			}, timeout, interval).Should(Succeed())
-
-			By("Disabling the automation")
-			Eventually(func() error {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
-				if err := k8sClient.Get(
-					ctx,
-					types.NamespacedName{Name: "auto-disable", Namespace: namespace},
-					updated,
-				); err != nil {
-					return err
-				}
-				updated.Spec.Enabled = ptr.To(false)
-				return k8sClient.Update(ctx, updated)
-			}, timeout, interval).Should(Succeed())
-
-			By("Reconciling (disabled)")
-			Expect(reconcileAutomationTwice("auto-disable")).To(Succeed())
-
-			By("Verifying automation is no longer in ConfigMap")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.Data["automations.yaml"]).NotTo(ContainSubstring("Disable Me"))
-			}, timeout, interval).Should(Succeed())
+			Eventually(delRequests, timeout, interval).Should(Receive(ContainSubstring("auto-del-api")))
 		})
 	})
 
-	Context("When updating status conditions", func() {
-		It("should set ObservedGeneration matching metadata.generation", func() {
-			By("Creating an automation")
-			auto := createTestAutomation("auto-obsgen", haName, "ObsGen Test",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
+	Context("When PUT fails (server returns error)", func() {
+		It("should set Ready=False and requeue 30s", func() {
+			// Create a server that returns 500
+			failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"message": "internal error"}`))
+			}))
+			defer failServer.Close()
 
-			By("Reconciling")
-			Expect(reconcileAutomationTwice("auto-obsgen")).To(Succeed())
-
-			By("Verifying ObservedGeneration")
-			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-obsgen", Namespace: namespace}, updated)).To(Succeed())
-				g.Expect(updated.Status.ObservedGeneration).To(Equal(updated.Generation))
-			}, timeout, interval).Should(Succeed())
-		})
-
-		It("should set AutomationHash in status after reconcile", func() {
-			By("Creating an automation")
-			auto := createTestAutomation("auto-status-hash", haName, "Status Hash",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
-
-			By("Reconciling")
-			Expect(reconcileAutomationTwice("auto-status-hash")).To(Succeed())
-
-			By("Verifying AutomationHash is set in status")
-			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
-				g.Expect(k8sClient.Get(
-					ctx,
-					types.NamespacedName{Name: "auto-status-hash", Namespace: namespace},
-					updated,
-				)).To(Succeed())
-				g.Expect(updated.Status.AutomationHash).NotTo(BeEmpty())
-			}, timeout, interval).Should(Succeed())
-		})
-	})
-
-	Context("When handling multiple HomeAssistant instances", func() {
-		It("should isolate automations between different HA instances", func() {
-			By("Creating a second HomeAssistant")
-			ha2 := &hav1alpha1.HomeAssistant{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-ha-auto-2",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSpec{
-					Version: "stable",
-				},
+			reconciler.NewHAClient = func(_ string) *haclient.Client {
+				return haclient.NewClient(failServer.URL)
 			}
-			Expect(k8sClient.Create(ctx, ha2)).To(Succeed())
 
-			By("Creating automation for HA 1")
-			auto1 := createTestAutomation("auto-iso-1", haName, "HA1 Automation",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			Expect(k8sClient.Create(ctx, auto1)).To(Succeed())
+			setupToken()
 
-			By("Creating automation for HA 2")
-			auto2 := createTestAutomation("auto-iso-2", "test-ha-auto-2", "HA2 Automation",
-				[]runtime.RawExtension{rawExt(map[string]interface{}{"platform": "time", "at": "08:00:00"})},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			Expect(k8sClient.Create(ctx, auto2)).To(Succeed())
+			auto := createTestAutomation("auto-put-fail", haName, "PUT Fail",
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
+			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
 
-			By("Reconciling both")
-			Expect(reconcileAutomationTwice("auto-iso-1")).To(Succeed())
-			Expect(reconcileAutomationTwice("auto-iso-2")).To(Succeed())
+			// First reconcile: finalizer
+			_, err := reconcileAutomation("auto-put-fail")
+			Expect(err).NotTo(HaveOccurred())
+			// Second reconcile: PUT fails
+			result, err := reconcileAutomation("auto-put-fail")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
-			By("Verifying HA1 ConfigMap contains only HA1 automation")
 			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.Data["automations.yaml"]).To(ContainSubstring("HA1 Automation"))
-				g.Expect(cm.Data["automations.yaml"]).NotTo(ContainSubstring("HA2 Automation"))
-			}, timeout, interval).Should(Succeed())
-
-			By("Verifying HA2 ConfigMap contains only HA2 automation")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-ha-auto-2-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.Data["automations.yaml"]).To(ContainSubstring("HA2 Automation"))
-				g.Expect(cm.Data["automations.yaml"]).NotTo(ContainSubstring("HA1 Automation"))
+				updated := &hav1alpha1.HomeAssistantAutomation{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-put-fail", Namespace: namespace}, updated)).To(Succeed())
+				condition := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
+				g.Expect(condition).NotTo(BeNil())
+				g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
 			}, timeout, interval).Should(Succeed())
 		})
 	})
 
-	Context("When description is provided", func() {
-		It("should include description in YAML output", func() {
-			By("Creating automation with description")
-			auto := createTestAutomation("auto-desc", haName, "Described Auto",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
+	Context("When converting automationToYaml", func() {
+		It("should convert triggers, conditions, and actions correctly", func() {
+			auto := createTestAutomation("auto-yaml", haName, "Full Auto",
+				[]runtime.RawExtension{
+					rawExt(map[string]interface{}{"platform": "sun", "event": "sunset"}),
+				},
+				[]runtime.RawExtension{
+					rawExt(map[string]interface{}{"service": "light.turn_on", "target": map[string]interface{}{"entity_id": "light.porch"}}),
+				},
 			)
-			auto.Spec.Description = "This automation turns on lights at sunset"
-			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
+			auto.Spec.Conditions = []hav1alpha1.AutomationCondition{
+				{RawExtension: rawExt(map[string]interface{}{"condition": "state", "entity_id": "input_boolean.guest_mode", "state": "on"})},
+			}
 
-			By("Reconciling")
-			Expect(reconcileAutomationTwice("auto-desc")).To(Succeed())
-
-			By("Verifying description is in ConfigMap")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.Data["automations.yaml"]).To(ContainSubstring("description: This automation turns on lights at sunset"))
-			}, timeout, interval).Should(Succeed())
+			yamlMap, err := reconciler.automationToYaml(auto)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(yamlMap).To(HaveKey("trigger"))
+			Expect(yamlMap).To(HaveKey("condition"))
+			Expect(yamlMap).To(HaveKey("action"))
+			Expect(yamlMap["alias"]).To(Equal("Full Auto"))
 		})
-	})
 
-	Context("When ConfigMap labels are set", func() {
-		It("should set standard operator labels on ConfigMap", func() {
-			By("Creating an automation")
-			auto := createTestAutomation("auto-labels", haName, "Labels Test",
-				[]runtime.RawExtension{defaultTrigger()},
-				[]runtime.RawExtension{defaultAction()},
-			)
-			Expect(k8sClient.Create(ctx, auto)).To(Succeed())
+		It("should auto-generate ID from CR name when spec.id is not set", func() {
+			auto := createTestAutomation("my-sunset-automation", haName, "Sunset",
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
 
-			By("Reconciling")
-			Expect(reconcileAutomationTwice("auto-labels")).To(Succeed())
+			yamlMap, err := reconciler.automationToYaml(auto)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(yamlMap["id"]).To(Equal("my-sunset-automation"))
+		})
 
-			By("Verifying labels")
-			Eventually(func(g Gomega) {
-				cm := &corev1.ConfigMap{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
-					Name:      haName + "-automations",
-					Namespace: namespace,
-				}, cm)).To(Succeed())
-				g.Expect(cm.Labels).To(HaveKeyWithValue("app.kubernetes.io/name", "homeassistant"))
-				g.Expect(cm.Labels).To(HaveKeyWithValue("app.kubernetes.io/instance", haName))
-				g.Expect(cm.Labels).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "homeassistant-operator"))
-				g.Expect(cm.Labels).To(HaveKeyWithValue("app.kubernetes.io/component", "automations"))
-			}, timeout, interval).Should(Succeed())
+		It("should use explicit spec.id when set", func() {
+			auto := createTestAutomation("auto-explicit-id", haName, "Custom ID",
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
+			auto.Spec.ID = "custom-automation-id"
+
+			yamlMap, err := reconciler.automationToYaml(auto)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(yamlMap["id"]).To(Equal("custom-automation-id"))
+		})
+
+		It("should map Go field names to HA format (maxExceeded, initialState, mode)", func() {
+			auto := createTestAutomation("auto-fields", haName, "Field Map",
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
+			auto.Spec.MaxExceeded = "error"
+			auto.Spec.InitialState = ptr.To(true)
+			auto.Spec.Mode = hav1alpha1.AutomationModeParallel
+			max := int32(5)
+			auto.Spec.Max = &max
+
+			yamlMap, err := reconciler.automationToYaml(auto)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(yamlMap["max_exceeded"]).To(Equal("error"))
+			Expect(yamlMap["initial_state"]).To(Equal(true))
+			Expect(yamlMap["mode"]).To(Equal("parallel"))
+			Expect(yamlMap["max"]).To(Equal(int32(5)))
+		})
+
+		It("should include description when provided", func() {
+			auto := createTestAutomation("auto-desc", haName, "Described",
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
+			auto.Spec.Description = "Turns on lights at sunset"
+
+			yamlMap, err := reconciler.automationToYaml(auto)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(yamlMap["description"]).To(Equal("Turns on lights at sunset"))
+		})
+
+		It("should omit conditions key when no conditions specified", func() {
+			auto := createTestAutomation("auto-no-cond", haName, "No Cond",
+				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
+
+			yamlMap, err := reconciler.automationToYaml(auto)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(yamlMap).NotTo(HaveKey("condition"))
 		})
 	})
 })
