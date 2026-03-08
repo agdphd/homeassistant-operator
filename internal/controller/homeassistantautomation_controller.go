@@ -206,6 +206,13 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 			Message:            fmt.Sprintf("Failed to POST automation via HA API: %v", err),
 			ObservedGeneration: automation.Generation,
 		})
+		meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionFalse,
+			Reason:             "ReconciliationFailed",
+			Message:            fmt.Sprintf("Failed to POST automation via HA API: %v", err),
+			ObservedGeneration: automation.Generation,
+		})
 		if statusErr := r.Status().Update(ctx, automation); statusErr != nil {
 			log.Error(statusErr, "Failed to update status")
 		}
@@ -349,7 +356,7 @@ func (r *HomeAssistantAutomationReconciler) automationToYaml(
 }
 
 // reconcileAutomationViaAPI creates or updates this automation in Home Assistant
-// via REST API (PUT /api/config/automation/config/{id}).
+// via REST API (POST /api/config/automation/config/{id}).
 // HA writes the result to automations.yaml on the PVC (writable).
 func (r *HomeAssistantAutomationReconciler) reconcileAutomationViaAPI(
 	ctx context.Context,
@@ -357,6 +364,8 @@ func (r *HomeAssistantAutomationReconciler) reconcileAutomationViaAPI(
 	ha *hav1alpha1.HomeAssistant,
 	token string,
 ) error {
+	log := logf.FromContext(ctx)
+
 	automationData, err := r.automationToYaml(automation)
 	if err != nil {
 		return fmt.Errorf("failed to convert automation to map: %w", err)
@@ -371,7 +380,45 @@ func (r *HomeAssistantAutomationReconciler) reconcileAutomationViaAPI(
 	}
 
 	haClient := r.haClientFor(ha)
-	return haClient.PutAutomation(ctx, token, id, automationData)
+
+	// If spec.id was renamed, delete the old automation from HA to avoid orphans.
+	prevID := automation.Annotations[lastAppliedIDAnnotationKey]
+	if prevID != "" && prevID != id {
+		if delErr := haClient.DeleteAutomation(ctx, token, prevID); delErr != nil {
+			log.Error(delErr, "Failed to delete old automation ID from HA (continuing)", "prevID", prevID)
+		}
+	}
+
+	if err := haClient.PutAutomation(ctx, token, id, automationData); err != nil {
+		return err
+	}
+
+	// Persist the applied ID so future reconciles can detect renames.
+	orig := automation.DeepCopy()
+	if automation.Annotations == nil {
+		automation.Annotations = map[string]string{}
+	}
+	automation.Annotations[lastAppliedIDAnnotationKey] = id
+	if patchErr := r.Patch(ctx, automation, client.MergeFrom(orig)); patchErr != nil {
+		log.Error(patchErr, "Failed to patch automation annotation")
+	}
+
+	// Enable or disable automation based on spec.
+	enabled := true
+	if automation.Spec.Enabled != nil {
+		enabled = *automation.Spec.Enabled
+	}
+	if enabled {
+		if err := haClient.EnableAutomation(ctx, token, id); err != nil {
+			log.Error(err, "Failed to enable automation (continuing)")
+		}
+	} else {
+		if err := haClient.DisableAutomation(ctx, token, id); err != nil {
+			log.Error(err, "Failed to disable automation (continuing)")
+		}
+	}
+
+	return nil
 }
 
 // calculateAutomationHash computes SHA256 hash of the automation spec

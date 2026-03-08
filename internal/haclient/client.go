@@ -810,6 +810,16 @@ func (c *Client) DeleteAutomation(ctx context.Context, token, id string) error {
 	return c.deleteConfig(ctx, token, configPath("automation", id))
 }
 
+// EnableAutomation enables an automation via HA REST API.
+func (c *Client) EnableAutomation(ctx context.Context, token, id string) error {
+	return c.postConfig(ctx, token, configPath("automation", id)+"/enable", map[string]interface{}{})
+}
+
+// DisableAutomation disables an automation via HA REST API.
+func (c *Client) DisableAutomation(ctx context.Context, token, id string) error {
+	return c.postConfig(ctx, token, configPath("automation", id)+"/disable", map[string]interface{}{})
+}
+
 // PutScene creates or updates a scene via HA REST API.
 // Idempotent: safe to call on every reconcile.
 func (c *Client) PutScene(ctx context.Context, token, id string, data map[string]interface{}) error {

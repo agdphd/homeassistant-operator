@@ -167,6 +167,13 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 	if tokenErr != nil {
 		log.Info("API token not available, requeueing")
 		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
+			Type:               conditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: scene.Generation,
+			Reason:             reasonTokenNotAvailable,
+			Message:            errMsgTokenNotAvailable,
+		})
+		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
 			Type:               "ReloadReady",
 			Status:             metav1.ConditionFalse,
 			ObservedGeneration: scene.Generation,

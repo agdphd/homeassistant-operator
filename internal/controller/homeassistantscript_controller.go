@@ -165,6 +165,13 @@ func (r *HomeAssistantScriptReconciler) Reconcile(ctx context.Context, req ctrl.
 	if tokenErr != nil {
 		log.Info("API token not available, requeueing")
 		meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
+			Type:               conditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: script.Generation,
+			Reason:             reasonTokenNotAvailable,
+			Message:            errMsgTokenNotAvailable,
+		})
+		meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
 			Type:               "ReloadReady",
 			Status:             metav1.ConditionFalse,
 			ObservedGeneration: script.Generation,
@@ -329,11 +336,16 @@ func (r *HomeAssistantScriptReconciler) reconcileScriptViaAPI(
 	}
 
 	// Persist the applied ID so future reconciles can detect renames.
+	orig := script.DeepCopy()
 	if script.Annotations == nil {
 		script.Annotations = map[string]string{}
 	}
 	script.Annotations[lastAppliedIDAnnotationKey] = id
-	return r.Update(ctx, script)
+	if patchErr := r.Patch(ctx, script, client.MergeFrom(orig)); patchErr != nil {
+		log := logf.FromContext(ctx)
+		log.Error(patchErr, "Failed to patch script annotation")
+	}
+	return nil
 }
 
 // performScriptReload triggers hot-reload of scripts via Home Assistant REST API
@@ -461,7 +473,7 @@ func (r *HomeAssistantScriptReconciler) performScriptReload(
 		"Hot-reload failed after %d attempts: %s",
 		result.Attempts, truncateString(result.Error.Error(), 100))
 
-	// Don't fail reconciliation - script is in ConfigMap, will load on next HA restart
+	// Don't fail reconciliation - script is persisted via REST API to scripts.yaml, will load on next HA restart
 	log.Info("Hot-reload failed, script will load on next HA restart",
 		"name", script.Name,
 		"attempts", result.Attempts,
