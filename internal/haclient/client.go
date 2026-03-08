@@ -724,15 +724,16 @@ func (c *Client) GetConfig(ctx context.Context, token string) (*ConfigResponse, 
 	return &config, nil
 }
 
-// putConfig sends a PUT request to a HA config endpoint with JSON body.
+// postConfig sends a POST request to a HA config endpoint with JSON body.
 // Used for creating/updating automation, scene and script configs via REST API.
-func (c *Client) putConfig(ctx context.Context, token, path string, data map[string]interface{}) error {
+// HA uses POST (not PUT) for /api/config/{type}/config/{id} endpoints.
+func (c *Client) postConfig(ctx context.Context, token, path string, data map[string]interface{}) error {
 	body, err := json.Marshal(data)
 	if err != nil {
 		return &Error{Type: ErrorTypeHTTP, Message: "failed to marshal request", Err: err}
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "PUT", c.baseURL+path, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
 	}
@@ -742,7 +743,7 @@ func (c *Client) putConfig(ctx context.Context, token, path string, data map[str
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return &Error{Type: ErrorTypeNotReady, Message: fmt.Sprintf("failed to PUT %s", path), Err: err}
+		return &Error{Type: ErrorTypeNotReady, Message: fmt.Sprintf("failed to POST %s", path), Err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -750,7 +751,7 @@ func (c *Client) putConfig(ctx context.Context, token, path string, data map[str
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return &Error{
 			Type:       ErrorTypeHTTP,
-			Message:    fmt.Sprintf("PUT %s failed: %s", path, string(bodyBytes)),
+			Message:    fmt.Sprintf("HTTP: POST %s failed: %d: %s", path, resp.StatusCode, string(bodyBytes)),
 			StatusCode: resp.StatusCode,
 		}
 	}
@@ -795,7 +796,7 @@ func (c *Client) deleteConfig(ctx context.Context, token, path string) error {
 // HA writes the result to automations.yaml on the PVC (writable).
 // Idempotent: safe to call on every reconcile.
 func (c *Client) PutAutomation(ctx context.Context, token, id string, data map[string]interface{}) error {
-	return c.putConfig(ctx, token, "/api/config/automation/config/"+id, data)
+	return c.postConfig(ctx, token, "/api/config/automation/config/"+id, data)
 }
 
 // DeleteAutomation removes an automation via HA REST API.
@@ -807,7 +808,7 @@ func (c *Client) DeleteAutomation(ctx context.Context, token, id string) error {
 // PutScene creates or updates a scene via HA REST API.
 // Idempotent: safe to call on every reconcile.
 func (c *Client) PutScene(ctx context.Context, token, id string, data map[string]interface{}) error {
-	return c.putConfig(ctx, token, "/api/config/scene/config/"+id, data)
+	return c.postConfig(ctx, token, "/api/config/scene/config/"+id, data)
 }
 
 // DeleteScene removes a scene via HA REST API.
@@ -819,7 +820,7 @@ func (c *Client) DeleteScene(ctx context.Context, token, id string) error {
 // PutScript creates or updates a script via HA REST API.
 // Idempotent: safe to call on every reconcile.
 func (c *Client) PutScript(ctx context.Context, token, id string, data map[string]interface{}) error {
-	return c.putConfig(ctx, token, "/api/config/script/config/"+id, data)
+	return c.postConfig(ctx, token, "/api/config/script/config/"+id, data)
 }
 
 // DeleteScript removes a script via HA REST API.

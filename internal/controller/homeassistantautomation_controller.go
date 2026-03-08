@@ -189,14 +189,14 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// PUT automation via HA REST API
+	// POST automation via HA REST API
 	if err := r.reconcileAutomationViaAPI(ctx, automation, ha, token); err != nil {
-		log.Error(err, "Failed to PUT automation via HA REST API")
+		log.Error(err, "Failed to POST automation via HA REST API")
 		meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
 			Status:             metav1.ConditionFalse,
 			Reason:             "ReconciliationFailed",
-			Message:            fmt.Sprintf("Failed to PUT automation via HA API: %v", err),
+			Message:            fmt.Sprintf("Failed to POST automation via HA API: %v", err),
 			ObservedGeneration: automation.Generation,
 		})
 		if statusErr := r.Status().Update(ctx, automation); statusErr != nil {

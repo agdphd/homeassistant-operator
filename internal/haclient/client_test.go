@@ -1029,9 +1029,9 @@ var _ = Describe("HAClient", func() {
 			},
 		}
 
-		It("Should PUT automation successfully", func() {
+		It("Should POST automation successfully", func() {
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				Expect(r.Method).To(Equal("PUT"))
+				Expect(r.Method).To(Equal("POST"))
 				Expect(r.URL.Path).To(Equal("/api/config/automation/config/test-id"))
 				Expect(r.Header.Get("Authorization")).To(Equal("Bearer test-token"))
 				Expect(r.Header.Get("Content-Type")).To(Equal("application/json"))
@@ -1109,9 +1109,9 @@ var _ = Describe("HAClient", func() {
 			},
 		}
 
-		It("Should PUT scene successfully", func() {
+		It("Should POST scene successfully", func() {
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				Expect(r.Method).To(Equal("PUT"))
+				Expect(r.Method).To(Equal("POST"))
 				Expect(r.URL.Path).To(Equal("/api/config/scene/config/test-scene-id"))
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte(`{"result": "ok"}`))
@@ -1141,9 +1141,9 @@ var _ = Describe("HAClient", func() {
 			},
 		}
 
-		It("Should PUT script successfully", func() {
+		It("Should POST script successfully", func() {
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				Expect(r.Method).To(Equal("PUT"))
+				Expect(r.Method).To(Equal("POST"))
 				Expect(r.URL.Path).To(Equal("/api/config/script/config/test-script-id"))
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte(`{"result": "ok"}`))

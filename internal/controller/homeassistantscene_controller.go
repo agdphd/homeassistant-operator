@@ -179,14 +179,14 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// PUT scene via HA REST API
+	// POST scene via HA REST API
 	if err := r.reconcileSceneViaAPI(ctx, scene, ha, token); err != nil {
-		log.Error(err, "Failed to PUT scene via HA REST API")
+		log.Error(err, "Failed to POST scene via HA REST API")
 		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
 			Status:             metav1.ConditionFalse,
 			Reason:             "ReconciliationFailed",
-			Message:            fmt.Sprintf("Failed to PUT scene via HA API: %v", err),
+			Message:            fmt.Sprintf("Failed to POST scene via HA API: %v", err),
 			ObservedGeneration: scene.Generation,
 		})
 		if statusErr := r.Status().Update(ctx, scene); statusErr != nil {

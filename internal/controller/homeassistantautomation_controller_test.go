@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -143,8 +144,8 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 		// Start mock HA server
 		mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch {
-			case r.Method == http.MethodPut:
-				// PUT /api/config/automation/config/{id}
+			case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/config/"):
+				// POST /api/config/automation/config/{id} — create/update
 				putRequests <- r.URL.Path
 				w.WriteHeader(http.StatusOK)
 			case r.Method == http.MethodDelete:

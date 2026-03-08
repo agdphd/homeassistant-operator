@@ -177,14 +177,14 @@ func (r *HomeAssistantScriptReconciler) Reconcile(ctx context.Context, req ctrl.
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// PUT script via HA REST API
+	// POST script via HA REST API
 	if err := r.reconcileScriptViaAPI(ctx, script, ha, token); err != nil {
-		log.Error(err, "Failed to PUT script via HA REST API")
+		log.Error(err, "Failed to POST script via HA REST API")
 		meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
 			Status:             metav1.ConditionFalse,
 			Reason:             "ReconciliationFailed",
-			Message:            fmt.Sprintf("Failed to PUT script via HA API: %v", err),
+			Message:            fmt.Sprintf("Failed to POST script via HA API: %v", err),
 			ObservedGeneration: script.Generation,
 		})
 		if statusErr := r.Status().Update(ctx, script); statusErr != nil {
