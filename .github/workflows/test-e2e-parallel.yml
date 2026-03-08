@@ -219,6 +219,8 @@ jobs:
           kubectl get homeassistantautomations --all-namespaces -o wide || true
           echo "=== HomeAssistantScenes ==="
           kubectl get homeassistantscenes --all-namespaces -o wide || true
+          echo "=== HomeAssistantScripts ==="
+          kubectl get homeassistantscripts --all-namespaces -o wide || true
           echo "=== Pods ==="
           kubectl get pods --all-namespaces -o wide || true
           echo "=== StatefulSets ==="

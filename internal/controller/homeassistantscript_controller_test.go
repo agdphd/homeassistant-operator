@@ -19,6 +19,7 @@ package controller
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -46,8 +47,10 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 	)
 
 	var (
-		reconciler *HomeAssistantScriptReconciler
-		mockServer *httptest.Server
+		reconciler   *HomeAssistantScriptReconciler
+		mockServer   *httptest.Server
+		postRequests chan string
+		delRequests  chan string
 	)
 
 	createTestScript := func(
@@ -92,16 +95,24 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 	}
 
 	BeforeEach(func() {
+		postRequests = make(chan string, 20)
+		delRequests = make(chan string, 20)
+
 		mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch {
-			case r.Method == http.MethodPut:
+			case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/config/"):
+				// POST /api/config/script/config/{id} — create/update
+				postRequests <- r.URL.Path
 				w.WriteHeader(http.StatusOK)
 			case r.Method == http.MethodDelete:
+				// DELETE /api/config/script/config/{id}
+				delRequests <- r.URL.Path
 				w.WriteHeader(http.StatusOK)
 			case r.Method == http.MethodGet && r.URL.Path == "/api/config":
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(`{"components":["script"],"version":"2024.1.0"}`))
 			case r.Method == http.MethodPost:
+				// Service calls for hot-reload
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte(`[]`))
 			default:

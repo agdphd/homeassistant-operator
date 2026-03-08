@@ -187,6 +187,14 @@ func (r *HomeAssistantScriptReconciler) Reconcile(ctx context.Context, req ctrl.
 			Message:            fmt.Sprintf("Failed to POST script via HA API: %v", err),
 			ObservedGeneration: script.Generation,
 		})
+		// Clear stale TokenNotAvailable from ReloadReady — token was found, failure is in the API call
+		meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionFalse,
+			Reason:             "ReconciliationFailed",
+			Message:            fmt.Sprintf("Failed to POST script via HA API: %v", err),
+			ObservedGeneration: script.Generation,
+		})
 		if statusErr := r.Status().Update(ctx, script); statusErr != nil {
 			log.Error(statusErr, "Failed to update status")
 		}
@@ -306,7 +314,26 @@ func (r *HomeAssistantScriptReconciler) reconcileScriptViaAPI(
 	}
 
 	haClient := r.haClientFor(ha)
-	return haClient.PutScript(ctx, token, id, scriptData)
+
+	// If spec.id was renamed, delete the old script from HA to avoid orphans.
+	prevID := script.Annotations[lastAppliedIDAnnotationKey]
+	if prevID != "" && prevID != id {
+		if delErr := haClient.DeleteScript(ctx, token, prevID); delErr != nil {
+			log := logf.FromContext(ctx)
+			log.Error(delErr, "Failed to delete old script ID from HA (continuing)", "prevID", prevID)
+		}
+	}
+
+	if err := haClient.PutScript(ctx, token, id, scriptData); err != nil {
+		return err
+	}
+
+	// Persist the applied ID so future reconciles can detect renames.
+	if script.Annotations == nil {
+		script.Annotations = map[string]string{}
+	}
+	script.Annotations[lastAppliedIDAnnotationKey] = id
+	return r.Update(ctx, script)
 }
 
 // performScriptReload triggers hot-reload of scripts via Home Assistant REST API

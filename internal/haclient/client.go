@@ -792,41 +792,46 @@ func (c *Client) deleteConfig(ctx context.Context, token, path string) error {
 	return nil
 }
 
+// configPath builds a safe REST API path for a config entry, percent-encoding the id.
+func configPath(resourceType, id string) string {
+	return "/api/config/" + resourceType + "/config/" + url.PathEscape(id)
+}
+
 // PutAutomation creates or updates an automation via HA REST API.
 // HA writes the result to automations.yaml on the PVC (writable).
 // Idempotent: safe to call on every reconcile.
 func (c *Client) PutAutomation(ctx context.Context, token, id string, data map[string]interface{}) error {
-	return c.postConfig(ctx, token, "/api/config/automation/config/"+id, data)
+	return c.postConfig(ctx, token, configPath("automation", id), data)
 }
 
 // DeleteAutomation removes an automation via HA REST API.
 // Idempotent: returns nil if automation does not exist (404).
 func (c *Client) DeleteAutomation(ctx context.Context, token, id string) error {
-	return c.deleteConfig(ctx, token, "/api/config/automation/config/"+id)
+	return c.deleteConfig(ctx, token, configPath("automation", id))
 }
 
 // PutScene creates or updates a scene via HA REST API.
 // Idempotent: safe to call on every reconcile.
 func (c *Client) PutScene(ctx context.Context, token, id string, data map[string]interface{}) error {
-	return c.postConfig(ctx, token, "/api/config/scene/config/"+id, data)
+	return c.postConfig(ctx, token, configPath("scene", id), data)
 }
 
 // DeleteScene removes a scene via HA REST API.
 // Idempotent: returns nil if scene does not exist (404).
 func (c *Client) DeleteScene(ctx context.Context, token, id string) error {
-	return c.deleteConfig(ctx, token, "/api/config/scene/config/"+id)
+	return c.deleteConfig(ctx, token, configPath("scene", id))
 }
 
 // PutScript creates or updates a script via HA REST API.
 // Idempotent: safe to call on every reconcile.
 func (c *Client) PutScript(ctx context.Context, token, id string, data map[string]interface{}) error {
-	return c.postConfig(ctx, token, "/api/config/script/config/"+id, data)
+	return c.postConfig(ctx, token, configPath("script", id), data)
 }
 
 // DeleteScript removes a script via HA REST API.
 // Idempotent: returns nil if script does not exist (404).
 func (c *Client) DeleteScript(ctx context.Context, token, id string) error {
-	return c.deleteConfig(ctx, token, "/api/config/script/config/"+id)
+	return c.deleteConfig(ctx, token, configPath("script", id))
 }
 
 // IsComponentLoaded checks if a specific component/integration is loaded in Home Assistant.

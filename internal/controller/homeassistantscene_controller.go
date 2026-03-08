@@ -189,6 +189,14 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 			Message:            fmt.Sprintf("Failed to POST scene via HA API: %v", err),
 			ObservedGeneration: scene.Generation,
 		})
+		// Clear stale TokenNotAvailable from ReloadReady — token was found, failure is in the API call
+		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionFalse,
+			Reason:             "ReconciliationFailed",
+			Message:            fmt.Sprintf("Failed to POST scene via HA API: %v", err),
+			ObservedGeneration: scene.Generation,
+		})
 		if statusErr := r.Status().Update(ctx, scene); statusErr != nil {
 			log.Error(statusErr, "Failed to update status")
 		}

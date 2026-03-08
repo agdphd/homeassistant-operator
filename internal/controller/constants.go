@@ -24,6 +24,10 @@ const (
 	// HomeAssistantConfiguration controllers
 	configHashAnnotationKey = "ha.homeassistant.io/config-hash"
 
+	// lastAppliedIDAnnotationKey tracks the last ID sent to HA REST API.
+	// Used to detect spec.id renames and delete the old resource from HA.
+	lastAppliedIDAnnotationKey = "ha.homeassistant.io/last-applied-id"
+
 	// Reload method names for status tracking
 	// Used by Configuration and Automation controllers
 	reloadMethodRestart   = "restart"

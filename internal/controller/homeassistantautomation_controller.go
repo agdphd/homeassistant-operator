@@ -177,6 +177,13 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 	if tokenErr != nil {
 		log.Info("API token not available, requeueing")
 		meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
+			Type:               conditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: automation.Generation,
+			Reason:             reasonTokenNotAvailable,
+			Message:            errMsgTokenNotAvailable,
+		})
+		meta.SetStatusCondition(&automation.Status.Conditions, metav1.Condition{
 			Type:               "ReloadReady",
 			Status:             metav1.ConditionFalse,
 			ObservedGeneration: automation.Generation,

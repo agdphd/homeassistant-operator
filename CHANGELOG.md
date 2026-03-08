@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **HomeAssistantAutomation / Scene / Script: individual management via HA REST API** — each CR is now managed individually via `PUT /api/config/{type}/config/{id}` and `DELETE /api/config/{type}/config/{id}`. Home Assistant writes directly to `automations.yaml` / `scenes.yaml` / `scripts.yaml` on the PVC. The old ConfigMap aggregation approach (`<ha-name>-automations`, `<ha-name>-scenes`, `<ha-name>-scripts`) has been removed.
+- **HomeAssistantAutomation / Scene / Script: individual management via HA REST API** — each CR is now managed individually via `POST /api/config/{type}/config/{id}` (create/update) and `DELETE /api/config/{type}/config/{id}` (removal). Home Assistant writes directly to `automations.yaml` / `scenes.yaml` / `scripts.yaml` on the PVC. The old ConfigMap aggregation approach (`<ha-name>-automations`, `<ha-name>-scenes`, `<ha-name>-scripts`) has been removed.
   - Status condition `ReloadReady` reflects the last API call result
   - When the bootstrap token is not yet available, the controller requeues with backoff (30s) and sets `ReasonTokenNotAvailable`
   - Deletion via finalizer calls DELETE to HA API (best-effort — continues even when HA is unavailable)
