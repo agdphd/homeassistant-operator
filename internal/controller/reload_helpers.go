@@ -15,9 +15,10 @@ const reloadMethodFailed = "failed"
 
 // ReloadConfig configures reload behavior
 type ReloadConfig struct {
-	MaxRetries    int
-	RetryDelay    time.Duration
-	ComponentName string // "script", "automation", "scene"
+	MaxRetries         int
+	RetryDelay         time.Duration
+	ComponentName      string // "script", "automation", "scene"
+	SkipComponentCheck bool   // skip IsComponentLoaded check for always-loaded core integrations
 }
 
 // ReloadResult contains result of reload operation
@@ -74,29 +75,36 @@ func PerformReloadWithRetry(
 		"component", config.ComponentName,
 		"maxRetries", config.MaxRetries)
 
-	// Step 1: Check if component loaded
-	loaded, err := haClient.IsComponentLoaded(ctx, token, config.ComponentName)
-	result.ComponentLoaded = loaded
-
-	if err != nil {
-		log.Error(err, "Failed to check component status",
+	// Step 1: Check if component loaded (skip for core integrations always present in HA)
+	if config.SkipComponentCheck {
+		result.ComponentLoaded = true
+		log.V(1).Info("Skipping component check (core integration)",
 			"reloadID", result.ReloadID,
 			"component", config.ComponentName)
-		result.Success = false
-		result.Error = fmt.Errorf("component check failed: %w", err)
-		result.Method = reloadMethodFailed
-		return result
-	}
+	} else {
+		loaded, err := haClient.IsComponentLoaded(ctx, token, config.ComponentName)
+		result.ComponentLoaded = loaded
 
-	if !loaded {
-		log.Info("Component not loaded yet, skipping hot-reload",
-			"reloadID", result.ReloadID,
-			"component", config.ComponentName,
-			"reason", "will retry on next reconcile")
-		result.Success = false
-		result.Error = fmt.Errorf("%s component not loaded in Home Assistant", config.ComponentName)
-		result.Method = "skipped"
-		return result
+		if err != nil {
+			log.Error(err, "Failed to check component status",
+				"reloadID", result.ReloadID,
+				"component", config.ComponentName)
+			result.Success = false
+			result.Error = fmt.Errorf("component check failed: %w", err)
+			result.Method = reloadMethodFailed
+			return result
+		}
+
+		if !loaded {
+			log.Info("Component not loaded yet, skipping hot-reload",
+				"reloadID", result.ReloadID,
+				"component", config.ComponentName,
+				"reason", "will retry on next reconcile")
+			result.Success = false
+			result.Error = fmt.Errorf("%s component not loaded in Home Assistant", config.ComponentName)
+			result.Method = "skipped"
+			return result
+		}
 	}
 
 	// Step 2: Component loaded, attempt hot-reload with retry

@@ -718,57 +718,13 @@ spec:
 `, automationName, namespace, haName)
 			Expect(utils.ApplyYAML(automationYAML, namespace)).To(Succeed())
 
-			By("Waiting for ConfigMap to be created")
-			configMapName := haName + "-automations"
+			By("Waiting for automation to be reconciled (no token → ReloadReady=False/TokenNotAvailable)")
+			// In the REST API architecture (Faza 6), operator tries POST to HA API.
+			// Without bootstrap token, it sets ReloadReady=False with TokenNotAvailable reason and requeues.
 			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).To(ContainSubstring("No Token Automation"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Updating automation to trigger reload attempt")
-			updatedYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
-kind: HomeAssistantAutomation
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  homeAssistantRef:
-    name: %s
-  enabled: true
-  alias: "Updated No Token"
-  triggers:
-    - platform: time
-      at: "13:00:00"
-  actions:
-    - service: light.turn_on
-      target:
-        entity_id: light.test
-`, automationName, namespace, haName)
-			Expect(utils.ApplyYAML(updatedYAML, namespace)).To(Succeed())
-
-			By("Verifying ConfigMap updated")
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace,
-					"-o", "jsonpath={.data.automations\\.yaml}")
-				g.Expect(output).To(ContainSubstring("Updated No Token"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Verifying status Ready=True (graceful skip of reload)")
-			Eventually(func(g Gomega) {
-				status := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				g.Expect(status).To(Equal("True"))
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
-
-			By("Verifying hash annotation is set (subPath workaround)")
-			// Hash annotation is ALWAYS set (even without API token) to trigger rolling restart
-			// when ConfigMap changes - this is the subPath workaround mechanism
-			Eventually(func(g Gomega) {
-				hash := utils.Kubectl("get", "statefulset", haName, "-n", namespace,
-					"-o", "jsonpath={.spec.template.metadata.annotations.ha\\.homeassistant\\.io/automations-hash}")
-				// Hash should be set since ConfigMap changed (automation was added/updated)
-				g.Expect(hash).NotTo(BeEmpty(), "automations-hash annotation should be set")
+				reason := utils.Kubectl("get", "haauto", automationName, "-n", namespace,
+					"-o", "jsonpath={.status.conditions[?(@.type=='ReloadReady')].reason}")
+				g.Expect(reason).To(Equal("TokenNotAvailable"))
 			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
 		})
 	})

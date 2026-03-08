@@ -356,9 +356,10 @@ func (r *HomeAssistantScriptReconciler) performScriptReload(
 
 	// Perform reload with retry and smart detection
 	reloadConfig := ReloadConfig{
-		MaxRetries:    3,
-		RetryDelay:    5 * time.Second,
-		ComponentName: "script",
+		MaxRetries:         3,
+		RetryDelay:         5 * time.Second,
+		ComponentName:      "script",
+		SkipComponentCheck: true, // script is a core HA integration, always loaded
 	}
 
 	result := PerformReloadWithRetry(

@@ -359,9 +359,10 @@ func (r *HomeAssistantSceneReconciler) performSceneReload(
 
 	// Use PerformReloadWithRetry with smart detection
 	config := ReloadConfig{
-		MaxRetries:    3,
-		RetryDelay:    5 * time.Second,
-		ComponentName: "scene",
+		MaxRetries:         3,
+		RetryDelay:         5 * time.Second,
+		ComponentName:      "scene",
+		SkipComponentCheck: true, // scene is a core HA integration, always loaded
 	}
 
 	reloadFunc := func(ctx context.Context, token string) error {

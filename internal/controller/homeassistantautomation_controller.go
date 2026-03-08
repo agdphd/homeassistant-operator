@@ -354,6 +354,9 @@ func (r *HomeAssistantAutomationReconciler) reconcileAutomationViaAPI(
 	if err != nil {
 		return fmt.Errorf("failed to convert automation to map: %w", err)
 	}
+	// HA REST API does not accept 'enabled' in the config payload.
+	// Enable/disable is managed via separate /enable and /disable endpoints.
+	delete(automationData, "enabled")
 
 	id := automation.Spec.ID
 	if id == "" {
@@ -498,9 +501,10 @@ func (r *HomeAssistantAutomationReconciler) performAutomationReload(
 
 	// Perform reload with retry and smart detection
 	reloadConfig := ReloadConfig{
-		MaxRetries:    3,
-		RetryDelay:    5 * time.Second,
-		ComponentName: "automation",
+		MaxRetries:         3,
+		RetryDelay:         5 * time.Second,
+		ComponentName:      "automation",
+		SkipComponentCheck: true, // automation is a core HA integration, always loaded
 	}
 
 	result := PerformReloadWithRetry(
