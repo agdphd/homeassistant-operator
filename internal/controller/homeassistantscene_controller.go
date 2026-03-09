@@ -42,10 +42,7 @@ import (
 )
 
 const (
-	scenesYamlKey          = "scenes.yaml"
-	generatedScenesSuffix  = "-scenes"
-	sceneHashAnnotationKey = "ha.homeassistant.io/scene-hash"
-	sceneFinalizerName     = "ha.homeassistant.io/scene-finalizer"
+	sceneFinalizerName = "ha.homeassistant.io/scene-finalizer"
 
 	// Condition reasons for HomeAssistantScene
 	reasonSceneGenerated = "SceneGenerated"
@@ -74,7 +71,6 @@ func (r *HomeAssistantSceneReconciler) haClientFor(ha *hav1alpha1.HomeAssistant)
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscenes,verbs=create;update;patch;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscenes/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscenes/finalizers,verbs=update
-// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
@@ -341,7 +337,7 @@ func (r *HomeAssistantSceneReconciler) reconcileSceneViaAPI(
 	}
 	scene.Annotations[lastAppliedIDAnnotationKey] = id
 	if patchErr := r.Patch(ctx, scene, client.MergeFrom(orig)); patchErr != nil {
-		log.Error(patchErr, "Failed to patch scene annotation")
+		return fmt.Errorf("failed to patch scene annotation: %w", patchErr)
 	}
 	return nil
 }
