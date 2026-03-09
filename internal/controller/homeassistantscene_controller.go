@@ -210,23 +210,23 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	// REST API PUT above already applied the scene in HA in-memory.
-	// No separate scene.reload call needed — record apply time if hash changed.
+	// Always clear prior failure state and record apply time.
 	hashChanged := scene.Status.SceneHash != sceneHash
 	if hashChanged {
 		log.Info("Scene hash changed, recording REST API apply",
 			"oldHash", scene.Status.SceneHash,
 			"newHash", sceneHash)
-		now := metav1.Now()
-		scene.Status.LastReloadTime = &now
-		scene.Status.LastError = ""
-		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
-			Type:               "ReloadReady",
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: scene.Generation,
-			Reason:             "ReloadSuccessful",
-			Message:            "Scene applied via REST API",
-		})
 	}
+	now := metav1.Now()
+	scene.Status.LastReloadTime = &now
+	scene.Status.LastError = ""
+	meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
+		Type:               "ReloadReady",
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: scene.Generation,
+		Reason:             "ReloadSuccessful",
+		Message:            "Scene applied via REST API",
+	})
 
 	scene.Status.SceneHash = sceneHash
 	scene.Status.ObservedGeneration = scene.Generation
