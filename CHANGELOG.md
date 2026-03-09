@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-09
+
 ### Added
 
 - **HomeAssistantAutomation / Scene / Script: individual management via HA REST API** — each CR is now managed individually via `POST /api/config/{type}/config/{id}` (create/update) and `DELETE /api/config/{type}/config/{id}` (removal). Home Assistant writes directly to `automations.yaml` / `scenes.yaml` / `scripts.yaml` on the PVC. The old ConfigMap aggregation approach (`<ha-name>-automations`, `<ha-name>-scenes`, `<ha-name>-scripts`) has been removed.
@@ -153,8 +155,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Primary: k3s on Raspberry Pi 4/5 (ARM64)
 - Also supported: Any Kubernetes cluster (AMD64/ARM64)
 
-[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v0.5.1...HEAD
-[0.5.1]: https://github.com/przemekhys/homeassistant-operator/compare/v0.5.0...v0.5.1
+[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.6.0
+[0.5.1]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.5.1
 [0.5.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.5.0
 [0.4.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.4.0
 [0.3.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.3.0
