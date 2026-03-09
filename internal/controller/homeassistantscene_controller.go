@@ -300,7 +300,7 @@ func (r *HomeAssistantSceneReconciler) sceneToYaml(
 }
 
 // reconcileSceneViaAPI creates or updates this scene in Home Assistant
-// via REST API (PUT /api/config/scene/config/{id}).
+// via REST API (POST /api/config/scene/config/{id}).
 // HA writes the result to scenes.yaml on the PVC (writable).
 func (r *HomeAssistantSceneReconciler) reconcileSceneViaAPI(
 	ctx context.Context,
@@ -308,6 +308,8 @@ func (r *HomeAssistantSceneReconciler) reconcileSceneViaAPI(
 	ha *hav1alpha1.HomeAssistant,
 	token string,
 ) error {
+	log := logf.FromContext(ctx)
+
 	sceneData, err := r.sceneToYaml(scene)
 	if err != nil {
 		return fmt.Errorf("failed to convert scene to map: %w", err)
@@ -319,7 +321,29 @@ func (r *HomeAssistantSceneReconciler) reconcileSceneViaAPI(
 	}
 
 	haClient := r.haClientFor(ha)
-	return haClient.PutScene(ctx, token, id, sceneData)
+
+	// If spec.id was renamed, delete the old scene from HA to avoid orphans.
+	prevID := scene.Annotations[lastAppliedIDAnnotationKey]
+	if prevID != "" && prevID != id {
+		if delErr := haClient.DeleteScene(ctx, token, prevID); delErr != nil {
+			log.Error(delErr, "Failed to delete old scene ID from HA (continuing)", "prevID", prevID)
+		}
+	}
+
+	if err := haClient.PutScene(ctx, token, id, sceneData); err != nil {
+		return err
+	}
+
+	// Persist the applied ID so future reconciles can detect renames.
+	orig := scene.DeepCopy()
+	if scene.Annotations == nil {
+		scene.Annotations = map[string]string{}
+	}
+	scene.Annotations[lastAppliedIDAnnotationKey] = id
+	if patchErr := r.Patch(ctx, scene, client.MergeFrom(orig)); patchErr != nil {
+		log.Error(patchErr, "Failed to patch scene annotation")
+	}
+	return nil
 }
 
 // calculateSceneHash computes SHA256 hash of the scene spec
