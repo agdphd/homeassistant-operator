@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -210,22 +209,25 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Perform hot-reload if hash changed OR reload is pending (token was previously unavailable)
+	// REST API PUT above already applied the scene in HA in-memory.
+	// No separate scene.reload call needed — record apply time if hash changed.
 	hashChanged := scene.Status.SceneHash != sceneHash
-	reloadPending := false
-	if reloadCond := meta.FindStatusCondition(scene.Status.Conditions, "ReloadReady"); reloadCond != nil {
-		reloadPending = reloadCond.Status == metav1.ConditionFalse && reloadCond.Reason == reasonTokenNotAvailable
-	}
-	if hashChanged || reloadPending {
-		if err := r.performSceneReload(ctx, scene, ha, sceneHash); err != nil {
-			if statusErr := r.Status().Update(ctx, scene); statusErr != nil {
-				log.Error(statusErr, "Failed to update status")
-			}
-			return ctrl.Result{}, err
-		}
+	if hashChanged {
+		log.Info("Scene hash changed, recording REST API apply",
+			"oldHash", scene.Status.SceneHash,
+			"newHash", sceneHash)
+		now := metav1.Now()
+		scene.Status.LastReloadTime = &now
+		scene.Status.LastError = ""
+		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: scene.Generation,
+			Reason:             "ReloadSuccessful",
+			Message:            "Scene applied via REST API",
+		})
 	}
 
-	// Update status — always mark Ready after ConfigMap sync (reload failure is graceful)
 	scene.Status.SceneHash = sceneHash
 	scene.Status.ObservedGeneration = scene.Generation
 	scene.Status.EntityCount = int32(len(scene.Spec.Entities))
@@ -243,13 +245,6 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	log.Info("Successfully reconciled HomeAssistantScene")
-
-	// Requeue if hot-reload is still pending (token not yet available) so we retry once it is
-	if reloadCond := meta.FindStatusCondition(scene.Status.Conditions, "ReloadReady"); reloadCond != nil {
-		if reloadCond.Status == metav1.ConditionFalse && reloadCond.Reason == reasonTokenNotAvailable {
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-		}
-	}
 	return ctrl.Result{}, nil
 }
 
@@ -325,133 +320,6 @@ func (r *HomeAssistantSceneReconciler) reconcileSceneViaAPI(
 
 	haClient := r.haClientFor(ha)
 	return haClient.PutScene(ctx, token, id, sceneData)
-}
-
-// performSceneReload triggers hot-reload of scenes via Home Assistant REST API
-//
-// nolint:gocyclo
-//
-//nolint:dupl // dupl: Similar to performAutomationReload by design
-func (r *HomeAssistantSceneReconciler) performSceneReload(
-	ctx context.Context,
-	scene *hav1alpha1.HomeAssistantScene,
-	ha *hav1alpha1.HomeAssistant,
-	newHash string,
-) error {
-	log := logf.FromContext(ctx)
-
-	// Check if autoReload is enabled
-	autoReload := true
-	if scene.Spec.AutoReload != nil {
-		autoReload = *scene.Spec.AutoReload
-	}
-
-	if !autoReload {
-		log.Info("AutoReload disabled, skipping reload", "name", scene.Name)
-		scene.Status.LastError = ""
-		return nil
-	}
-
-	// Get API token for hot-reload
-	token, tokenErr := getApiToken(ctx, r.Client, ha)
-	if tokenErr != nil {
-		log.Info("API token not available, skipping hot-reload")
-		scene.Status.LastError = errMsgTokenNotAvailable
-
-		// Set condition: Token not available
-		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
-			Type:               "ReloadReady",
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: scene.Generation,
-			Reason:             reasonTokenNotAvailable,
-			Message:            "API token not available - bootstrap may not be configured",
-		})
-		return nil
-	}
-
-	// Build Home Assistant client
-	haClient := r.haClientFor(ha)
-
-	// Use PerformReloadWithRetry with smart detection
-	config := ReloadConfig{
-		MaxRetries:         3,
-		RetryDelay:         5 * time.Second,
-		ComponentName:      "scene",
-		SkipComponentCheck: true, // scene is a core HA integration, always loaded
-	}
-
-	reloadFunc := func(ctx context.Context, token string) error {
-		return haClient.ReloadScenes(ctx, token)
-	}
-
-	result := PerformReloadWithRetry(ctx, haClient, token, config, reloadFunc)
-
-	// Update status based on result
-	if result.Success {
-		// SUCCESS
-		now := metav1.Now()
-		scene.Status.LastReloadTime = &now
-		scene.Status.LastError = ""
-
-		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
-			Type:               "ReloadReady",
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: scene.Generation,
-			Reason:             "ReloadSuccessful",
-			Message: fmt.Sprintf("Scene hot-reloaded successfully after %d attempts (%.1fs)",
-				result.Attempts, result.Duration.Seconds()),
-		})
-
-		r.Recorder.Eventf(scene, nil, corev1.EventTypeNormal, "ReloadSuccessful", "ReloadSuccessful",
-			"Scene hot-reload successful (attempts: %d, duration: %.1fs)",
-			result.Attempts, result.Duration.Seconds())
-
-		log.Info("Scene hot-reload successful", "name", scene.Name, "hash", newHash,
-			"reloadID", result.ReloadID, "attempts", result.Attempts, "duration", result.Duration)
-		return nil
-	}
-
-	// FAILURE
-	if !result.ComponentLoaded {
-		// Component not loaded - will retry on next reconcile
-		scene.Status.LastError = result.Error.Error()
-
-		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
-			Type:               "ReloadReady",
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: scene.Generation,
-			Reason:             "ComponentNotLoaded",
-			Message:            "Scene integration not loaded in Home Assistant yet (will retry automatically)",
-		})
-
-		log.Info("Scene component not loaded, will retry",
-			"reloadID", result.ReloadID, "error", result.Error)
-
-		// Return error to trigger requeue
-		return result.Error
-	}
-
-	// Hot-reload failed after retries
-	scene.Status.LastError = result.Error.Error()
-
-	meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
-		Type:               "ReloadReady",
-		Status:             metav1.ConditionFalse,
-		ObservedGeneration: scene.Generation,
-		Reason:             "ReloadFailed",
-		Message: fmt.Sprintf("Hot-reload failed after %d attempts: %s",
-			result.Attempts, truncateString(result.Error.Error(), 200)),
-	})
-
-	r.Recorder.Eventf(scene, nil, corev1.EventTypeWarning, "ReloadFailed", "ReloadFailed",
-		"Hot-reload failed after %d attempts: %s",
-		result.Attempts, truncateString(result.Error.Error(), 100))
-
-	log.Error(result.Error, "Scene hot-reload failed after retries",
-		"reloadID", result.ReloadID, "attempts", result.Attempts, "duration", result.Duration)
-
-	// Don't fail reconciliation - scene is in ConfigMap, will be loaded on HA restart
-	return nil
 }
 
 // calculateSceneHash computes SHA256 hash of the scene spec

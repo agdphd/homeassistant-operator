@@ -850,16 +850,20 @@ spec:
 				g.Expect(output).NotTo(BeEmpty())
 			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
 
-			By("Waiting for ConfigMaps to exist")
+			By("Waiting for configuration ConfigMap to exist")
 			Eventually(func(g Gomega) {
 				output := utils.Kubectl("get", "configmap", haName+"-configuration", "-n", namespace)
 				g.Expect(output).NotTo(BeEmpty())
 			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
 
-			Eventually(func(g Gomega) {
-				output := utils.Kubectl("get", "configmap", haName+"-automations", "-n", namespace)
-				g.Expect(output).NotTo(BeEmpty())
-			}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
+			By("Waiting for automations to be finalizer-ready")
+			for _, name := range []string{auto1Name, auto2Name} {
+				Eventually(func(g Gomega) {
+					output := utils.Kubectl("get", "haauto", name, "-n", namespace,
+						"-o", "jsonpath={.metadata.finalizers}")
+					g.Expect(output).To(ContainSubstring("automation-finalizer"))
+				}, utils.ReconciliationTimeout, 2*time.Second).Should(Succeed())
+			}
 
 			By("Waiting for generated Secret to exist")
 			Eventually(func(g Gomega) {

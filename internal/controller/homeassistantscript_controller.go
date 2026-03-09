@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -208,17 +207,25 @@ func (r *HomeAssistantScriptReconciler) Reconcile(ctx context.Context, req ctrl.
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Perform hot-reload if enabled and hash changed
+	// REST API PUT above already applied the script in HA in-memory.
+	// No separate script.reload call needed — record apply time if hash changed.
 	if script.Status.ScriptHash != scriptHash {
-		if err := r.performScriptReload(ctx, script, ha, scriptHash); err != nil {
-			if statusErr := r.Status().Update(ctx, script); statusErr != nil {
-				log.Error(statusErr, "Failed to update status")
-			}
-			return ctrl.Result{}, err
-		}
+		log.Info("Script hash changed, recording REST API apply",
+			"oldHash", script.Status.ScriptHash,
+			"newHash", scriptHash)
+		now := metav1.Now()
+		script.Status.LastReloadTime = &now
+		script.Status.LastReloadMethod = "api"
+		script.Status.LastError = ""
+		meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: script.Generation,
+			Reason:             "ReloadSuccessful",
+			Message:            "Script applied via REST API",
+		})
 	}
 
-	// Update status (only reached when reload succeeded or hash was unchanged)
 	script.Status.ScriptHash = scriptHash
 	script.Status.ObservedGeneration = script.Generation
 	meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
@@ -345,140 +352,6 @@ func (r *HomeAssistantScriptReconciler) reconcileScriptViaAPI(
 		log := logf.FromContext(ctx)
 		log.Error(patchErr, "Failed to patch script annotation")
 	}
-	return nil
-}
-
-// performScriptReload triggers hot-reload of scripts via Home Assistant REST API
-// Uses smart component detection and retry mechanism for reliability
-//
-//nolint:dupl // dupl: Similar to performAutomationReload/performSceneReload by design
-func (r *HomeAssistantScriptReconciler) performScriptReload(
-	ctx context.Context,
-	script *hav1alpha1.HomeAssistantScript,
-	ha *hav1alpha1.HomeAssistant,
-	newHash string,
-) error {
-	log := logf.FromContext(ctx)
-
-	// Check if autoReload is enabled
-	autoReload := true
-	if script.Spec.AutoReload != nil {
-		autoReload = *script.Spec.AutoReload
-	}
-
-	if !autoReload {
-		log.Info("AutoReload disabled, skipping reload", "name", script.Name)
-		script.Status.LastReloadMethod = reloadMethodNone
-		script.Status.LastError = ""
-		return nil
-	}
-
-	// Get API token for hot-reload
-	token, tokenErr := getApiToken(ctx, r.Client, ha)
-	if tokenErr != nil {
-		log.Info("API token not available, skipping hot-reload")
-		script.Status.LastError = errMsgTokenNotAvailable
-
-		meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
-			Type:               "ReloadReady",
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: script.Generation,
-			Reason:             reasonTokenNotAvailable,
-			Message:            "API token not available - bootstrap may not be configured",
-		})
-
-		return nil
-	}
-
-	// Build Home Assistant client
-	haClient := r.haClientFor(ha)
-
-	// Perform reload with retry and smart detection
-	reloadConfig := ReloadConfig{
-		MaxRetries:         3,
-		RetryDelay:         5 * time.Second,
-		ComponentName:      "script",
-		SkipComponentCheck: true, // script is a core HA integration, always loaded
-	}
-
-	result := PerformReloadWithRetry(
-		ctx,
-		haClient,
-		token,
-		reloadConfig,
-		haClient.ReloadScripts,
-	)
-
-	// Update status based on result
-	if result.Success {
-		// SUCCESS
-		now := metav1.Now()
-		script.Status.LastReloadTime = &now
-		script.Status.LastReloadMethod = result.Method
-		script.Status.LastError = ""
-
-		meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
-			Type:               "ReloadReady",
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: script.Generation,
-			Reason:             "ReloadSuccessful",
-			Message: fmt.Sprintf("Script hot-reloaded successfully after %d attempts (%.1fs)",
-				result.Attempts, result.Duration.Seconds()),
-		})
-
-		r.Recorder.Eventf(script, nil, corev1.EventTypeNormal, "ReloadSuccessful", "ReloadSuccessful",
-			"Script hot-reloaded successfully after %d attempts", result.Attempts)
-
-		log.Info("Script hot-reload completed successfully",
-			"name", script.Name,
-			"hash", newHash,
-			"attempts", result.Attempts,
-			"duration", result.Duration)
-
-		return nil
-	}
-
-	// FAILED or SKIPPED
-	script.Status.LastError = result.Error.Error()
-
-	if !result.ComponentLoaded {
-		// Component not loaded - will retry on next reconcile
-		meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
-			Type:               "ReloadReady",
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: script.Generation,
-			Reason:             "ComponentNotLoaded",
-			Message:            "Script integration not loaded in Home Assistant yet (will retry automatically)",
-		})
-
-		// Requeue to retry when component loads
-		log.Info("Script component not loaded yet, will retry",
-			"name", script.Name,
-			"reloadID", result.ReloadID)
-		return result.Error
-	}
-
-	// Component loaded but reload failed after all retries
-	script.Status.LastReloadMethod = result.Method
-	meta.SetStatusCondition(&script.Status.Conditions, metav1.Condition{
-		Type:               "ReloadReady",
-		Status:             metav1.ConditionFalse,
-		ObservedGeneration: script.Generation,
-		Reason:             "ReloadFailed",
-		Message: fmt.Sprintf("Hot-reload failed after %d attempts: %s",
-			result.Attempts, truncateString(result.Error.Error(), 200)),
-	})
-
-	r.Recorder.Eventf(script, nil, corev1.EventTypeWarning, "ReloadFailed", "ReloadFailed",
-		"Hot-reload failed after %d attempts: %s",
-		result.Attempts, truncateString(result.Error.Error(), 100))
-
-	// Don't fail reconciliation - script is persisted via REST API to scripts.yaml, will load on next HA restart
-	log.Info("Hot-reload failed, script will load on next HA restart",
-		"name", script.Name,
-		"attempts", result.Attempts,
-		"error", result.Error)
-
 	return nil
 }
 
