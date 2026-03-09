@@ -21,11 +21,9 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"time"
 
 	"gopkg.in/yaml.v3"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,10 +42,7 @@ import (
 )
 
 const (
-	scenesYamlKey          = "scenes.yaml"
-	generatedScenesSuffix  = "-scenes"
-	sceneHashAnnotationKey = "ha.homeassistant.io/scene-hash"
-	sceneFinalizerName     = "ha.homeassistant.io/scene-finalizer"
+	sceneFinalizerName = "ha.homeassistant.io/scene-finalizer"
 
 	// Condition reasons for HomeAssistantScene
 	reasonSceneGenerated = "SceneGenerated"
@@ -58,15 +53,24 @@ const (
 // HomeAssistantSceneReconciler reconciles a HomeAssistantScene object
 type HomeAssistantSceneReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder events.EventRecorder
+	Scheme      *runtime.Scheme
+	Recorder    events.EventRecorder
+	NewHAClient func(baseURL string) *haclient.Client // overridable for testing
+}
+
+// haClientFor returns a HA API client for the given HomeAssistant instance.
+func (r *HomeAssistantSceneReconciler) haClientFor(ha *hav1alpha1.HomeAssistant) *haclient.Client {
+	haURL := buildHomeAssistantURL(ha)
+	if r.NewHAClient != nil {
+		return r.NewHAClient(haURL)
+	}
+	return haclient.NewClient(haURL)
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscenes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscenes,verbs=create;update;patch;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscenes/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscenes/finalizers,verbs=update
-// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
@@ -91,12 +95,26 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 	if !scene.DeletionTimestamp.IsZero() {
 		// Resource is being deleted
 		if controllerutil.ContainsFinalizer(scene, sceneFinalizerName) {
-			log.Info("Handling deletion - regenerating ConfigMap without this scene")
+			log.Info("Handling deletion - deleting scene via HA REST API")
 
-			// Regenerate the aggregated ConfigMap without this scene
-			if err := r.reconcileScenesConfigMap(ctx, scene); err != nil {
-				log.Error(err, "Failed to update ConfigMap during deletion")
-				return ctrl.Result{}, err
+			// Delete scene via HA REST API (best effort — proceed even if HA is unavailable)
+			haRef := types.NamespacedName{
+				Name:      scene.Spec.HomeAssistantRef.Name,
+				Namespace: scene.Namespace,
+			}
+			if ha, haErr := r.validateHomeAssistantRef(ctx, haRef, scene); haErr == nil {
+				if token, tokenErr := getApiToken(ctx, r.Client, ha); tokenErr == nil {
+					haClient := r.haClientFor(ha)
+					id := scene.Spec.ID
+					if id == "" {
+						id = scene.Name
+					}
+					if delErr := haClient.DeleteScene(ctx, token, id); delErr != nil {
+						log.Info("Failed to delete scene via HA API (proceeding with finalizer removal)", "error", delErr)
+					}
+				} else {
+					log.Info("API token not available during deletion, proceeding with finalizer removal")
+				}
 			}
 
 			// Remove finalizer to allow deletion
@@ -139,38 +157,73 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 		return ctrl.Result{}, err
 	}
 
-	// Reconcile the aggregated scenes ConfigMap
-	if err := r.reconcileScenesConfigMap(ctx, scene); err != nil {
-		log.Error(err, "Failed to reconcile scenes ConfigMap")
+	// Get API token — requeue if not available yet (bootstrap may still be running)
+	token, tokenErr := getApiToken(ctx, r.Client, ha)
+	if tokenErr != nil {
+		log.Info("API token not available, requeueing")
+		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
+			Type:               conditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: scene.Generation,
+			Reason:             reasonTokenNotAvailable,
+			Message:            errMsgTokenNotAvailable,
+		})
+		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: scene.Generation,
+			Reason:             reasonTokenNotAvailable,
+			Message:            errMsgTokenNotAvailable,
+		})
+		if statusErr := r.Status().Update(ctx, scene); statusErr != nil {
+			log.Error(statusErr, "Failed to update status")
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	// POST scene via HA REST API
+	if err := r.reconcileSceneViaAPI(ctx, scene, ha, token); err != nil {
+		log.Error(err, "Failed to POST scene via HA REST API")
 		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
 			Status:             metav1.ConditionFalse,
 			Reason:             "ReconciliationFailed",
-			Message:            fmt.Sprintf("Failed to create/update scenes ConfigMap: %v", err),
+			Message:            fmt.Sprintf("Failed to POST scene via HA API: %v", err),
+			ObservedGeneration: scene.Generation,
+		})
+		// Clear stale TokenNotAvailable from ReloadReady — token was found, failure is in the API call
+		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
+			Type:               "ReloadReady",
+			Status:             metav1.ConditionFalse,
+			Reason:             "ReconciliationFailed",
+			Message:            fmt.Sprintf("Failed to POST scene via HA API: %v", err),
 			ObservedGeneration: scene.Generation,
 		})
 		if statusErr := r.Status().Update(ctx, scene); statusErr != nil {
 			log.Error(statusErr, "Failed to update status")
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Perform hot-reload if hash changed OR reload is pending (token was previously unavailable)
+	// REST API PUT above already applied the scene in HA in-memory.
+	// Always clear prior failure state and record apply time.
 	hashChanged := scene.Status.SceneHash != sceneHash
-	reloadPending := false
-	if reloadCond := meta.FindStatusCondition(scene.Status.Conditions, "ReloadReady"); reloadCond != nil {
-		reloadPending = reloadCond.Status == metav1.ConditionFalse && reloadCond.Reason == reasonTokenNotAvailable
+	if hashChanged {
+		log.Info("Scene hash changed, recording REST API apply",
+			"oldHash", scene.Status.SceneHash,
+			"newHash", sceneHash)
 	}
-	if hashChanged || reloadPending {
-		if err := r.performSceneReload(ctx, scene, ha, sceneHash); err != nil {
-			if statusErr := r.Status().Update(ctx, scene); statusErr != nil {
-				log.Error(statusErr, "Failed to update status")
-			}
-			return ctrl.Result{}, err
-		}
-	}
+	now := metav1.Now()
+	scene.Status.LastReloadTime = &now
+	scene.Status.LastError = ""
+	meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
+		Type:               "ReloadReady",
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: scene.Generation,
+		Reason:             "ReloadSuccessful",
+		Message:            "Scene applied via REST API",
+	})
 
-	// Update status — always mark Ready after ConfigMap sync (reload failure is graceful)
 	scene.Status.SceneHash = sceneHash
 	scene.Status.ObservedGeneration = scene.Generation
 	scene.Status.EntityCount = int32(len(scene.Spec.Entities))
@@ -188,138 +241,7 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	log.Info("Successfully reconciled HomeAssistantScene")
-
-	// Requeue if hot-reload is still pending (token not yet available) so we retry once it is
-	if reloadCond := meta.FindStatusCondition(scene.Status.Conditions, "ReloadReady"); reloadCond != nil {
-		if reloadCond.Status == metav1.ConditionFalse && reloadCond.Reason == reasonTokenNotAvailable {
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-		}
-	}
 	return ctrl.Result{}, nil
-}
-
-// reconcileScenesConfigMap creates or updates the aggregated
-// scenes.yaml ConfigMap. This ConfigMap contains ALL scenes
-// for a given HomeAssistant instance.
-func (r *HomeAssistantSceneReconciler) reconcileScenesConfigMap(
-	ctx context.Context,
-	scene *hav1alpha1.HomeAssistantScene,
-) error {
-	log := logf.FromContext(ctx)
-
-	configMapName := scene.Spec.HomeAssistantRef.Name + generatedScenesSuffix
-
-	// Fetch all HomeAssistantScene resources for this HomeAssistant instance
-	sceneList := &hav1alpha1.HomeAssistantSceneList{}
-	if err := r.List(ctx, sceneList, client.InNamespace(scene.Namespace)); err != nil {
-		return fmt.Errorf("failed to list HomeAssistantScene resources: %w", err)
-	}
-
-	// Filter scenes for this HomeAssistant instance
-	var scenes []map[string]interface{}
-	for _, sc := range sceneList.Items {
-		if sc.Spec.HomeAssistantRef.Name != scene.Spec.HomeAssistantRef.Name {
-			continue
-		}
-		// Skip scenes being deleted
-		if !sc.DeletionTimestamp.IsZero() {
-			log.Info("Skipping scene being deleted", "name", sc.Name)
-			continue
-		}
-
-		// Convert scene to YAML-compatible map
-		sceneYaml, err := r.sceneToYaml(&sc)
-		if err != nil {
-			log.Error(err, "Failed to convert scene to YAML", "name", sc.Name)
-			continue
-		}
-		scenes = append(scenes, sceneYaml)
-	}
-
-	// Generate scenes.yaml content
-	yamlData, err := yaml.Marshal(scenes)
-	if err != nil {
-		return fmt.Errorf("failed to marshal scenes to YAML: %w", err)
-	}
-
-	// Create or update ConfigMap
-	configMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      configMapName,
-			Namespace: scene.Namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":       "homeassistant",
-				"app.kubernetes.io/instance":   scene.Spec.HomeAssistantRef.Name,
-				"app.kubernetes.io/managed-by": "homeassistant-operator",
-				"app.kubernetes.io/component":  "scenes",
-			},
-		},
-		Data: map[string]string{
-			scenesYamlKey: string(yamlData),
-		},
-	}
-
-	// Get HomeAssistant to set owner reference
-	ha := &hav1alpha1.HomeAssistant{}
-	haRef := types.NamespacedName{Name: scene.Spec.HomeAssistantRef.Name, Namespace: scene.Namespace}
-	if err := r.Get(ctx, haRef, ha); err != nil {
-		// If HA doesn't exist, we can't create/update ConfigMap with proper owner reference
-		// This is expected during cleanup/deletion scenarios
-		if errors.IsNotFound(err) {
-			log.V(1).Info("HomeAssistant not found, skipping ConfigMap reconciliation", "ha", haRef.Name)
-			return nil
-		}
-		return fmt.Errorf("failed to get HomeAssistant: %w", err)
-	}
-
-	// Set owner reference to HomeAssistant (not to individual scene)
-	if err := controllerutil.SetControllerReference(ha, configMap, r.Scheme); err != nil {
-		return fmt.Errorf("failed to set owner reference: %w", err)
-	}
-
-	// Check if ConfigMap exists
-	existingConfigMap := &corev1.ConfigMap{}
-	err = r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: scene.Namespace}, existingConfigMap)
-	if err != nil && errors.IsNotFound(err) {
-		// Create new ConfigMap
-		log.Info("Creating scenes ConfigMap", "name", configMapName)
-		if err := r.Create(ctx, configMap); err != nil {
-			return fmt.Errorf("failed to create ConfigMap: %w", err)
-		}
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("failed to get existing ConfigMap: %w", err)
-	}
-
-	// Compare Data, Labels and OwnerReferences to determine if update is needed
-	needsUpdate := false
-	if !reflect.DeepEqual(existingConfigMap.Data, configMap.Data) {
-		needsUpdate = true
-		log.V(1).Info("ConfigMap Data changed")
-	}
-	if !reflect.DeepEqual(existingConfigMap.Labels, configMap.Labels) {
-		needsUpdate = true
-		log.V(1).Info("ConfigMap Labels changed")
-	}
-	if !reflect.DeepEqual(existingConfigMap.OwnerReferences, configMap.OwnerReferences) {
-		needsUpdate = true
-		log.V(1).Info("ConfigMap OwnerReferences changed")
-	}
-
-	// Only update if something actually changed
-	if needsUpdate {
-		existingConfigMap.Data = configMap.Data
-		existingConfigMap.Labels = configMap.Labels
-		existingConfigMap.OwnerReferences = configMap.OwnerReferences
-		log.Info("Updating scenes ConfigMap", "name", configMapName)
-		if err := r.Update(ctx, existingConfigMap); err != nil {
-			return fmt.Errorf("failed to update ConfigMap: %w", err)
-		}
-	} else {
-		log.V(1).Info("ConfigMap unchanged, skipping update", "name", configMapName)
-	}
-
-	return nil
 }
 
 // sceneToYaml converts HomeAssistantScene CR to YAML-compatible map
@@ -373,130 +295,50 @@ func (r *HomeAssistantSceneReconciler) sceneToYaml(
 	return result, nil
 }
 
-// performSceneReload triggers hot-reload of scenes via Home Assistant REST API
-//
-// nolint:gocyclo
-//
-//nolint:dupl // dupl: Similar to performAutomationReload by design
-func (r *HomeAssistantSceneReconciler) performSceneReload(
+// reconcileSceneViaAPI creates or updates this scene in Home Assistant
+// via REST API (POST /api/config/scene/config/{id}).
+// HA writes the result to scenes.yaml on the PVC (writable).
+func (r *HomeAssistantSceneReconciler) reconcileSceneViaAPI(
 	ctx context.Context,
 	scene *hav1alpha1.HomeAssistantScene,
 	ha *hav1alpha1.HomeAssistant,
-	newHash string,
+	token string,
 ) error {
 	log := logf.FromContext(ctx)
 
-	// Check if autoReload is enabled
-	autoReload := true
-	if scene.Spec.AutoReload != nil {
-		autoReload = *scene.Spec.AutoReload
+	sceneData, err := r.sceneToYaml(scene)
+	if err != nil {
+		return fmt.Errorf("failed to convert scene to map: %w", err)
 	}
 
-	if !autoReload {
-		log.Info("AutoReload disabled, skipping reload", "name", scene.Name)
-		scene.Status.LastError = ""
-		return nil
+	id := scene.Spec.ID
+	if id == "" {
+		id = scene.Name
 	}
 
-	// Get API token for hot-reload
-	token, tokenErr := getApiToken(ctx, r.Client, ha)
-	if tokenErr != nil {
-		log.Info("API token not available, skipping hot-reload")
-		scene.Status.LastError = errMsgTokenNotAvailable
+	haClient := r.haClientFor(ha)
 
-		// Set condition: Token not available
-		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
-			Type:               "ReloadReady",
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: scene.Generation,
-			Reason:             reasonTokenNotAvailable,
-			Message:            "API token not available - bootstrap may not be configured",
-		})
-		return nil
+	// If spec.id was renamed, delete the old scene from HA to avoid orphans.
+	prevID := scene.Annotations[lastAppliedIDAnnotationKey]
+	if prevID != "" && prevID != id {
+		if delErr := haClient.DeleteScene(ctx, token, prevID); delErr != nil {
+			log.Error(delErr, "Failed to delete old scene ID from HA (continuing)", "prevID", prevID)
+		}
 	}
 
-	// Build Home Assistant URL
-	haURL := buildHomeAssistantURL(ha)
-	haClient := haclient.NewClient(haURL)
-
-	// Use PerformReloadWithRetry with smart detection
-	config := ReloadConfig{
-		MaxRetries:    3,
-		RetryDelay:    5 * time.Second,
-		ComponentName: "scene",
+	if err := haClient.PutScene(ctx, token, id, sceneData); err != nil {
+		return err
 	}
 
-	reloadFunc := func(ctx context.Context, token string) error {
-		return haClient.ReloadScenes(ctx, token)
+	// Persist the applied ID so future reconciles can detect renames.
+	orig := scene.DeepCopy()
+	if scene.Annotations == nil {
+		scene.Annotations = map[string]string{}
 	}
-
-	result := PerformReloadWithRetry(ctx, haClient, token, config, reloadFunc)
-
-	// Update status based on result
-	if result.Success {
-		// SUCCESS
-		now := metav1.Now()
-		scene.Status.LastReloadTime = &now
-		scene.Status.LastError = ""
-
-		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
-			Type:               "ReloadReady",
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: scene.Generation,
-			Reason:             "ReloadSuccessful",
-			Message: fmt.Sprintf("Scene hot-reloaded successfully after %d attempts (%.1fs)",
-				result.Attempts, result.Duration.Seconds()),
-		})
-
-		r.Recorder.Eventf(scene, nil, corev1.EventTypeNormal, "ReloadSuccessful", "ReloadSuccessful",
-			"Scene hot-reload successful (attempts: %d, duration: %.1fs)",
-			result.Attempts, result.Duration.Seconds())
-
-		log.Info("Scene hot-reload successful", "name", scene.Name, "hash", newHash,
-			"reloadID", result.ReloadID, "attempts", result.Attempts, "duration", result.Duration)
-		return nil
+	scene.Annotations[lastAppliedIDAnnotationKey] = id
+	if patchErr := r.Patch(ctx, scene, client.MergeFrom(orig)); patchErr != nil {
+		return fmt.Errorf("failed to patch scene annotation: %w", patchErr)
 	}
-
-	// FAILURE
-	if !result.ComponentLoaded {
-		// Component not loaded - will retry on next reconcile
-		scene.Status.LastError = result.Error.Error()
-
-		meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
-			Type:               "ReloadReady",
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: scene.Generation,
-			Reason:             "ComponentNotLoaded",
-			Message:            "Scene integration not loaded in Home Assistant yet (will retry automatically)",
-		})
-
-		log.Info("Scene component not loaded, will retry",
-			"reloadID", result.ReloadID, "error", result.Error)
-
-		// Return error to trigger requeue
-		return result.Error
-	}
-
-	// Hot-reload failed after retries
-	scene.Status.LastError = result.Error.Error()
-
-	meta.SetStatusCondition(&scene.Status.Conditions, metav1.Condition{
-		Type:               "ReloadReady",
-		Status:             metav1.ConditionFalse,
-		ObservedGeneration: scene.Generation,
-		Reason:             "ReloadFailed",
-		Message: fmt.Sprintf("Hot-reload failed after %d attempts: %s",
-			result.Attempts, truncateString(result.Error.Error(), 200)),
-	})
-
-	r.Recorder.Eventf(scene, nil, corev1.EventTypeWarning, "ReloadFailed", "ReloadFailed",
-		"Hot-reload failed after %d attempts: %s",
-		result.Attempts, truncateString(result.Error.Error(), 100))
-
-	log.Error(result.Error, "Scene hot-reload failed after retries",
-		"reloadID", result.ReloadID, "attempts", result.Attempts, "duration", result.Duration)
-
-	// Don't fail reconciliation - scene is in ConfigMap, will be loaded on HA restart
 	return nil
 }
 
@@ -523,7 +365,6 @@ func (r *HomeAssistantSceneReconciler) calculateSceneHash(
 func (r *HomeAssistantSceneReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&hav1alpha1.HomeAssistantScene{}).
-		Owns(&corev1.ConfigMap{}).
 		Watches(
 			&hav1alpha1.HomeAssistant{},
 			handler.EnqueueRequestsFromMapFunc(r.findScenesForHomeAssistant),

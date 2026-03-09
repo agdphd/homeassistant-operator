@@ -24,13 +24,9 @@ const (
 	// HomeAssistantConfiguration controllers
 	configHashAnnotationKey = "ha.homeassistant.io/config-hash"
 
-	// automationsHashAnnotationKey - Used by HomeAssistant controller
-	// to trigger pod restart when automations ConfigMap changes (subPath limitation)
-	automationsHashAnnotationKey = "ha.homeassistant.io/automations-hash"
-
-	// scenesHashAnnotationKey - Used by HomeAssistant controller
-	// to trigger pod restart when scenes ConfigMap changes (subPath limitation)
-	scenesHashAnnotationKey = "ha.homeassistant.io/scenes-hash"
+	// lastAppliedIDAnnotationKey tracks the last ID sent to HA REST API.
+	// Used to detect spec.id renames and delete the old resource from HA.
+	lastAppliedIDAnnotationKey = "ha.homeassistant.io/last-applied-id"
 
 	// Reload method names for status tracking
 	// Used by Configuration and Automation controllers

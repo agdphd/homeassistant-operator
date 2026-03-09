@@ -17,8 +17,10 @@ limitations under the License.
 package controller
 
 import (
-	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -31,23 +33,25 @@ import (
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
 var _ = Describe("HomeAssistantScene Controller", func() {
 	const (
-		timeout  = time.Second * 10
-		interval = time.Millisecond * 250
+		sceneTimeout  = time.Second * 10
+		sceneInterval = time.Millisecond * 250
 	)
 
 	var (
-		ctx        context.Context
-		namespace  string
-		reconciler *HomeAssistantSceneReconciler
+		reconciler   *HomeAssistantSceneReconciler
+		mockServer   *httptest.Server
+		postRequests chan string
+		delRequests  chan string
 	)
 
-	// Helper to create test scene
 	createTestScene := func(
-		name, haRef, sceneName string,
+		name, namespace, haRef, sceneName string,
 		entities []hav1alpha1.SceneEntity,
 	) *hav1alpha1.HomeAssistantScene {
 		return &hav1alpha1.HomeAssistantScene{
@@ -63,7 +67,6 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 		}
 	}
 
-	// Helper to create test entity
 	createTestEntity := func(entityID, state string, attrs map[string]interface{}) hav1alpha1.SceneEntity {
 		entity := hav1alpha1.SceneEntity{
 			EntityID: entityID,
@@ -76,304 +79,98 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 		return entity
 	}
 
-	// Helper to reconcile
-	reconcileScene := func(name string) (reconcile.Result, error) {
+	reconcileScene := func(name, namespace string) (reconcile.Result, error) {
 		return reconciler.Reconcile(ctx, reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Name:      name,
-				Namespace: namespace,
-			},
+			NamespacedName: types.NamespacedName{Name: name, Namespace: namespace},
 		})
 	}
 
+	setupSceneToken := func(haName, namespace string) {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      haName + "-api-token",
+				Namespace: namespace,
+			},
+			Data: map[string][]byte{"token": []byte("test-token")},
+		}
+		Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+
+		ha := &hav1alpha1.HomeAssistant{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, ha)).To(Succeed())
+		ha.Status.Bootstrap = &hav1alpha1.BootstrapStatus{
+			ApiTokenSecretName: haName + "-api-token",
+		}
+		Expect(k8sClient.Status().Update(ctx, ha)).To(Succeed())
+	}
+
 	BeforeEach(func() {
-		ctx = context.Background()
-		namespace = "default"
+		postRequests = make(chan string, 20)
+		delRequests = make(chan string, 20)
+
+		mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/config/"):
+				// POST /api/config/scene/config/{id} — create/update
+				postRequests <- r.URL.Path
+				w.WriteHeader(http.StatusOK)
+			case r.Method == http.MethodDelete:
+				// DELETE /api/config/scene/config/{id}
+				delRequests <- r.URL.Path
+				w.WriteHeader(http.StatusOK)
+			case r.Method == http.MethodGet && r.URL.Path == "/api/config":
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"components":["scene"],"version":"2024.1.0"}`))
+			case r.Method == http.MethodPost:
+				// Service calls for hot-reload
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`[]`))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
 
 		reconciler = &HomeAssistantSceneReconciler{
 			Client:   k8sClient,
 			Scheme:   k8sClient.Scheme(),
 			Recorder: events.NewFakeRecorder(100),
+			NewHAClient: func(_ string) *haclient.Client {
+				return haclient.NewClient(mockServer.URL)
+			},
 		}
 	})
 
-	Context("ConfigMap Aggregation", func() {
-		var ha *hav1alpha1.HomeAssistant
+	AfterEach(func() {
+		// Cleanup scenes
+		sceneList := &hav1alpha1.HomeAssistantSceneList{}
+		_ = k8sClient.List(ctx, sceneList)
+		for i := range sceneList.Items {
+			ns := sceneList.Items[i].Namespace
+			name := sceneList.Items[i].Name
+			_ = k8sClient.Delete(ctx, &sceneList.Items[i])
+			_, _ = reconcileScene(name, ns)
+		}
 
-		BeforeEach(func() {
-			ha = &hav1alpha1.HomeAssistant{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-ha",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSpec{
-					Image:   "homeassistant/home-assistant:latest",
-					Version: "2024.1.0",
-				},
-			}
-			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
-		})
+		// Cleanup secrets
+		secretList := &corev1.SecretList{}
+		_ = k8sClient.List(ctx, secretList)
+		for i := range secretList.Items {
+			_ = k8sClient.Delete(ctx, &secretList.Items[i])
+		}
 
-		AfterEach(func() {
-			// Cleanup HA
-			_ = k8sClient.Delete(ctx, ha)
-		})
+		// Cleanup HAs
+		haList := &hav1alpha1.HomeAssistantList{}
+		_ = k8sClient.List(ctx, haList)
+		for i := range haList.Items {
+			_ = k8sClient.Delete(ctx, &haList.Items[i])
+		}
 
-		It("should create ConfigMap with single scene", func() {
-			scene := createTestScene(
-				"test-scene-single",
-				"test-ha",
-				"Movie Night",
-				[]hav1alpha1.SceneEntity{
-					createTestEntity("light.living_room", "on", map[string]interface{}{"brightness": 30}),
-					createTestEntity("cover.blinds", "closed", nil),
-				},
-			)
-
-			Expect(k8sClient.Create(ctx, scene)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, scene) }()
-
-			// Reconcile
-			_, err := reconcileScene(scene.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Check ConfigMap created
-			configMapName := "test-ha-scenes"
-			cm := &corev1.ConfigMap{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      configMapName,
-					Namespace: namespace,
-				}, cm)
-			}, timeout, interval).Should(Succeed())
-
-			// Verify ConfigMap data
-			Expect(cm.Data).To(HaveKey("scenes.yaml"))
-			Expect(cm.Data["scenes.yaml"]).To(ContainSubstring("id: test-scene-single"))
-			Expect(cm.Data["scenes.yaml"]).To(ContainSubstring("name: Movie Night"))
-			Expect(cm.Data["scenes.yaml"]).To(ContainSubstring("light.living_room"))
-		})
-
-		It("should aggregate multiple scenes into single ConfigMap", func() {
-			scene1 := createTestScene(
-				"scene-one",
-				"test-ha",
-				"Scene One",
-				[]hav1alpha1.SceneEntity{
-					createTestEntity("light.room1", "on", nil),
-				},
-			)
-			scene2 := createTestScene(
-				"scene-two",
-				"test-ha",
-				"Scene Two",
-				[]hav1alpha1.SceneEntity{
-					createTestEntity("light.room2", "off", nil),
-				},
-			)
-
-			Expect(k8sClient.Create(ctx, scene1)).To(Succeed())
-			Expect(k8sClient.Create(ctx, scene2)).To(Succeed())
-			defer func() {
-				_ = k8sClient.Delete(ctx, scene1)
-				_ = k8sClient.Delete(ctx, scene2)
-			}()
-
-			// Reconcile both
-			_, err := reconcileScene(scene1.Name)
-			Expect(err).NotTo(HaveOccurred())
-			_, err = reconcileScene(scene2.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Check ConfigMap contains both
-			cm := &corev1.ConfigMap{}
-			Eventually(func() string {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-ha-scenes",
-					Namespace: namespace,
-				}, cm)
-				if err != nil {
-					return ""
-				}
-				return cm.Data["scenes.yaml"]
-			}, timeout, interval).Should(And(
-				ContainSubstring("scene-one"),
-				ContainSubstring("scene-two"),
-			))
-		})
-
-		It("should regenerate ConfigMap when scene is updated", func() {
-			scene := createTestScene(
-				"scene-update",
-				"test-ha",
-				"Original Name",
-				[]hav1alpha1.SceneEntity{
-					createTestEntity("light.test", "on", nil),
-				},
-			)
-
-			Expect(k8sClient.Create(ctx, scene)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, scene) }()
-
-			// Initial reconcile
-			_, err := reconcileScene(scene.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify initial ConfigMap
-			cm := &corev1.ConfigMap{}
-			Eventually(func() string {
-				_ = k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-ha-scenes",
-					Namespace: namespace,
-				}, cm)
-				return cm.Data["scenes.yaml"]
-			}, timeout, interval).Should(ContainSubstring("Original Name"))
-
-			// Update scene
-			Eventually(func() error {
-				if err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      scene.Name,
-					Namespace: namespace,
-				}, scene); err != nil {
-					return err
-				}
-				scene.Spec.Name = "Updated Name"
-				return k8sClient.Update(ctx, scene)
-			}, timeout, interval).Should(Succeed())
-
-			// Reconcile again
-			_, err = reconcileScene(scene.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify ConfigMap updated
-			Eventually(func() string {
-				_ = k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-ha-scenes",
-					Namespace: namespace,
-				}, cm)
-				return cm.Data["scenes.yaml"]
-			}, timeout, interval).Should(ContainSubstring("Updated Name"))
-		})
-
-		It("should remove scene from ConfigMap when deleted (finalizer)", func() {
-			// Create dedicated HA for this test to avoid interference
-			haDelete := &hav1alpha1.HomeAssistant{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-ha-delete",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSpec{
-					Image:   "homeassistant/home-assistant:latest",
-					Version: "2024.1.0",
-				},
-			}
-			Expect(k8sClient.Create(ctx, haDelete)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, haDelete) }()
-
-			scene1 := createTestScene(
-				"scene-keep",
-				"test-ha-delete",
-				"Keep",
-				[]hav1alpha1.SceneEntity{
-					createTestEntity("light.keep", "on", nil),
-				},
-			)
-			scene2 := createTestScene(
-				"scene-delete",
-				"test-ha-delete",
-				"Delete",
-				[]hav1alpha1.SceneEntity{
-					createTestEntity("light.delete", "on", nil),
-				},
-			)
-
-			Expect(k8sClient.Create(ctx, scene1)).To(Succeed())
-			Expect(k8sClient.Create(ctx, scene2)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, scene1) }()
-
-			// Reconcile both
-			_, err := reconcileScene(scene1.Name)
-			Expect(err).NotTo(HaveOccurred())
-			_, err = reconcileScene(scene2.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify both in ConfigMap
-			cm := &corev1.ConfigMap{}
-			Eventually(func() string {
-				_ = k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-ha-delete-scenes",
-					Namespace: namespace,
-				}, cm)
-				return cm.Data["scenes.yaml"]
-			}, timeout, interval).Should(And(
-				ContainSubstring("scene-keep"),
-				ContainSubstring("scene-delete"),
-			))
-
-			// Delete scene2
-			Expect(k8sClient.Delete(ctx, scene2)).To(Succeed())
-
-			// Wait for deletion to trigger finalizer reconciliation
-			time.Sleep(time.Second)
-			_, err = reconcileScene(scene2.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Verify only scene1 remains
-			Eventually(func() string {
-				_ = k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-ha-delete-scenes",
-					Namespace: namespace,
-				}, cm)
-				return cm.Data["scenes.yaml"]
-			}, timeout, interval).Should(And(
-				ContainSubstring("scene-keep"),
-				Not(ContainSubstring("scene-delete")),
-			))
-		})
-
-		It("should set owner reference to HomeAssistant CR (not scene)", func() {
-			scene := createTestScene(
-				"scene-owner",
-				"test-ha",
-				"Owner Test",
-				[]hav1alpha1.SceneEntity{
-					createTestEntity("light.test", "on", nil),
-				},
-			)
-
-			Expect(k8sClient.Create(ctx, scene)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, scene) }()
-
-			// Reconcile
-			_, err := reconcileScene(scene.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Check ConfigMap owner reference
-			cm := &corev1.ConfigMap{}
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-ha-scenes",
-					Namespace: namespace,
-				}, cm)
-				if err != nil {
-					return false
-				}
-				// Owner should be HomeAssistant, not Scene
-				if len(cm.OwnerReferences) == 0 {
-					return false
-				}
-				return cm.OwnerReferences[0].Kind == "HomeAssistant" &&
-					cm.OwnerReferences[0].Name == "test-ha"
-			}, timeout, interval).Should(BeTrue())
-		})
+		mockServer.Close()
 	})
 
-	Context("YAML Conversion", func() {
+	Context("YAML Conversion (direct unit tests)", func() {
 		It("should convert scene to YAML with all fields", func() {
 			scene := &hav1alpha1.HomeAssistantScene{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-scene",
-				},
+				ObjectMeta: metav1.ObjectMeta{Name: "test-scene"},
 				Spec: hav1alpha1.HomeAssistantSceneSpec{
 					ID:   "custom_id",
 					Name: "Test Scene",
@@ -389,15 +186,10 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 
 			yamlMap, err := reconciler.sceneToYaml(scene)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(yamlMap).To(HaveKey("id"))
 			Expect(yamlMap["id"]).To(Equal("custom_id"))
-			Expect(yamlMap).To(HaveKey("name"))
 			Expect(yamlMap["name"]).To(Equal("Test Scene"))
-			Expect(yamlMap).To(HaveKey("icon"))
 			Expect(yamlMap["icon"]).To(Equal("mdi:test"))
-			Expect(yamlMap).To(HaveKey("entities"))
 
-			// Check entities format (map, not list)
 			entities := yamlMap["entities"].(map[string]interface{})
 			Expect(entities).To(HaveKey("light.test"))
 			lightData := entities["light.test"].(map[string]interface{})
@@ -408,9 +200,7 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 
 		It("should omit optional fields when not set", func() {
 			scene := &hav1alpha1.HomeAssistantScene{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "minimal-scene",
-				},
+				ObjectMeta: metav1.ObjectMeta{Name: "minimal-scene"},
 				Spec: hav1alpha1.HomeAssistantSceneSpec{
 					Entities: []hav1alpha1.SceneEntity{
 						createTestEntity("light.test", "on", nil),
@@ -420,16 +210,14 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 
 			yamlMap, err := reconciler.sceneToYaml(scene)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(yamlMap).To(HaveKey("id")) // Auto-generated from CR name
+			Expect(yamlMap).To(HaveKey("id"))
 			Expect(yamlMap).NotTo(HaveKey("name"))
 			Expect(yamlMap).NotTo(HaveKey("icon"))
 		})
 
 		It("should auto-generate ID from CR name", func() {
 			scene := &hav1alpha1.HomeAssistantScene{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "auto-id-scene",
-				},
+				ObjectMeta: metav1.ObjectMeta{Name: "auto-id-scene"},
 				Spec: hav1alpha1.HomeAssistantSceneSpec{
 					Entities: []hav1alpha1.SceneEntity{
 						createTestEntity("light.test", "on", nil),
@@ -444,15 +232,10 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 
 		It("should handle entities with state only (no attributes)", func() {
 			scene := &hav1alpha1.HomeAssistantScene{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "state-only-scene",
-				},
+				ObjectMeta: metav1.ObjectMeta{Name: "state-only-scene"},
 				Spec: hav1alpha1.HomeAssistantSceneSpec{
 					Entities: []hav1alpha1.SceneEntity{
-						{
-							EntityID: "light.simple",
-							State:    "off",
-						},
+						{EntityID: "light.simple", State: "off"},
 					},
 				},
 			}
@@ -461,21 +244,16 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			entities := yamlMap["entities"].(map[string]interface{})
-			Expect(entities).To(HaveKey("light.simple"))
 			lightData := entities["light.simple"].(map[string]interface{})
-			Expect(lightData).To(HaveKey("state"))
 			Expect(lightData["state"]).To(Equal("off"))
-			// Only state, no other attributes
 			Expect(lightData).To(HaveLen(1))
 		})
 	})
 
-	Context("Hash Tracking", func() {
+	Context("Hash Tracking (direct unit tests)", func() {
 		It("should calculate stable hash (idempotent)", func() {
 			scene := &hav1alpha1.HomeAssistantScene{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "hash-test",
-				},
+				ObjectMeta: metav1.ObjectMeta{Name: "hash-test"},
 				Spec: hav1alpha1.HomeAssistantSceneSpec{
 					Entities: []hav1alpha1.SceneEntity{
 						createTestEntity("light.test", "on", map[string]interface{}{"brightness": 50}),
@@ -485,44 +263,32 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 
 			hash1, err := reconciler.calculateSceneHash(scene)
 			Expect(err).NotTo(HaveOccurred())
-
 			hash2, err := reconciler.calculateSceneHash(scene)
 			Expect(err).NotTo(HaveOccurred())
-
 			Expect(hash1).To(Equal(hash2))
 		})
 
 		It("should change hash when entities change", func() {
 			scene := &hav1alpha1.HomeAssistantScene{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "hash-change-test",
-				},
+				ObjectMeta: metav1.ObjectMeta{Name: "hash-change-test"},
 				Spec: hav1alpha1.HomeAssistantSceneSpec{
-					Entities: []hav1alpha1.SceneEntity{
-						createTestEntity("light.test", "on", nil),
-					},
+					Entities: []hav1alpha1.SceneEntity{createTestEntity("light.test", "on", nil)},
 				},
 			}
 
 			hash1, err := reconciler.calculateSceneHash(scene)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Change entities
-			scene.Spec.Entities = []hav1alpha1.SceneEntity{
-				createTestEntity("light.test", "off", nil),
-			}
+			scene.Spec.Entities = []hav1alpha1.SceneEntity{createTestEntity("light.test", "off", nil)}
 
 			hash2, err := reconciler.calculateSceneHash(scene)
 			Expect(err).NotTo(HaveOccurred())
-
 			Expect(hash1).NotTo(Equal(hash2))
 		})
 
 		It("should change hash when entity attributes change", func() {
 			scene := &hav1alpha1.HomeAssistantScene{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "hash-attr-test",
-				},
+				ObjectMeta: metav1.ObjectMeta{Name: "hash-attr-test"},
 				Spec: hav1alpha1.HomeAssistantSceneSpec{
 					Entities: []hav1alpha1.SceneEntity{
 						createTestEntity("light.test", "on", map[string]interface{}{"brightness": 30}),
@@ -533,314 +299,138 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 			hash1, err := reconciler.calculateSceneHash(scene)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Change attribute
 			scene.Spec.Entities = []hav1alpha1.SceneEntity{
 				createTestEntity("light.test", "on", map[string]interface{}{"brightness": 50}),
 			}
 
 			hash2, err := reconciler.calculateSceneHash(scene)
 			Expect(err).NotTo(HaveOccurred())
-
 			Expect(hash1).NotTo(Equal(hash2))
 		})
 	})
 
-	Context("Hot-Reload", func() {
-		var ha *hav1alpha1.HomeAssistant
-
-		BeforeEach(func() {
-			ha = &hav1alpha1.HomeAssistant{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-ha-reload",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSpec{
-					Image:   "homeassistant/home-assistant:latest",
-					Version: "2024.1.0",
-				},
-			}
-			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
-		})
-
-		AfterEach(func() {
-			_ = k8sClient.Delete(ctx, ha)
-		})
-
-		It("should skip reload when autoReload=false", func() {
-			autoReload := false
-			scene := &hav1alpha1.HomeAssistantScene{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "scene-no-reload",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSceneSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: "test-ha-reload"},
-					AutoReload:       &autoReload,
-					Entities: []hav1alpha1.SceneEntity{
-						createTestEntity("light.test", "on", nil),
-					},
-				},
-			}
-
-			Expect(k8sClient.Create(ctx, scene)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, scene) }()
-
-			// Reconcile
-			_, err := reconcileScene(scene.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Check status - LastError should be empty (graceful skip)
-			Eventually(func() string {
-				_ = k8sClient.Get(ctx, types.NamespacedName{
-					Name:      scene.Name,
-					Namespace: namespace,
-				}, scene)
-				return scene.Status.LastError
-			}, timeout, interval).Should(BeEmpty())
-		})
-
-		It("should skip reload gracefully when API token missing", func() {
-			scene := &hav1alpha1.HomeAssistantScene{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "scene-no-token",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSceneSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: "test-ha-reload"},
-					Entities: []hav1alpha1.SceneEntity{
-						createTestEntity("light.test", "on", nil),
-					},
-				},
-			}
-
-			Expect(k8sClient.Create(ctx, scene)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, scene) }()
-
-			// Reconcile (no token secret exists)
-			_, err := reconcileScene(scene.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Check status - should have error about missing token
-			Eventually(func() string {
-				_ = k8sClient.Get(ctx, types.NamespacedName{
-					Name:      scene.Name,
-					Namespace: namespace,
-				}, scene)
-				return scene.Status.LastError
-			}, timeout, interval).Should(ContainSubstring("API token not found"))
-		})
-	})
-
 	Context("Validation", func() {
-		It("should set condition when HomeAssistant not found", func() {
+		It("should set Ready=False when HomeAssistant not found", func() {
+			ns := "default"
 			scene := &hav1alpha1.HomeAssistantScene{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "scene-no-ha",
-					Namespace: namespace,
-				},
+				ObjectMeta: metav1.ObjectMeta{Name: "scene-no-ha", Namespace: ns},
 				Spec: hav1alpha1.HomeAssistantSceneSpec{
 					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: "non-existent"},
-					Entities: []hav1alpha1.SceneEntity{
-						createTestEntity("light.test", "on", nil),
-					},
+					Entities:         []hav1alpha1.SceneEntity{createTestEntity("light.test", "on", nil)},
 				},
 			}
 
 			Expect(k8sClient.Create(ctx, scene)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, scene) }()
 
-			// Reconcile
-			result, err := reconcileScene(scene.Name)
+			// First reconcile adds finalizer
+			_, err := reconcileScene(scene.Name, ns)
+			Expect(err).NotTo(HaveOccurred())
+			// Second reconcile validates HA ref
+			result, err := reconcileScene(scene.Name, ns)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
-			// Check status condition
 			Eventually(func() bool {
-				_ = k8sClient.Get(ctx, types.NamespacedName{
-					Name:      scene.Name,
-					Namespace: namespace,
-				}, scene)
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: scene.Name, Namespace: ns}, scene)
 				for _, cond := range scene.Status.Conditions {
 					if cond.Type == conditionTypeReady && cond.Status == metav1.ConditionFalse {
 						return true
 					}
 				}
 				return false
-			}, timeout, interval).Should(BeTrue())
+			}, sceneTimeout, sceneInterval).Should(BeTrue())
+		})
+
+		It("should requeue 30s when API token missing", func() {
+			ns := "default"
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-ha-scene-notoken", Namespace: ns},
+				Spec:       hav1alpha1.HomeAssistantSpec{Version: "stable"},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			scene := &hav1alpha1.HomeAssistantScene{
+				ObjectMeta: metav1.ObjectMeta{Name: "scene-no-token", Namespace: ns},
+				Spec: hav1alpha1.HomeAssistantSceneSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: ha.Name},
+					Entities:         []hav1alpha1.SceneEntity{createTestEntity("light.test", "on", nil)},
+				},
+			}
+			Expect(k8sClient.Create(ctx, scene)).To(Succeed())
+
+			// First reconcile adds finalizer
+			_, err := reconcileScene(scene.Name, ns)
+			Expect(err).NotTo(HaveOccurred())
+			// Second reconcile hits token check
+			result, err := reconcileScene(scene.Name, ns)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 		})
 	})
 
-	Context("Status Conditions", func() {
-		var ha *hav1alpha1.HomeAssistant
+	Context("Status Conditions (with mock HA server)", func() {
+		const haStatusName = "test-ha-scene-status"
+		const ns = "default"
 
 		BeforeEach(func() {
-			ha = &hav1alpha1.HomeAssistant{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-ha-status",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSpec{
-					Image:   "homeassistant/home-assistant:latest",
-					Version: "2024.1.0",
-				},
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: haStatusName, Namespace: ns},
+				Spec:       hav1alpha1.HomeAssistantSpec{Version: "2024.1.0"},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+			setupSceneToken(haStatusName, ns)
 		})
 
-		AfterEach(func() {
-			_ = k8sClient.Delete(ctx, ha)
-		})
-
-		It("should set Ready=True when successful", func() {
-			scene := &hav1alpha1.HomeAssistantScene{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "scene-ready",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSceneSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: "test-ha-status"},
-					Entities: []hav1alpha1.SceneEntity{
-						createTestEntity("light.test", "on", nil),
-					},
-				},
-			}
-
+		It("should set Ready=True after successful PUT", func() {
+			scene := createTestScene("scene-ready", ns, haStatusName, "Movie Night",
+				[]hav1alpha1.SceneEntity{createTestEntity("light.test", "on", nil)})
 			Expect(k8sClient.Create(ctx, scene)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, scene) }()
 
-			// Reconcile
-			_, err := reconcileScene(scene.Name)
+			_, err := reconcileScene(scene.Name, ns)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = reconcileScene(scene.Name, ns)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Check status condition
 			Eventually(func() bool {
-				_ = k8sClient.Get(ctx, types.NamespacedName{
-					Name:      scene.Name,
-					Namespace: namespace,
-				}, scene)
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: scene.Name, Namespace: ns}, scene)
 				for _, cond := range scene.Status.Conditions {
 					if cond.Type == conditionTypeReady && cond.Status == metav1.ConditionTrue {
 						return true
 					}
 				}
 				return false
-			}, timeout, interval).Should(BeTrue())
+			}, sceneTimeout, sceneInterval).Should(BeTrue())
 		})
 
 		It("should update ObservedGeneration", func() {
-			scene := &hav1alpha1.HomeAssistantScene{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "scene-generation",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSceneSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: "test-ha-status"},
-					Entities: []hav1alpha1.SceneEntity{
-						createTestEntity("light.test", "on", nil),
-					},
-				},
-			}
-
+			scene := createTestScene("scene-obsgen", ns, haStatusName, "Gen Test",
+				[]hav1alpha1.SceneEntity{createTestEntity("light.test", "on", nil)})
 			Expect(k8sClient.Create(ctx, scene)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, scene) }()
 
-			// Reconcile
-			_, err := reconcileScene(scene.Name)
+			_, err := reconcileScene(scene.Name, ns)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = reconcileScene(scene.Name, ns)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Check ObservedGeneration matches metadata.generation
 			Eventually(func() bool {
-				_ = k8sClient.Get(ctx, types.NamespacedName{
-					Name:      scene.Name,
-					Namespace: namespace,
-				}, scene)
+				_ = k8sClient.Get(ctx, types.NamespacedName{Name: scene.Name, Namespace: ns}, scene)
 				return scene.Status.ObservedGeneration == scene.Generation
-			}, timeout, interval).Should(BeTrue())
-		})
-	})
-
-	Context("Idempotency", func() {
-		var ha *hav1alpha1.HomeAssistant
-
-		BeforeEach(func() {
-			ha = &hav1alpha1.HomeAssistant{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-ha-idempotent",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSpec{
-					Image:   "homeassistant/home-assistant:latest",
-					Version: "2024.1.0",
-				},
-			}
-			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
-		})
-
-		AfterEach(func() {
-			_ = k8sClient.Delete(ctx, ha)
-		})
-
-		It("should not update ConfigMap on repeated reconciles (deep equality)", func() {
-			scene := &hav1alpha1.HomeAssistantScene{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "scene-idempotent",
-					Namespace: namespace,
-				},
-				Spec: hav1alpha1.HomeAssistantSceneSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: "test-ha-idempotent"},
-					Entities: []hav1alpha1.SceneEntity{
-						createTestEntity("light.test", "on", nil),
-					},
-				},
-			}
-
-			Expect(k8sClient.Create(ctx, scene)).To(Succeed())
-			defer func() { _ = k8sClient.Delete(ctx, scene) }()
-
-			// Initial reconcile
-			_, err := reconcileScene(scene.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// Get ConfigMap resourceVersion
-			cm := &corev1.ConfigMap{}
-			Eventually(func() error {
-				return k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-ha-idempotent-scenes",
-					Namespace: namespace,
-				}, cm)
-			}, timeout, interval).Should(Succeed())
-
-			initialRV := cm.ResourceVersion
-
-			// Reconcile again (no changes)
-			_, err = reconcileScene(scene.Name)
-			Expect(err).NotTo(HaveOccurred())
-
-			// ResourceVersion should NOT change
-			Consistently(func() string {
-				_ = k8sClient.Get(ctx, types.NamespacedName{
-					Name:      "test-ha-idempotent-scenes",
-					Namespace: namespace,
-				}, cm)
-				return cm.ResourceVersion
-			}, time.Second*2, interval).Should(Equal(initialRV))
+			}, sceneTimeout, sceneInterval).Should(BeTrue())
 		})
 	})
 
 	Context("SetupWithManager", func() {
 		It("should setup controller successfully", func() {
-			// Create a test manager (simplified version)
 			mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 				Scheme: k8sClient.Scheme(),
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			// Setup controller
-			reconciler := &HomeAssistantSceneReconciler{
+			r := &HomeAssistantSceneReconciler{
 				Client: mgr.GetClient(),
 				Scheme: mgr.GetScheme(),
 			}
-			err = reconciler.SetupWithManager(mgr)
+			err = r.SetupWithManager(mgr)
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})

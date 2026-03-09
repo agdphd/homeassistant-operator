@@ -724,6 +724,126 @@ func (c *Client) GetConfig(ctx context.Context, token string) (*ConfigResponse, 
 	return &config, nil
 }
 
+// postConfig sends a POST request to a HA config endpoint with JSON body.
+// Used for creating/updating automation, scene and script configs via REST API.
+// HA uses POST (not PUT) for /api/config/{type}/config/{id} endpoints.
+func (c *Client) postConfig(ctx context.Context, token, path string, data map[string]interface{}) error {
+	body, err := json.Marshal(data)
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to marshal request", Err: err}
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return &Error{Type: ErrorTypeNotReady, Message: fmt.Sprintf("failed to POST %s", path), Err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return &Error{
+			Type:       ErrorTypeHTTP,
+			Message:    fmt.Sprintf("HTTP: POST %s failed: %d: %s", path, resp.StatusCode, string(bodyBytes)),
+			StatusCode: resp.StatusCode,
+		}
+	}
+
+	return nil
+}
+
+// deleteConfig sends a DELETE request to a HA config endpoint.
+// 404 is treated as success (idempotent delete).
+func (c *Client) deleteConfig(ctx context.Context, token, path string) error {
+	httpReq, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+path, nil)
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return &Error{Type: ErrorTypeNotReady, Message: fmt.Sprintf("failed to DELETE %s", path), Err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// 404 = already gone, treat as success (idempotent)
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return &Error{
+			Type:       ErrorTypeHTTP,
+			Message:    fmt.Sprintf("DELETE %s failed: %s", path, string(bodyBytes)),
+			StatusCode: resp.StatusCode,
+		}
+	}
+
+	return nil
+}
+
+// configPath builds a safe REST API path for a config entry, percent-encoding the id.
+func configPath(resourceType, id string) string {
+	return "/api/config/" + resourceType + "/config/" + url.PathEscape(id)
+}
+
+// PutAutomation creates or updates an automation via HA REST API.
+// HA writes the result to automations.yaml on the PVC (writable).
+// Idempotent: safe to call on every reconcile.
+func (c *Client) PutAutomation(ctx context.Context, token, id string, data map[string]interface{}) error {
+	return c.postConfig(ctx, token, configPath("automation", id), data)
+}
+
+// DeleteAutomation removes an automation via HA REST API.
+// Idempotent: returns nil if automation does not exist (404).
+func (c *Client) DeleteAutomation(ctx context.Context, token, id string) error {
+	return c.deleteConfig(ctx, token, configPath("automation", id))
+}
+
+// EnableAutomation enables an automation via HA REST API.
+func (c *Client) EnableAutomation(ctx context.Context, token, id string) error {
+	return c.postConfig(ctx, token, configPath("automation", id)+"/enable", map[string]interface{}{})
+}
+
+// DisableAutomation disables an automation via HA REST API.
+func (c *Client) DisableAutomation(ctx context.Context, token, id string) error {
+	return c.postConfig(ctx, token, configPath("automation", id)+"/disable", map[string]interface{}{})
+}
+
+// PutScene creates or updates a scene via HA REST API.
+// Idempotent: safe to call on every reconcile.
+func (c *Client) PutScene(ctx context.Context, token, id string, data map[string]interface{}) error {
+	return c.postConfig(ctx, token, configPath("scene", id), data)
+}
+
+// DeleteScene removes a scene via HA REST API.
+// Idempotent: returns nil if scene does not exist (404).
+func (c *Client) DeleteScene(ctx context.Context, token, id string) error {
+	return c.deleteConfig(ctx, token, configPath("scene", id))
+}
+
+// PutScript creates or updates a script via HA REST API.
+// Idempotent: safe to call on every reconcile.
+func (c *Client) PutScript(ctx context.Context, token, id string, data map[string]interface{}) error {
+	return c.postConfig(ctx, token, configPath("script", id), data)
+}
+
+// DeleteScript removes a script via HA REST API.
+// Idempotent: returns nil if script does not exist (404).
+func (c *Client) DeleteScript(ctx context.Context, token, id string) error {
+	return c.deleteConfig(ctx, token, configPath("script", id))
+}
+
 // IsComponentLoaded checks if a specific component/integration is loaded in Home Assistant.
 // Common components: "automation", "script", "scene", "homeassistant", "http", "mqtt", etc.
 // Returns true if component is loaded, false otherwise.
