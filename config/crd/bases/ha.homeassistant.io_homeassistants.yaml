@@ -154,6 +154,12 @@ spec:
                       created during onboarding
                     type: string
                 type: object
+              hostNetwork:
+                description: |-
+                  HostNetwork enables host networking for the Home Assistant pod.
+                  When true, the pod uses the host's network namespace, enabling discovery
+                  of IoT devices via mDNS, SSDP, and DHCP on the local network.
+                type: boolean
               image:
                 default: ghcr.io/home-assistant/home-assistant
                 description: Image allows overriding the default Home Assistant image

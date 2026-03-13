@@ -1381,4 +1381,163 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}, time.Second*2, interval).Should(Succeed())
 		})
 	})
+
+	Context("When hostNetwork is configured", func() {
+		const (
+			testName  = "test-hostnet"
+			namespace = "default"
+			timeout   = time.Second * 10
+			interval  = time.Millisecond * 250
+		)
+
+		AfterEach(func() {
+			configList := &hav1alpha1.HomeAssistantConfigurationList{}
+			_ = k8sClient.List(ctx, configList, &client.ListOptions{Namespace: namespace})
+			for _, config := range configList.Items {
+				_ = k8sClient.Delete(ctx, &config)
+			}
+			haList := &hav1alpha1.HomeAssistantList{}
+			_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
+			for _, ha := range haList.Items {
+				_ = k8sClient.Delete(ctx, &ha)
+			}
+			cmList := &corev1.ConfigMapList{}
+			_ = k8sClient.List(ctx, cmList, &client.ListOptions{Namespace: namespace})
+			for _, cm := range cmList.Items {
+				_ = k8sClient.Delete(ctx, &cm)
+			}
+			Eventually(func() int {
+				haList := &hav1alpha1.HomeAssistantList{}
+				_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
+				return len(haList.Items)
+			}, timeout, interval).Should(Equal(0))
+		})
+
+		It("should set HostNetwork and DNSPolicy when hostNetwork is true", func() {
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName,
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantSpec{
+					Version:     "2024.1",
+					HostNetwork: ptr.To(true),
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: testName},
+					Configuration:    "homeassistant:\n  name: Test\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
+			controllerReconciler := &HomeAssistantReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: testName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			sts := &appsv1.StatefulSet{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: testName, Namespace: namespace,
+			}, sts)).To(Succeed())
+
+			Expect(sts.Spec.Template.Spec.HostNetwork).To(BeTrue())
+			Expect(sts.Spec.Template.Spec.DNSPolicy).To(Equal(corev1.DNSClusterFirstWithHostNet))
+		})
+
+		It("should not set HostNetwork when hostNetwork is false", func() {
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName,
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantSpec{
+					Version:     "2024.1",
+					HostNetwork: ptr.To(false),
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: testName},
+					Configuration:    "homeassistant:\n  name: Test\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
+			controllerReconciler := &HomeAssistantReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: testName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			sts := &appsv1.StatefulSet{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: testName, Namespace: namespace,
+			}, sts)).To(Succeed())
+
+			Expect(sts.Spec.Template.Spec.HostNetwork).To(BeFalse())
+			Expect(sts.Spec.Template.Spec.DNSPolicy).ToNot(Equal(corev1.DNSClusterFirstWithHostNet))
+		})
+
+		It("should not set HostNetwork when hostNetwork is nil", func() {
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName,
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantSpec{
+					Version: "2024.1",
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: testName},
+					Configuration:    "homeassistant:\n  name: Test\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
+			controllerReconciler := &HomeAssistantReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: testName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			sts := &appsv1.StatefulSet{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: testName, Namespace: namespace,
+			}, sts)).To(Succeed())
+
+			Expect(sts.Spec.Template.Spec.HostNetwork).To(BeFalse())
+		})
+	})
 })

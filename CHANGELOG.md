@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`spec.hostNetwork` for HomeAssistant CR** — enables host networking for IoT device discovery (mDNS/SSDP/DHCP). When enabled, sets `hostNetwork: true` and `dnsPolicy: ClusterFirstWithHostNet` on the pod.
+- **Config Entry Flow API methods in haclient** — `ListConfigEntries`, `IsIntegrationConfigured`, `StartConfigFlow`, `SubmitConfigFlow`, `RemoveConfigEntry` — preparation for the upcoming `HomeAssistantIntegration` CRD.
+
+### Fixed
+
+- **Auto-inject `!include` directives** — the operator now automatically appends `automation: !include automations.yaml`, `scene: !include scenes.yaml`, and `script: !include scripts.yaml` to `configuration.yaml` if not already present. HA 2025.x requires explicit includes for PVC-managed files.
+
+### Removed
+
+- **BREAKING CHANGE: HomeAssistantAddon CRD removed** — `HomeAssistantAddon` (`haad`) has been completely removed. Use Helm charts or standard Kubernetes resources (Deployment, Service, PVC) to deploy companion services like Mosquitto, MariaDB, or Node-RED. Automatic HA integration setup will be handled by the upcoming `HomeAssistantIntegration` CRD.
+
 ## [0.6.0] - 2026-03-09
 
 ### Added

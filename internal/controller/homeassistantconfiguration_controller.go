@@ -260,7 +260,7 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 					// NO hash annotation on initial creation
 				},
 				Data: map[string]string{
-					configurationYamlKey: config.Spec.Configuration,
+					configurationYamlKey: ensureAutoIncludes(config.Spec.Configuration),
 				},
 			}
 
@@ -317,10 +317,11 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 		}
 	}
 
+	expectedData := ensureAutoIncludes(config.Spec.Configuration)
 	existingData := existingConfigMap.Data[configurationYamlKey]
-	if existingData != config.Spec.Configuration {
+	if existingData != expectedData {
 		log.Info("Updating generated ConfigMap content (hash annotation preserved for hot-reload)", "name", configMapName)
-		existingConfigMap.Data[configurationYamlKey] = config.Spec.Configuration
+		existingConfigMap.Data[configurationYamlKey] = expectedData
 		if err := r.Update(ctx, existingConfigMap); err != nil {
 			return err
 		}
@@ -850,7 +851,7 @@ func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 	// NOTE: We only check content, NOT hash annotation.
 	// Hash annotation is managed by performConfigReload() and should not be synced here.
 	currentContent := existingConfigMap.Data[configurationYamlKey]
-	expectedContent := config.Spec.Configuration
+	expectedContent := ensureAutoIncludes(config.Spec.Configuration)
 
 	if currentContent == expectedContent {
 		// ConfigMap content is in sync with CRD

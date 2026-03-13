@@ -50,32 +50,10 @@ var (
 		},
 		[]string{"component"},
 	)
-
-	// addonReconcileTotal counts HomeAssistantAddon reconcile operations.
-	// result label: "success" | "failed"
-	// profile label: "mosquitto" | "mariadb" | "node-red" | "custom"
-	addonReconcileTotal = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "homeassistant_addon_reconcile_total",
-			Help: "Total number of HomeAssistantAddon reconcile operations.",
-		},
-		[]string{"result", "profile"},
-	)
-
-	// addonReconcileDuration measures how long each addon reconcile operation takes.
-	addonReconcileDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "homeassistant_addon_reconcile_duration_seconds",
-			Help:    "Duration of HomeAssistantAddon reconcile operations in seconds.",
-			Buckets: prometheus.DefBuckets,
-		},
-		[]string{"profile"},
-	)
 )
 
 func init() {
 	metrics.Registry.MustRegister(
 		reloadTotal, reloadDuration, reloadRetriesTotal,
-		addonReconcileTotal, addonReconcileDuration,
 	)
 }

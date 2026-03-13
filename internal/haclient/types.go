@@ -96,3 +96,28 @@ type ConfigResponse struct {
 	ConfigDir             string   `json:"config_dir"`
 	WhitelistExternalDirs []string `json:"whitelist_external_dirs"`
 }
+
+// ConfigEntry represents a config entry from GET /api/config/config_entries/entry
+type ConfigEntry struct {
+	EntryID string `json:"entry_id"`
+	Domain  string `json:"domain"`
+	Title   string `json:"title"`
+	State   string `json:"state"`
+	Source  string `json:"source"`
+}
+
+// FlowResponse represents a response from Config Entry Flow API
+type FlowResponse struct {
+	FlowID  string      `json:"flow_id"`
+	Type    string      `json:"type"`
+	Title   string      `json:"title"`
+	Result  interface{} `json:"result"`
+	Version int         `json:"version"`
+}
+
+// FlowField represents a field in a config flow step
+type FlowField struct {
+	Name     string `json:"name"`
+	Required bool   `json:"required"`
+	Type     string `json:"type"`
+}

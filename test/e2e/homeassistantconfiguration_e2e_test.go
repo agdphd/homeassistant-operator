@@ -136,6 +136,118 @@ spec:
 			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 		})
 
+		It("should auto-inject !include directives when not present in spec", func() {
+			By("Creating HomeAssistant CR")
+			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  version: "stable"
+  storage:
+    size: "1Gi"
+  service:
+    type: ClusterIP
+    port: 8123
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
+			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration CR without !include directives")
+			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  configuration: |
+    homeassistant:
+      name: My Home
+`, configName, namespace, haName)
+			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
+
+			configMapName := haName + "-configuration"
+			By("Waiting for ConfigMap to be created")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace)
+				g.Expect(output).NotTo(BeEmpty())
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying ConfigMap contains auto-injected !include directives")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl(
+					"get", "configmap", configMapName, "-n", namespace,
+					"-o", "jsonpath={.data.configuration\\.yaml}",
+				)
+				g.Expect(output).To(ContainSubstring("automation: !include automations.yaml"))
+				g.Expect(output).To(ContainSubstring("scene: !include scenes.yaml"))
+				g.Expect(output).To(ContainSubstring("script: !include scripts.yaml"))
+				g.Expect(output).To(ContainSubstring("homeassistant:"))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+		})
+
+		It("should not duplicate !include directives already present in spec", func() {
+			By("Creating HomeAssistant CR")
+			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  version: "stable"
+  storage:
+    size: "1Gi"
+  service:
+    type: ClusterIP
+    port: 8123
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
+			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration CR with !include already present")
+			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  configuration: |
+    automation: !include automations.yaml
+    scene: !include scenes.yaml
+    script: !include scripts.yaml
+`, configName, namespace, haName)
+			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
+
+			configMapName := haName + "-configuration"
+			By("Waiting for ConfigMap to be created")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace)
+				g.Expect(output).NotTo(BeEmpty())
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying ConfigMap does not contain duplicate !include entries")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl(
+					"get", "configmap", configMapName, "-n", namespace,
+					"-o", "jsonpath={.data.configuration\\.yaml}",
+				)
+				g.Expect(output).To(ContainSubstring("automation: !include automations.yaml"))
+				// Count occurrences - should appear exactly once
+				count := 0
+				for i := 0; i < len(output)-len("automation: !include"); i++ {
+					if output[i:i+len("automation: !include")] == "automation: !include" {
+						count++
+					}
+				}
+				g.Expect(count).To(Equal(1), "automation: !include should appear exactly once")
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+		})
+
 		It("should prevent external ConfigMap modifications", func() {
 			By("Creating HomeAssistant CR")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1

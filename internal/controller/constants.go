@@ -44,7 +44,4 @@ const (
 
 	// Condition reasons for ReloadReady
 	reasonTokenNotAvailable = "TokenNotAvailable"
-
-	// HomeAssistantAddon resource name suffixes
-	addonConfigMapSuffix = "-config"
 )

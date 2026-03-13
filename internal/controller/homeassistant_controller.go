@@ -643,6 +643,12 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 		sts.Spec.Template.Spec.Containers[0].Resources = ha.Spec.Resources
 	}
 
+	// Apply host networking if specified
+	if ha.Spec.HostNetwork != nil && *ha.Spec.HostNetwork {
+		sts.Spec.Template.Spec.HostNetwork = true
+		sts.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
+	}
+
 	return sts
 }
 
@@ -912,6 +918,20 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 	// Check readiness probe
 	if !probesEqual(currentContainer.ReadinessProbe, desiredContainer.ReadinessProbe) {
 		log.V(1).Info("ReadinessProbe differs")
+		return true
+	}
+
+	// Check host networking
+	if current.Spec.Template.Spec.HostNetwork != desired.Spec.Template.Spec.HostNetwork {
+		log.V(1).Info("HostNetwork differs",
+			"current", current.Spec.Template.Spec.HostNetwork,
+			"desired", desired.Spec.Template.Spec.HostNetwork)
+		return true
+	}
+	if current.Spec.Template.Spec.DNSPolicy != desired.Spec.Template.Spec.DNSPolicy {
+		log.V(1).Info("DNSPolicy differs",
+			"current", current.Spec.Template.Spec.DNSPolicy,
+			"desired", desired.Spec.Template.Spec.DNSPolicy)
 		return true
 	}
 
