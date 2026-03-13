@@ -1,5 +1,7 @@
 package haclient
 
+import "encoding/json"
+
 // OnboardingStatus represents the response from /api/onboarding
 // When onboarding is needed, HA returns an array of steps
 // When onboarding is done, HA returns an object with step statuses
@@ -95,4 +97,35 @@ type ConfigResponse struct {
 	TimeZone              string   `json:"time_zone"`
 	ConfigDir             string   `json:"config_dir"`
 	WhitelistExternalDirs []string `json:"whitelist_external_dirs"`
+}
+
+// ConfigEntry represents a config entry from GET /api/config/config_entries/entry
+type ConfigEntry struct {
+	EntryID string `json:"entry_id"`
+	Domain  string `json:"domain"`
+	Title   string `json:"title"`
+	State   string `json:"state"`
+	Source  string `json:"source"`
+}
+
+// FlowResponse represents a response from Config Entry Flow API
+type FlowResponse struct {
+	FlowID     string          `json:"flow_id"`
+	Type       string          `json:"type"`
+	Title      string          `json:"title"`
+	Result     json.RawMessage `json:"result"`
+	Version    int             `json:"version"`
+	DataSchema []FlowField     `json:"data_schema,omitempty"`
+}
+
+// FlowField represents a field in a config flow step
+type FlowField struct {
+	Name        string          `json:"name"`
+	Required    bool            `json:"required"`
+	Type        string          `json:"type"`
+	Selector    map[string]any  `json:"selector,omitempty"`
+	Description *string         `json:"description,omitempty"`
+	Default     json.RawMessage `json:"default,omitempty"`
+	ValueMin    *float64        `json:"value_min,omitempty"`
+	ValueMax    *float64        `json:"value_max,omitempty"`
 }

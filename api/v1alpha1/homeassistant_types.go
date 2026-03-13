@@ -60,6 +60,12 @@ type HomeAssistantSpec struct {
 	// +optional
 	SecretsFrom *SecretReference `json:"secretsFrom,omitempty"`
 
+	// HostNetwork enables host networking for the Home Assistant pod.
+	// When true, the pod uses the host's network namespace, enabling discovery
+	// of IoT devices via mDNS, SSDP, and DHCP on the local network.
+	// +optional
+	HostNetwork *bool `json:"hostNetwork,omitempty"`
+
 	// Bootstrap configures automatic onboarding and API token creation
 	// When enabled, the operator will automatically complete the Home Assistant
 	// onboarding process and create a long-lived access token for API access

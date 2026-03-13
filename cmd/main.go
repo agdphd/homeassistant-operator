@@ -253,14 +253,6 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantScript")
 		os.Exit(1)
 	}
-	if err := (&controller.HomeAssistantAddonReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorder("homeassistantaddon-controller"),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantAddon")
-		os.Exit(1)
-	}
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {

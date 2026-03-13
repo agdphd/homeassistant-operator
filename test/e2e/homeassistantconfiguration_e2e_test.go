@@ -19,6 +19,7 @@ package e2e
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -136,6 +137,118 @@ spec:
 			}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 		})
 
+		It("should auto-inject !include directives when not present in spec", func() {
+			By("Creating HomeAssistant CR")
+			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  version: "stable"
+  storage:
+    size: "1Gi"
+  service:
+    type: ClusterIP
+    port: 8123
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
+			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration CR without !include directives")
+			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  configuration: |
+    homeassistant:
+      name: My Home
+`, configName, namespace, haName)
+			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
+
+			configMapName := haName + "-configuration"
+			By("Waiting for ConfigMap to be created")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace)
+				g.Expect(output).NotTo(BeEmpty())
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying ConfigMap contains auto-injected !include directives")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl(
+					"get", "configmap", configMapName, "-n", namespace,
+					"-o", "jsonpath={.data.configuration\\.yaml}",
+				)
+				g.Expect(output).To(ContainSubstring("automation: !include automations.yaml"))
+				g.Expect(output).To(ContainSubstring("scene: !include scenes.yaml"))
+				g.Expect(output).To(ContainSubstring("script: !include scripts.yaml"))
+				g.Expect(output).To(ContainSubstring("homeassistant:"))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+		})
+
+		It("should not duplicate !include directives already present in spec", func() {
+			By("Creating HomeAssistant CR")
+			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistant
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  version: "stable"
+  storage:
+    size: "1Gi"
+  service:
+    type: ClusterIP
+    port: 8123
+  %s
+`, haName, namespace, utils.GetDefaultHAResourceRequests())
+			Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
+
+			By("Creating HomeAssistantConfiguration CR with !include already present")
+			configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantConfiguration
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  configuration: |
+    automation: !include automations.yaml
+    scene: !include scenes.yaml
+    script: !include scripts.yaml
+`, configName, namespace, haName)
+			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
+
+			configMapName := haName + "-configuration"
+			By("Waiting for ConfigMap to be created")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl("get", "configmap", configMapName, "-n", namespace)
+				g.Expect(output).NotTo(BeEmpty())
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+
+			By("Verifying ConfigMap does not contain duplicate !include entries")
+			Eventually(func(g Gomega) {
+				output := utils.Kubectl(
+					"get", "configmap", configMapName, "-n", namespace,
+					"-o", "jsonpath={.data.configuration\\.yaml}",
+				)
+				g.Expect(output).To(ContainSubstring("automation: !include automations.yaml"))
+				count := strings.Count(output, "automation: !include")
+				g.Expect(count).To(Equal(1), "automation: !include should appear exactly once")
+				g.Expect(output).To(ContainSubstring("scene: !include scenes.yaml"))
+				sceneCount := strings.Count(output, "scene: !include")
+				g.Expect(sceneCount).To(Equal(1), "scene: !include should appear exactly once")
+				g.Expect(output).To(ContainSubstring("script: !include scripts.yaml"))
+				scriptCount := strings.Count(output, "script: !include")
+				g.Expect(scriptCount).To(Equal(1), "script: !include should appear exactly once")
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
+		})
+
 		It("should prevent external ConfigMap modifications", func() {
 			By("Creating HomeAssistant CR")
 			haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -220,6 +333,8 @@ spec:
     homeassistant:
       timezone: UTC
     automation: []
+    scene: []
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
@@ -266,6 +381,8 @@ spec:
     homeassistant:
       timezone: Europe/Warsaw
     automation: []
+    scene: []
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(updateConfigYAML, namespace)).To(Succeed())
 
@@ -343,6 +460,7 @@ spec:
   reloadStrategy: auto
   configuration: |
     automation: []
+    scene: []
     script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
@@ -422,6 +540,7 @@ spec:
         action:
           service: light.turn_on
           entity_id: light.living_room
+    scene: []
     script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(updateConfigYAML, namespace)).To(Succeed())
@@ -475,6 +594,9 @@ spec:
     homeassistant:
       name: Home
     default_config:
+    automation: []
+    scene: []
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(initialConfigYAML, namespace)).To(Succeed())
 
@@ -502,6 +624,8 @@ spec:
       name: Home
     default_config:
     automation: []
+    scene: []
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
@@ -532,6 +656,8 @@ spec:
         trigger:
           platform: time
           at: "10:00:00"
+    scene: []
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(updateConfigYAML, namespace)).To(Succeed())
 
@@ -581,6 +707,9 @@ spec:
       name: Home
       timezone: UTC
     default_config:
+    automation: []
+    scene: []
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
@@ -625,6 +754,9 @@ spec:
       name: Home
       timezone: Europe/Warsaw
     default_config:
+    automation: []
+    scene: []
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(updateConfigYAML, namespace)).To(Succeed())
 

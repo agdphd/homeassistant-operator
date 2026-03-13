@@ -637,6 +637,8 @@ spec:
     name: %s
   configuration: |
     automation: []
+    scene: []
+    script: []
     default_config:
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())

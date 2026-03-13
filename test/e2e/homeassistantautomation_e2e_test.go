@@ -301,6 +301,7 @@ spec:
     name: %s
   configuration: |
     automation: !include automations.yaml
+    scene: []
     script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
@@ -428,6 +429,7 @@ spec:
     name: %s
   configuration: |
     automation: !include automations.yaml
+    scene: []
     script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
@@ -581,6 +583,7 @@ spec:
     name: %s
   configuration: |
     automation: !include automations.yaml
+    scene: []
     script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())

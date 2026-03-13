@@ -844,6 +844,175 @@ func (c *Client) DeleteScript(ctx context.Context, token, id string) error {
 	return c.deleteConfig(ctx, token, configPath("script", id))
 }
 
+// getJSON performs an authenticated GET request and decodes the JSON response into target.
+func (c *Client) getJSON(ctx context.Context, token, path string, target interface{}) error {
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+path, nil)
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return &Error{Type: ErrorTypeNotReady, Message: fmt.Sprintf("GET %s failed", path), Err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return &Error{
+			Type:       ErrorTypeHTTP,
+			Message:    fmt.Sprintf("GET %s: %d: %s", path, resp.StatusCode, string(bodyBytes)),
+			StatusCode: resp.StatusCode,
+		}
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+		return &Error{Type: ErrorTypeInvalidResponse, Message: "failed to decode response", Err: err}
+	}
+	return nil
+}
+
+// ListConfigEntries returns all config entries from Home Assistant.
+func (c *Client) ListConfigEntries(ctx context.Context, token string) ([]ConfigEntry, error) {
+	var entries []ConfigEntry
+	if err := c.getJSON(ctx, token, "/api/config/config_entries/entry", &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+// IsIntegrationConfigured checks if a config entry exists for the given domain.
+func (c *Client) IsIntegrationConfigured(ctx context.Context, token, domain string) (bool, error) {
+	entries, err := c.ListConfigEntries(ctx, token)
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if entry.Domain == domain {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// StartConfigFlow initiates a config entry flow for the given integration domain.
+func (c *Client) StartConfigFlow(ctx context.Context, token, domain string) (*FlowResponse, error) {
+	data := map[string]interface{}{
+		"handler": domain,
+	}
+	body, err := json.Marshal(data)
+	if err != nil {
+		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to marshal request", Err: err}
+	}
+
+	flowURL := c.baseURL + "/api/config/config_entries/flow"
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", flowURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, &Error{Type: ErrorTypeNotReady, Message: "failed to start config flow", Err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, &Error{
+			Type:       ErrorTypeHTTP,
+			Message:    fmt.Sprintf("start config flow failed: %s", string(bodyBytes)),
+			StatusCode: resp.StatusCode,
+		}
+	}
+
+	var flowResp FlowResponse
+	if err := json.NewDecoder(resp.Body).Decode(&flowResp); err != nil {
+		return nil, &Error{Type: ErrorTypeInvalidResponse, Message: "failed to decode flow response", Err: err}
+	}
+	return &flowResp, nil
+}
+
+// SubmitConfigFlow submits data to a config entry flow step.
+func (c *Client) SubmitConfigFlow(
+	ctx context.Context, token, flowID string, data map[string]interface{},
+) (*FlowResponse, error) {
+	body, err := json.Marshal(data)
+	if err != nil {
+		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to marshal request", Err: err}
+	}
+
+	path := "/api/config/config_entries/flow/" + url.PathEscape(flowID)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, &Error{Type: ErrorTypeNotReady, Message: "failed to submit config flow", Err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, &Error{
+			Type:       ErrorTypeHTTP,
+			Message:    fmt.Sprintf("submit config flow failed: %s", string(bodyBytes)),
+			StatusCode: resp.StatusCode,
+		}
+	}
+
+	var flowResp FlowResponse
+	if err := json.NewDecoder(resp.Body).Decode(&flowResp); err != nil {
+		return nil, &Error{Type: ErrorTypeInvalidResponse, Message: "failed to decode flow response", Err: err}
+	}
+	return &flowResp, nil
+}
+
+// SubmitConfigFlowUntilDone submits config flow steps until the flow reaches
+// "create_entry" (success) or "abort" (failure), or until stepsData is exhausted.
+// Each element in stepsData is submitted as one form step in sequence.
+// Returns the final FlowResponse when type becomes "create_entry".
+func (c *Client) SubmitConfigFlowUntilDone(
+	ctx context.Context, token, flowID string, stepsData []map[string]interface{},
+) (*FlowResponse, error) {
+	for i, stepData := range stepsData {
+		resp, err := c.SubmitConfigFlow(ctx, token, flowID, stepData)
+		if err != nil {
+			return nil, err
+		}
+		switch resp.Type {
+		case "create_entry":
+			return resp, nil
+		case "abort":
+			return nil, &Error{
+				Type:    ErrorTypeHTTP,
+				Message: fmt.Sprintf("config flow aborted at step %d", i+1),
+			}
+		}
+		// type == "form" or similar — continue to next step
+	}
+	return nil, &Error{
+		Type:    ErrorTypeHTTP,
+		Message: fmt.Sprintf("config flow did not complete after %d step(s)", len(stepsData)),
+	}
+}
+
+// RemoveConfigEntry deletes a config entry by its entry ID.
+// Returns nil if the entry does not exist (404 treated as success).
+func (c *Client) RemoveConfigEntry(ctx context.Context, token, entryID string) error {
+	return c.deleteConfig(ctx, token, "/api/config/config_entries/entry/"+url.PathEscape(entryID))
+}
+
 // IsComponentLoaded checks if a specific component/integration is loaded in Home Assistant.
 // Common components: "automation", "script", "scene", "homeassistant", "http", "mqtt", etc.
 // Returns true if component is loaded, false otherwise.
