@@ -19,6 +19,7 @@ package e2e
 import (
 	"fmt"
 	"os/exec"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -456,7 +457,7 @@ spec:
 			Expect(utils.ApplyYAML(initialSceneYAML, namespace)).To(Succeed())
 
 			By("Waiting for initial Ready=True and capturing initial hash and reloadTime")
-			var initialHash, initialReloadTime string
+			var initialHash string
 			Eventually(func(g Gomega) {
 				status := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
 					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
@@ -470,8 +471,10 @@ spec:
 				reloadTime := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
 					"-o", "jsonpath={.status.lastReloadTime}")
 				g.Expect(reloadTime).NotTo(BeEmpty())
-				initialReloadTime = reloadTime
 			}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
+
+			By("Capturing time before spec update")
+			beforeUpdate := time.Now().UTC().Truncate(time.Second)
 
 			By("Updating the scene spec")
 			updatedSceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -502,12 +505,14 @@ spec:
 				g.Expect(hash).NotTo(Equal(initialHash))
 			}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
 
-			By("Verifying lastReloadTime updated")
+			By("Verifying lastReloadTime updated after spec change")
 			Eventually(func(g Gomega) {
 				reloadTime := utils.Kubectl("get", "hascene", sceneName, "-n", namespace,
 					"-o", "jsonpath={.status.lastReloadTime}")
 				g.Expect(reloadTime).NotTo(BeEmpty())
-				g.Expect(reloadTime).NotTo(Equal(initialReloadTime))
+				t, err := time.Parse(time.RFC3339, reloadTime)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(t).To(BeTemporally(">=", beforeUpdate))
 			}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
 		})
 
