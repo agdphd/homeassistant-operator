@@ -152,8 +152,11 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Calculate hash of the configuration
-	configHash := calculateConfigHash(config.Spec.Configuration)
+	// Compute the effective configuration (with auto-injected !include directives) and
+	// hash it so that changes to the transformed content — not just the raw spec — trigger
+	// a reload (e.g. after an operator upgrade that introduced ensureAutoIncludes).
+	effectiveConfig := ensureAutoIncludes(config.Spec.Configuration)
+	configHash := calculateConfigHash(effectiveConfig)
 
 	// Capture old configuration BEFORE updating ConfigMap
 	// This is critical for needsRestart() to work correctly in auto mode
@@ -171,11 +174,14 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	// Only when the spec has NOT changed: if spec changed, reconcileGeneratedConfigMap is the
 	// sole writer. Running both would cause a cache-stale conflict (syncConfigMapFromCRD writes
 	// version N→N+1; reconcileGeneratedConfigMap reads stale cache at N and gets a conflict),
-	// and on retry oldConfig == config.Spec.Configuration triggers the restart fallback instead
+	// and on retry oldConfig == transformedConfig triggers the restart fallback instead
 	// of the correct hot-reload decision.
+	syncedContent := false
 	if config.Status.ConfigHash == configHash {
-		if err := r.syncConfigMapFromCRD(ctx, config); err != nil {
-			log.Error(err, "Failed to sync ConfigMap from CRD")
+		var syncErr error
+		syncedContent, syncErr = r.syncConfigMapFromCRD(ctx, config)
+		if syncErr != nil {
+			log.Error(syncErr, "Failed to sync ConfigMap from CRD")
 		}
 	}
 
@@ -195,8 +201,8 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 		return ctrl.Result{}, err
 	}
 
-	// Perform configuration reload if hash changed
-	if config.Status.ConfigHash != configHash {
+	// Perform configuration reload if hash changed or if ConfigMap was restored from external edit
+	if config.Status.ConfigHash != configHash || syncedContent {
 		if err := r.performConfigReload(ctx, config, ha, configHash, oldConfig); err != nil {
 			log.Error(err, "Failed to reload configuration")
 			meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
@@ -808,12 +814,13 @@ func (r *HomeAssistantConfigurationReconciler) updateConfigMapHashAnnotation(
 	return nil
 }
 
-// syncConfigMapFromCRD ensures ConfigMap matches CRD state (operator exclusivity)
-// This prevents external modifications to ConfigMap by restoring it to CRD state
+// syncConfigMapFromCRD ensures ConfigMap matches CRD state (operator exclusivity).
+// Returns true if the ConfigMap content was actually updated (so the caller can
+// trigger a reload even when the spec hash has not changed).
 func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 	ctx context.Context,
 	config *hav1alpha1.HomeAssistantConfiguration,
-) error {
+) (bool, error) {
 	log := logf.FromContext(ctx)
 
 	configMapName := config.Spec.HomeAssistantRef.Name + generatedConfigmapSuffix
@@ -827,9 +834,9 @@ func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// ConfigMap doesn't exist yet - will be created by reconcileGeneratedConfigMap
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
 
 	// Check if ConfigMap is owned by this HomeAssistantConfiguration
@@ -845,7 +852,7 @@ func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 		// ConfigMap exists but is not owned by this CRD - don't touch it
 		log.Info("ConfigMap exists but is not owned by this HomeAssistantConfiguration, skipping sync",
 			"configMapName", configMapName)
-		return nil
+		return false, nil
 	}
 
 	// Check if ConfigMap was modified externally (content mismatch)
@@ -856,7 +863,7 @@ func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 
 	if currentContent == expectedContent {
 		// ConfigMap content is in sync with CRD
-		return nil
+		return false, nil
 	}
 
 	// ConfigMap was modified externally - restore from CRD
@@ -873,11 +880,11 @@ func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 
 	if err := r.Update(ctx, existingConfigMap); err != nil {
 		log.Error(err, "Failed to restore ConfigMap from CRD state")
-		return err
+		return false, err
 	}
 
 	log.Info("Successfully restored ConfigMap to CRD state", "configMapName", configMapName)
-	return nil
+	return true, nil
 }
 
 // findHomeAssistantConfigurationForConfigMap finds the HomeAssistantConfiguration
