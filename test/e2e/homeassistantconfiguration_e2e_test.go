@@ -19,6 +19,7 @@ package e2e
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -237,13 +238,7 @@ spec:
 					"-o", "jsonpath={.data.configuration\\.yaml}",
 				)
 				g.Expect(output).To(ContainSubstring("automation: !include automations.yaml"))
-				// Count occurrences - should appear exactly once
-				count := 0
-				for i := 0; i < len(output)-len("automation: !include"); i++ {
-					if output[i:i+len("automation: !include")] == "automation: !include" {
-						count++
-					}
-				}
+				count := strings.Count(output, "automation: !include")
 				g.Expect(count).To(Equal(1), "automation: !include should appear exactly once")
 			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 		})

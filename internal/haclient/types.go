@@ -108,11 +108,12 @@ type ConfigEntry struct {
 
 // FlowResponse represents a response from Config Entry Flow API
 type FlowResponse struct {
-	FlowID  string      `json:"flow_id"`
-	Type    string      `json:"type"`
-	Title   string      `json:"title"`
-	Result  interface{} `json:"result"`
-	Version int         `json:"version"`
+	FlowID     string      `json:"flow_id"`
+	Type       string      `json:"type"`
+	Title      string      `json:"title"`
+	Result     interface{} `json:"result"`
+	Version    int         `json:"version"`
+	DataSchema []FlowField `json:"data_schema,omitempty"`
 }
 
 // FlowField represents a field in a config flow step

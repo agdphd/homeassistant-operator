@@ -647,6 +647,8 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 	if ha.Spec.HostNetwork != nil && *ha.Spec.HostNetwork {
 		sts.Spec.Template.Spec.HostNetwork = true
 		sts.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirstWithHostNet
+	} else {
+		sts.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
 	}
 
 	return sts

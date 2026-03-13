@@ -1496,7 +1496,7 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}, sts)).To(Succeed())
 
 			Expect(sts.Spec.Template.Spec.HostNetwork).To(BeFalse())
-			Expect(sts.Spec.Template.Spec.DNSPolicy).ToNot(Equal(corev1.DNSClusterFirstWithHostNet))
+			Expect(sts.Spec.Template.Spec.DNSPolicy).To(Equal(corev1.DNSClusterFirst))
 		})
 
 		It("should not set HostNetwork when hostNetwork is nil", func() {
@@ -1538,6 +1538,67 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}, sts)).To(Succeed())
 
 			Expect(sts.Spec.Template.Spec.HostNetwork).To(BeFalse())
+			Expect(sts.Spec.Template.Spec.DNSPolicy).To(Equal(corev1.DNSClusterFirst))
+		})
+
+		It("should clear hostNetwork and reset DNSPolicy when toggled from true to false", func() {
+			ha := &hav1alpha1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName,
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantSpec{
+					Version:     "2024.1",
+					HostNetwork: ptr.To(true),
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testName + "-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: testName},
+					Configuration:    "homeassistant:\n  name: Test\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
+			reconciler := &HomeAssistantReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: testName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			sts := &appsv1.StatefulSet{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: testName, Namespace: namespace,
+			}, sts)).To(Succeed())
+			Expect(sts.Spec.Template.Spec.HostNetwork).To(BeTrue())
+			Expect(sts.Spec.Template.Spec.DNSPolicy).To(Equal(corev1.DNSClusterFirstWithHostNet))
+
+			// Toggle hostNetwork off — re-fetch before update to get current resourceVersion
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: testName, Namespace: namespace,
+			}, ha)).To(Succeed())
+			ha.Spec.HostNetwork = ptr.To(false)
+			Expect(k8sClient.Update(ctx, ha)).To(Succeed())
+
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: testName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: testName, Namespace: namespace,
+			}, sts)).To(Succeed())
+			Expect(sts.Spec.Template.Spec.HostNetwork).To(BeFalse())
+			Expect(sts.Spec.Template.Spec.DNSPolicy).To(Equal(corev1.DNSClusterFirst))
 		})
 	})
 })

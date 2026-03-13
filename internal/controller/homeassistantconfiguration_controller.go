@@ -657,11 +657,12 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 		// that failed before saving status, oldConfig == newConfig and we cannot determine
 		// what changed. Default to restart (safe) to avoid choosing hot-reload for changes
 		// that require a full restart (e.g. adding a new integration like prometheus:).
-		if oldConfig == config.Spec.Configuration {
+		transformedConfig := ensureAutoIncludes(config.Spec.Configuration)
+		if oldConfig == transformedConfig {
 			log.Info("ConfigMap already synced (retry after partial failure), defaulting to restart")
 			strategy = reloadMethodRestart
 		} else {
-			needsRestart, parseErr := needsRestart(oldConfig, config.Spec.Configuration)
+			needsRestart, parseErr := needsRestart(oldConfig, transformedConfig)
 			if parseErr != nil {
 				log.Error(parseErr, "Failed to analyze config changes, defaulting to restart")
 				needsRestart = true

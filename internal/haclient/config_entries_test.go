@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -151,12 +152,12 @@ func TestSubmitConfigFlowUntilDone_SingleStep(t *testing.T) {
 }
 
 func TestSubmitConfigFlowUntilDone_MultiStep(t *testing.T) {
-	step := 0
+	var step atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		step++
+		current := step.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		flowType := "form"
-		if step == 2 {
+		if current == 2 {
 			flowType = "create_entry"
 		}
 		_ = json.NewEncoder(w).Encode(FlowResponse{FlowID: "flow-multi", Type: flowType})
@@ -176,8 +177,8 @@ func TestSubmitConfigFlowUntilDone_MultiStep(t *testing.T) {
 	if resp.Type != "create_entry" {
 		t.Errorf("expected type=create_entry, got %s", resp.Type)
 	}
-	if step != 2 {
-		t.Errorf("expected 2 HTTP calls, got %d", step)
+	if step.Load() != 2 {
+		t.Errorf("expected 2 HTTP calls, got %d", step.Load())
 	}
 }
 
