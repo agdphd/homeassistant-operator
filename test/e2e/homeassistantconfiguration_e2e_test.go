@@ -240,6 +240,12 @@ spec:
 				g.Expect(output).To(ContainSubstring("automation: !include automations.yaml"))
 				count := strings.Count(output, "automation: !include")
 				g.Expect(count).To(Equal(1), "automation: !include should appear exactly once")
+				g.Expect(output).To(ContainSubstring("scene: !include scenes.yaml"))
+				sceneCount := strings.Count(output, "scene: !include")
+				g.Expect(sceneCount).To(Equal(1), "scene: !include should appear exactly once")
+				g.Expect(output).To(ContainSubstring("script: !include scripts.yaml"))
+				scriptCount := strings.Count(output, "script: !include")
+				g.Expect(scriptCount).To(Equal(1), "script: !include should appear exactly once")
 			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 		})
 

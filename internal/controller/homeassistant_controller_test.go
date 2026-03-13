@@ -1411,6 +1411,16 @@ var _ = Describe("HomeAssistant Controller", func() {
 				_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
 				return len(haList.Items)
 			}, timeout, interval).Should(Equal(0))
+			Eventually(func() int {
+				configList := &hav1alpha1.HomeAssistantConfigurationList{}
+				_ = k8sClient.List(ctx, configList, &client.ListOptions{Namespace: namespace})
+				return len(configList.Items)
+			}, timeout, interval).Should(Equal(0))
+			Eventually(func() int {
+				cmList := &corev1.ConfigMapList{}
+				_ = k8sClient.List(ctx, cmList, &client.ListOptions{Namespace: namespace})
+				return len(cmList.Items)
+			}, timeout, interval).Should(Equal(0))
 		})
 
 		It("should set HostNetwork and DNSPolicy when hostNetwork is true", func() {

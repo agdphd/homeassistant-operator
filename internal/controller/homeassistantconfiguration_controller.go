@@ -662,13 +662,13 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 			log.Info("ConfigMap already synced (retry after partial failure), defaulting to restart")
 			strategy = reloadMethodRestart
 		} else {
-			needsRestart, parseErr := needsRestart(oldConfig, transformedConfig)
+			restartNeeded, parseErr := needsRestart(oldConfig, transformedConfig)
 			if parseErr != nil {
 				log.Error(parseErr, "Failed to analyze config changes, defaulting to restart")
-				needsRestart = true
+				restartNeeded = true
 			}
 
-			if needsRestart || tokenErr != nil {
+			if restartNeeded || tokenErr != nil {
 				strategy = reloadMethodRestart
 			} else {
 				strategy = reloadMethodHotReload
