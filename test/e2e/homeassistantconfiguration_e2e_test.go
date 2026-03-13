@@ -332,6 +332,8 @@ spec:
     homeassistant:
       timezone: UTC
     automation: []
+    scene: []
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
@@ -378,6 +380,8 @@ spec:
     homeassistant:
       timezone: Europe/Warsaw
     automation: []
+    scene: []
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(updateConfigYAML, namespace)).To(Succeed())
 
@@ -455,6 +459,7 @@ spec:
   reloadStrategy: auto
   configuration: |
     automation: []
+    scene: []
     script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
@@ -534,6 +539,7 @@ spec:
         action:
           service: light.turn_on
           entity_id: light.living_room
+    scene: []
     script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(updateConfigYAML, namespace)).To(Succeed())
@@ -587,6 +593,9 @@ spec:
     homeassistant:
       name: Home
     default_config:
+    automation: []
+    scene: []
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(initialConfigYAML, namespace)).To(Succeed())
 
@@ -614,6 +623,8 @@ spec:
       name: Home
     default_config:
     automation: []
+    scene: []
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
@@ -644,6 +655,8 @@ spec:
         trigger:
           platform: time
           at: "10:00:00"
+    scene: []
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(updateConfigYAML, namespace)).To(Succeed())
 
@@ -693,6 +706,9 @@ spec:
       name: Home
       timezone: UTC
     default_config:
+    automation: []
+    scene: []
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(configYAML, namespace)).To(Succeed())
 
@@ -737,6 +753,9 @@ spec:
       name: Home
       timezone: Europe/Warsaw
     default_config:
+    automation: []
+    scene: []
+    script: []
 `, configName, namespace, haName)
 			Expect(utils.ApplyYAML(updateConfigYAML, namespace)).To(Succeed())
 
