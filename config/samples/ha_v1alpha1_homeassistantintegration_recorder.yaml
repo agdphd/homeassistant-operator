@@ -1,0 +1,13 @@
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantIntegration
+metadata:
+  name: recorder-integration
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  homeAssistantRef:
+    name: homeassistant-sample
+  domain: recorder
+  # recorder is a zero-config integration — no configuration fields required.
+  # The Config Flow completes immediately with create_entry.

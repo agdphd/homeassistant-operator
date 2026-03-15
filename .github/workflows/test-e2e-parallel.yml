@@ -105,6 +105,18 @@ jobs:
             procs: 4
             timeout: 45
 
+          # Integration tests - fast path (no bootstrap)
+          - name: integration-fast
+            label: "integration && fast"
+            procs: 4
+            timeout: 20
+
+          # Integration tests - slow path (with bootstrap)
+          - name: integration-slow
+            label: "integration && slow"
+            procs: 4
+            timeout: 45
+
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.timeout }}
 
@@ -201,6 +213,8 @@ jobs:
           kubectl get homeassistantscenes --all-namespaces -o wide || true
           echo "=== HomeAssistantScripts ==="
           kubectl get homeassistantscripts --all-namespaces -o wide || true
+          echo "=== HomeAssistantIntegrations ==="
+          kubectl get homeassistantintegrations --all-namespaces -o wide || true
           echo "=== Pods ==="
           kubectl get pods --all-namespaces -o wide || true
           echo "=== StatefulSets ==="
