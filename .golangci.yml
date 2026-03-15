@@ -38,6 +38,9 @@ linters:
           - lll
         path: api/*
       - linters:
+          - lll
+        source: "// \\+kubebuilder:"
+      - linters:
           - dupl
         path: _test\.go$
       - linters:

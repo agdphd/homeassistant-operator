@@ -262,7 +262,8 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantIntegration{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "int-finalizer", Namespace: namespace}, updated)).To(Succeed())
+				nn := types.NamespacedName{Name: "int-finalizer", Namespace: namespace}
+				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				g.Expect(updated.Finalizers).To(ContainElement(integrationFinalizerName))
 			}, timeout, interval).Should(Succeed())
 		})
@@ -620,7 +621,8 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 
 			// Delete the CR
 			toDelete := &hav1alpha1.HomeAssistantIntegration{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "int-delete-api", Namespace: namespace}, toDelete)).To(Succeed())
+			nnDel := types.NamespacedName{Name: "int-delete-api", Namespace: namespace}
+			Expect(k8sClient.Get(ctx, nnDel, toDelete)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, toDelete)).To(Succeed())
 
 			_, err := reconcileIntegration("int-delete-api")
@@ -669,7 +671,8 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantIntegration{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "int-flow-fail", Namespace: namespace}, updated)).To(Succeed())
+				nn := types.NamespacedName{Name: "int-flow-fail", Namespace: namespace}
+				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeIntegrationReady)
 				g.Expect(condition).NotTo(BeNil())
 				g.Expect(condition.Status).To(Equal(metav1.ConditionFalse))
@@ -709,7 +712,8 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 
 			// Delete the CR
 			toDelete := &hav1alpha1.HomeAssistantIntegration{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "int-delete-ha-down", Namespace: namespace}, toDelete)).To(Succeed())
+			nnDown := types.NamespacedName{Name: "int-delete-ha-down", Namespace: namespace}
+			Expect(k8sClient.Get(ctx, nnDown, toDelete)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, toDelete)).To(Succeed())
 
 			// Reconcile — must not return error (best-effort)
@@ -719,7 +723,8 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			// Finalizer must be removed so Kubernetes can garbage-collect the CR
 			Eventually(func() bool {
 				updated := &hav1alpha1.HomeAssistantIntegration{}
-				if err := k8sClient.Get(ctx, types.NamespacedName{Name: "int-delete-ha-down", Namespace: namespace}, updated); err != nil {
+				nn := types.NamespacedName{Name: "int-delete-ha-down", Namespace: namespace}
+				if err := k8sClient.Get(ctx, nn, updated); err != nil {
 					return true // already gone
 				}
 				for _, f := range updated.Finalizers {
@@ -777,7 +782,8 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			// Status must be Ready with entryID from adoption
 			Eventually(func(g Gomega) {
 				updated := &hav1alpha1.HomeAssistantIntegration{}
-				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "int-idempotent", Namespace: namespace}, updated)).To(Succeed())
+				nn := types.NamespacedName{Name: "int-idempotent", Namespace: namespace}
+				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeIntegrationReady)
 				g.Expect(condition).NotTo(BeNil())
 				g.Expect(condition.Status).To(Equal(metav1.ConditionTrue))

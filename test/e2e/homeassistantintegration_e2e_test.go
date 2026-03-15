@@ -560,7 +560,8 @@ func collectIntegrationDebugInfo(namespace, haName string) {
 	fmt.Println(utils.Kubectl("get", "haint", "-n", namespace, "-o", "wide"))
 
 	fmt.Println("\n--- HomeAssistantIntegration status ---")
-	fmt.Println(utils.Kubectl("get", "haint", "-n", namespace, "-o", "jsonpath={range .items[*]}{.metadata.name}: {.status}{\"\\n\"}{end}"))
+	jsonpath := `jsonpath={range .items[*]}{.metadata.name}: {.status}{"\n"}{end}`
+	fmt.Println(utils.Kubectl("get", "haint", "-n", namespace, "-o", jsonpath))
 
 	fmt.Println("\n--- HomeAssistant status ---")
 	fmt.Println(utils.Kubectl("get", "ha", haName, "-n", namespace, "-o", "jsonpath={.status}"))
