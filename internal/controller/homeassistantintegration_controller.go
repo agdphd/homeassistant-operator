@@ -137,7 +137,7 @@ func (r *HomeAssistantIntegrationReconciler) Reconcile(ctx context.Context, req 
 	haClient := r.haClientFor(ha)
 
 	// --- RESOLVE CONFIGURATION ---
-	resolvedConfig, err := r.resolveConfiguration(ctx, integration)
+	resolvedConfig, fp, err := r.resolveConfiguration(ctx, integration)
 	if err != nil {
 		log.Error(err, "Failed to resolve configuration values")
 		return r.setFailedCondition(ctx, integration, reasonSecretResolutionFailed,
@@ -145,7 +145,7 @@ func (r *HomeAssistantIntegrationReconciler) Reconcile(ctx context.Context, req 
 	}
 
 	// --- CONFIG HASH ---
-	configHash := r.calculateConfigHash(integration.Spec.Domain, resolvedConfig)
+	configHash := r.calculateConfigHash(fp)
 
 	// --- RECONFIGURATION ---
 	// If config changed and we already have an entry, delete it and start fresh
@@ -155,7 +155,11 @@ func (r *HomeAssistantIntegrationReconciler) Reconcile(ctx context.Context, req 
 			"oldHash", integration.Status.ConfigHash,
 			"newHash", configHash)
 		if delErr := haClient.RemoveConfigEntry(ctx, token, integration.Status.EntryID); delErr != nil {
-			log.Error(delErr, "Failed to remove old config entry (continuing)")
+			log.Error(delErr, "Failed to remove old config entry")
+			r.emitEvent(integration, corev1.EventTypeWarning, eventIntegrationFailed,
+				fmt.Sprintf("Failed to remove old config entry: %v", delErr))
+			return r.setFailedCondition(ctx, integration, reasonConfigFlowFailed,
+				fmt.Sprintf("Failed to remove old config entry: %v", delErr), 30*time.Second)
 		}
 		integration.Status.EntryID = ""
 		r.emitEvent(integration, corev1.EventTypeNormal, eventIntegrationReconfigured,
@@ -166,9 +170,9 @@ func (r *HomeAssistantIntegrationReconciler) Reconcile(ctx context.Context, req 
 	if integration.Status.EntryID != "" {
 		exists, verifyErr := r.verifyEntryExists(ctx, haClient, token, integration.Status.EntryID)
 		if verifyErr != nil {
-			log.Error(verifyErr, "Failed to verify config entry existence")
-			// Treat as not existing — will re-create below
-			integration.Status.EntryID = ""
+			log.Error(verifyErr, "Failed to verify config entry existence, will retry")
+			return r.setFailedCondition(ctx, integration, reasonIntegrationHANotReady,
+				fmt.Sprintf("Failed to verify config entry: %v", verifyErr), 30*time.Second)
 		} else if !exists {
 			log.Info("Config entry no longer exists in HA, will re-create", "entryID", integration.Status.EntryID)
 			integration.Status.EntryID = ""
@@ -219,8 +223,14 @@ func (r *HomeAssistantIntegrationReconciler) Reconcile(ctx context.Context, req 
 		return r.handleCreateEntry(ctx, integration, configHash, flowResp, log)
 	}
 
-	// If flow aborted with already_configured — adopt
+	// If flow aborted — only adopt when reason is "already_configured"
 	if flowResp.Type == "abort" {
+		if flowResp.Reason != "already_configured" {
+			r.emitEvent(integration, corev1.EventTypeWarning, eventIntegrationFailed,
+				fmt.Sprintf("Config flow for %s aborted: %s", integration.Spec.Domain, flowResp.Reason))
+			return r.setFailedCondition(ctx, integration, reasonConfigFlowFailed,
+				fmt.Sprintf("Config flow aborted: %s", flowResp.Reason), 30*time.Second)
+		}
 		log.Info("Config flow aborted (already_configured), adopting", "domain", integration.Spec.Domain)
 		entryID, adoptErr := r.findEntryID(ctx, haClient, token, integration.Spec.Domain)
 		if adoptErr != nil {
@@ -322,15 +332,33 @@ func (r *HomeAssistantIntegrationReconciler) handleCreateEntry(
 		fmt.Sprintf("Integration %s configured via config flow", integration.Spec.Domain), configHash)
 }
 
-// resolveConfiguration resolves all IntegrationValues (plain + SecretKeyRef) to string map
+// configFingerprint holds non-sensitive identifiers used to compute the config hash.
+// Plain values are included directly; Secret references are represented by their
+// name, key, and resourceVersion (so a secret rotation triggers reconfiguration
+// without storing the actual secret bytes in status.configHash).
+type configFingerprint struct {
+	domain      string
+	plainValues map[string]string // fieldKey → plain text value
+	secretRefs  map[string]string // fieldKey → "secretName/secretKey/resourceVersion"
+}
+
+// resolveConfiguration resolves all IntegrationValues (plain + SecretKeyRef) to a string map
+// for submission to the HA Config Flow API. It also returns a configFingerprint with
+// non-sensitive identifiers for stable hashing.
 func (r *HomeAssistantIntegrationReconciler) resolveConfiguration(
 	ctx context.Context,
 	integration *hav1alpha1.HomeAssistantIntegration,
-) (map[string]interface{}, error) {
+) (map[string]interface{}, configFingerprint, error) {
 	resolved := make(map[string]interface{})
+	fp := configFingerprint{
+		domain:      integration.Spec.Domain,
+		plainValues: make(map[string]string),
+		secretRefs:  make(map[string]string),
+	}
 	for key, val := range integration.Spec.Configuration {
 		if val.Value != nil {
 			resolved[key] = *val.Value
+			fp.plainValues[key] = *val.Value
 			continue
 		}
 		if val.SecretKeyRef != nil {
@@ -340,40 +368,56 @@ func (r *HomeAssistantIntegrationReconciler) resolveConfiguration(
 				Namespace: integration.Namespace,
 			}
 			if err := r.Get(ctx, secretRef, secret); err != nil {
-				return nil, fmt.Errorf("failed to get Secret %s: %w", val.SecretKeyRef.Name, err)
+				return nil, configFingerprint{}, fmt.Errorf("failed to get Secret %s: %w", val.SecretKeyRef.Name, err)
 			}
 			secretValue, ok := secret.Data[val.SecretKeyRef.Key]
 			if !ok {
-				return nil, fmt.Errorf("key %q not found in Secret %s", val.SecretKeyRef.Key, val.SecretKeyRef.Name)
+				return nil, configFingerprint{}, fmt.Errorf(
+					"key %q not found in Secret %s", val.SecretKeyRef.Key, val.SecretKeyRef.Name)
 			}
 			resolved[key] = string(secretValue)
+			fp.secretRefs[key] = fmt.Sprintf("%s/%s/%s", val.SecretKeyRef.Name, val.SecretKeyRef.Key, secret.ResourceVersion)
 			continue
 		}
-		// Neither Value nor SecretKeyRef — skip
+		// Neither Value nor SecretKeyRef — skip (XValidation prevents this at admission)
 	}
-	return resolved, nil
+	return resolved, fp, nil
 }
 
-// calculateConfigHash computes a stable hash of the domain + resolved configuration
-func (r *HomeAssistantIntegrationReconciler) calculateConfigHash(domain string, config map[string]interface{}) string {
+// calculateConfigHash computes a stable hash from non-sensitive identifiers:
+// domain, plain text field values, and secret name/key/resourceVersion references.
+// Secret contents are never included in the hash.
+func (r *HomeAssistantIntegrationReconciler) calculateConfigHash(fp configFingerprint) string {
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "domain=%s", domain)
-	// Sort keys for stability
-	keys := make([]string, 0, len(config))
-	for k := range config {
-		keys = append(keys, k)
+	_, _ = fmt.Fprintf(h, "domain=%s", fp.domain)
+	// Sort plain value keys for stability
+	plainKeys := make([]string, 0, len(fp.plainValues))
+	for k := range fp.plainValues {
+		plainKeys = append(plainKeys, k)
 	}
-	for i := 0; i < len(keys); i++ {
-		for j := i + 1; j < len(keys); j++ {
-			if keys[i] > keys[j] {
-				keys[i], keys[j] = keys[j], keys[i]
-			}
-		}
+	sortStrings(plainKeys)
+	for _, k := range plainKeys {
+		_, _ = fmt.Fprintf(h, "|plain:%s=%s", k, fp.plainValues[k])
 	}
-	for _, k := range keys {
-		_, _ = fmt.Fprintf(h, "|%s=%v", k, config[k])
+	// Sort secret ref keys for stability
+	secretKeys := make([]string, 0, len(fp.secretRefs))
+	for k := range fp.secretRefs {
+		secretKeys = append(secretKeys, k)
+	}
+	sortStrings(secretKeys)
+	for _, k := range secretKeys {
+		_, _ = fmt.Fprintf(h, "|secret:%s=%s", k, fp.secretRefs[k])
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// sortStrings sorts a string slice in-place (insertion sort for small slices)
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j] < s[j-1]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
+		}
+	}
 }
 
 // verifyEntryExists checks if the given entry ID still exists in HA
@@ -479,8 +523,36 @@ func (r *HomeAssistantIntegrationReconciler) SetupWithManager(mgr ctrl.Manager) 
 			&hav1alpha1.HomeAssistant{},
 			handler.EnqueueRequestsFromMapFunc(r.findIntegrationsForHomeAssistant),
 		).
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.findIntegrationsForSecret),
+		).
 		Named("homeassistantintegration").
 		Complete(r)
+}
+
+// findIntegrationsForSecret returns reconcile requests for integrations that reference a Secret in their configuration
+func (r *HomeAssistantIntegrationReconciler) findIntegrationsForSecret(
+	ctx context.Context,
+	obj client.Object,
+) []reconcile.Request {
+	secret := obj.(*corev1.Secret)
+	list := &hav1alpha1.HomeAssistantIntegrationList{}
+	if err := r.List(ctx, list, client.InNamespace(secret.Namespace)); err != nil {
+		return nil
+	}
+	var requests []reconcile.Request
+	for _, item := range list.Items {
+		for _, val := range item.Spec.Configuration {
+			if val.SecretKeyRef != nil && val.SecretKeyRef.Name == secret.Name {
+				requests = append(requests, reconcile.Request{
+					NamespacedName: types.NamespacedName{Name: item.Name, Namespace: item.Namespace},
+				})
+				break
+			}
+		}
+	}
+	return requests
 }
 
 // findIntegrationsForHomeAssistant returns reconcile requests for all integrations referencing the HA

@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **BREAKING CHANGE: HomeAssistantAddon CRD removed** — `HomeAssistantAddon` (`haad`) has been completely removed. Use Helm charts or standard Kubernetes resources (Deployment, Service, PVC) to deploy companion services like Mosquitto, MariaDB, or Node-RED. Automatic HA integration setup will be handled by the upcoming `HomeAssistantIntegration` CRD.
+- **BREAKING CHANGE: HomeAssistantAddon CRD removed** — `HomeAssistantAddon` (`haad`) has been completely removed. Use Helm charts or standard Kubernetes resources (Deployment, Service, PVC) to deploy companion services like Mosquitto, MariaDB, or Node-RED. Use the new `HomeAssistantIntegration` CRD (`haint`) to register integrations declaratively.
 
 ## [0.6.0] - 2026-03-09
 

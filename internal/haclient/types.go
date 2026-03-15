@@ -112,6 +112,7 @@ type ConfigEntry struct {
 type FlowResponse struct {
 	FlowID     string          `json:"flow_id"`
 	Type       string          `json:"type"`
+	Reason     string          `json:"reason,omitempty"`
 	Title      string          `json:"title"`
 	Result     json.RawMessage `json:"result"`
 	Version    int             `json:"version"`

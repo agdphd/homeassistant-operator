@@ -65,7 +65,7 @@ spec:
                 additionalProperties:
                   description: |-
                     IntegrationValue holds either a plain text value or a reference to a Kubernetes Secret key.
-                    Exactly one of Value or SecretKeyRef should be set.
+                    Exactly one of Value or SecretKeyRef must be set.
                   properties:
                     secretKeyRef:
                       description: SecretKeyRef references a key in a Kubernetes Secret
@@ -84,6 +84,10 @@ spec:
                       description: Value is a plain text configuration value
                       type: string
                   type: object
+                  x-kubernetes-validations:
+                  - message: exactly one of value or secretKeyRef must be set
+                    rule: (has(self.value) && !has(self.secretKeyRef)) || (!has(self.value)
+                      && has(self.secretKeyRef))
                 description: |-
                   Configuration contains fields submitted to the Config Flow (single-step flows only).
                   Keys are field names from the data_schema; values are plain text or Secret references.
@@ -169,6 +173,9 @@ spec:
                   - type
                   type: object
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               configHash:
                 description: |-
                   ConfigHash is the SHA256 hash of the resolved configuration values.

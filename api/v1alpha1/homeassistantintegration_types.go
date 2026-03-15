@@ -37,7 +37,8 @@ type HomeAssistantIntegrationSpec struct {
 }
 
 // IntegrationValue holds either a plain text value or a reference to a Kubernetes Secret key.
-// Exactly one of Value or SecretKeyRef should be set.
+// Exactly one of Value or SecretKeyRef must be set.
+// +kubebuilder:validation:XValidation:rule="(has(self.value) && !has(self.secretKeyRef)) || (!has(self.value) && has(self.secretKeyRef))",message="exactly one of value or secretKeyRef must be set"
 type IntegrationValue struct {
 	// Value is a plain text configuration value
 	// +optional
@@ -69,6 +70,8 @@ type HomeAssistantIntegrationStatus struct {
 
 	// Conditions represent the latest available observations of the integration state
 	// +optional
+	// +listType=map
+	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
 	// ObservedGeneration reflects the generation of the most recently observed CR
