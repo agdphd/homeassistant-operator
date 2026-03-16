@@ -100,7 +100,7 @@ func buildEffectiveConfig(rawConfig string, ha *hav1alpha1.HomeAssistant) string
 	if ha != nil && ha.Spec.Bootstrap != nil {
 		loc = ha.Spec.Bootstrap.Location
 	}
-	return injectLocation(ensureAutoIncludes(rawConfig), loc)
+	return ensureAutoIncludes(injectLocation(rawConfig, loc))
 }
 
 // ensureAutoIncludes adds `!include` directives for automation, scene, and script

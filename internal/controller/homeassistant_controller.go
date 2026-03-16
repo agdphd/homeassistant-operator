@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -927,6 +928,22 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 	// Check readiness probe
 	if !probesEqual(currentContainer.ReadinessProbe, desiredContainer.ReadinessProbe) {
 		log.V(1).Info("ReadinessProbe differs")
+		return true
+	}
+
+	// Check init containers (e.g. config-init image/tag changes)
+	currentInit := current.Spec.Template.Spec.InitContainers
+	desiredInit := desired.Spec.Template.Spec.InitContainers
+	if len(currentInit) == 0 {
+		currentInit = nil
+	}
+	if len(desiredInit) == 0 {
+		desiredInit = nil
+	}
+	if !reflect.DeepEqual(currentInit, desiredInit) {
+		log.V(1).Info("InitContainers differ",
+			"current", len(currentInit),
+			"desired", len(desiredInit))
 		return true
 	}
 
