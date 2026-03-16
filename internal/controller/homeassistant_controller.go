@@ -181,10 +181,13 @@ func (r *HomeAssistantReconciler) reconcilePVC(ctx context.Context, ha *hav1alph
 	if err != nil && errors.IsNotFound(err) {
 		// Create new PVC
 		pvc = r.buildPVC(ha, pvcName)
-		if err := controllerutil.SetControllerReference(ha, pvc, r.Scheme); err != nil {
-			return err
+		retain := ha.Spec.Storage != nil && ha.Spec.Storage.RetainPVC
+		if !retain {
+			if err := controllerutil.SetControllerReference(ha, pvc, r.Scheme); err != nil {
+				return err
+			}
 		}
-		log.Info("Creating PVC", "PVC.Name", pvc.Name)
+		log.Info("Creating PVC", "PVC.Name", pvc.Name, "retainPVC", retain)
 		return r.Create(ctx, pvc)
 	} else if err != nil {
 		return err

@@ -296,6 +296,14 @@ spec:
                     default: ReadWriteOnce
                     description: AccessMode for the PVC
                     type: string
+                  retainPVC:
+                    default: false
+                    description: |-
+                      RetainPVC controls whether the PVC survives deletion of the HomeAssistant CR.
+                      When true, no ownerReference is set on the PVC — it will not be garbage-collected
+                      when the CR is deleted (e.g. by FluxCD reconciliation), preventing accidental data loss.
+                      When false (default), the PVC is owned by the CR and deleted together with it.
+                    type: boolean
                   size:
                     anyOf:
                     - type: integer

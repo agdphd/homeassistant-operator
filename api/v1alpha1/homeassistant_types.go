@@ -197,6 +197,14 @@ type StorageSpec struct {
 	// +kubebuilder:default="ReadWriteOnce"
 	// +optional
 	AccessMode corev1.PersistentVolumeAccessMode `json:"accessMode,omitempty"`
+
+	// RetainPVC controls whether the PVC survives deletion of the HomeAssistant CR.
+	// When true, no ownerReference is set on the PVC — it will not be garbage-collected
+	// when the CR is deleted (e.g. by FluxCD reconciliation), preventing accidental data loss.
+	// When false (default), the PVC is owned by the CR and deleted together with it.
+	// +kubebuilder:default=false
+	// +optional
+	RetainPVC bool `json:"retainPVC,omitempty"`
 }
 
 // ServiceSpec defines how Home Assistant is exposed within the cluster.
