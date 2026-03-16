@@ -45,10 +45,6 @@ func injectLocation(configYAML string, loc *hav1alpha1.LocationConfig) string {
 	if loc == nil {
 		return configYAML
 	}
-	if loc.Latitude == "" && loc.Longitude == "" {
-		return configYAML
-	}
-
 	var parsed map[string]interface{}
 	if err := yaml.Unmarshal([]byte(configYAML), &parsed); err != nil {
 		// Safe fallback: !include or other HA-specific tags cause parse errors
