@@ -1,0 +1,25 @@
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantIntegration
+metadata:
+  name: mqtt-integration
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  homeAssistantRef:
+    name: homeassistant-sample
+  domain: mqtt
+  configuration:
+    broker:
+      value: "mosquitto.default.svc.cluster.local"
+    port:
+      value: "1883"
+    # Example using a Secret for credentials:
+    # username:
+    #   secretKeyRef:
+    #     name: mqtt-credentials
+    #     key: username
+    # password:
+    #   secretKeyRef:
+    #     name: mqtt-credentials
+    #     key: password

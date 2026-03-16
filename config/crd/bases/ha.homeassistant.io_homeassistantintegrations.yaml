@@ -4,28 +4,29 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: homeassistantsecrets.ha.homeassistant.io
+  name: homeassistantintegrations.ha.homeassistant.io
 spec:
   group: ha.homeassistant.io
   names:
-    kind: HomeAssistantSecrets
-    listKind: HomeAssistantSecretsList
-    plural: homeassistantsecrets
+    categories:
+    - homeassistant
+    kind: HomeAssistantIntegration
+    listKind: HomeAssistantIntegrationList
+    plural: homeassistantintegrations
     shortNames:
-    - hasecrets
-    - hasec
-    singular: homeassistantsecrets
+    - haint
+    - haintegration
+    singular: homeassistantintegration
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - jsonPath: .spec.homeAssistantRef.name
       name: HomeAssistant
       type: string
-    - description: Referenced secrets
-      jsonPath: .spec.secretRefs[*].name
-      name: Secrets
+    - jsonPath: .spec.domain
+      name: Domain
       type: string
-    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+    - jsonPath: .status.conditions[?(@.type=="IntegrationReady")].status
       name: Ready
       type: string
     - jsonPath: .metadata.creationTimestamp
@@ -34,8 +35,10 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: HomeAssistantSecrets is the Schema for the homeassistantsecrets
-          API.
+        description: |-
+          HomeAssistantIntegration manages a Home Assistant integration (config entry) via the Config Flow API.
+          It supports create, adopt, reconfigure (delete+re-create on spec change), and cleanup via finalizer.
+          Only single-step Config Flows are supported (e.g. mqtt, recorder, esphome).
         properties:
           apiVersion:
             description: |-
@@ -55,18 +58,50 @@ spec:
           metadata:
             type: object
           spec:
-            description: HomeAssistantSecretsSpec defines the desired state of HomeAssistantSecrets.
+            description: HomeAssistantIntegrationSpec defines the desired state of
+              HomeAssistantIntegration
             properties:
-              autoRestart:
-                default: true
+              configuration:
+                additionalProperties:
+                  description: |-
+                    IntegrationValue holds either a plain text value or a reference to a Kubernetes Secret key.
+                    Exactly one of Value or SecretKeyRef must be set.
+                  properties:
+                    secretKeyRef:
+                      description: SecretKeyRef references a key in a Kubernetes Secret
+                      properties:
+                        key:
+                          description: Key within the Secret
+                          minLength: 1
+                          type: string
+                        name:
+                          description: Name of the Secret
+                          minLength: 1
+                          type: string
+                      required:
+                      - key
+                      - name
+                      type: object
+                    value:
+                      description: Value is a plain text configuration value
+                      type: string
+                  type: object
+                  x-kubernetes-validations:
+                  - message: exactly one of value or secretKeyRef must be set
+                    rule: (has(self.value) && !has(self.secretKeyRef)) || (!has(self.value)
+                      && has(self.secretKeyRef))
                 description: |-
-                  AutoRestart controls whether the Home Assistant pod should be automatically
-                  restarted when secrets change. When enabled, the controller updates an annotation
-                  on the StatefulSet to trigger a rolling restart.
-                type: boolean
+                  Configuration contains fields submitted to the Config Flow (single-step flows only).
+                  Keys are field names from the data_schema; values are plain text or Secret references.
+                type: object
+              domain:
+                description: Domain is the integration name in Home Assistant (e.g.
+                  "mqtt", "esphome", "recorder")
+                minLength: 1
+                type: string
               homeAssistantRef:
-                description: HomeAssistantRef references the HomeAssistant CR that
-                  will use these secrets
+                description: HomeAssistantRef references the HomeAssistant instance
+                  to configure
                 properties:
                   name:
                     description: Name of the HomeAssistant resource
@@ -75,39 +110,17 @@ spec:
                 required:
                 - name
                 type: object
-              secretRefs:
-                description: |-
-                  SecretRefs is a list of references to Kubernetes Secrets.
-                  Keys from these Secrets will be merged into the generated secrets.yaml
-                items:
-                  description: SecretKeyReference defines a reference to a specific
-                    key in a Kubernetes Secret.
-                  properties:
-                    keys:
-                      description: Keys to extract from the Secret. If empty, all
-                        keys will be included.
-                      items:
-                        type: string
-                      type: array
-                    name:
-                      description: Name of the Secret
-                      type: string
-                  required:
-                  - name
-                  type: object
-                minItems: 1
-                type: array
             required:
+            - domain
             - homeAssistantRef
-            - secretRefs
             type: object
           status:
-            description: HomeAssistantSecretsStatus defines the observed state of
-              HomeAssistantSecrets.
+            description: HomeAssistantIntegrationStatus defines the observed state
+              of HomeAssistantIntegration
             properties:
               conditions:
                 description: Conditions represent the latest available observations
-                  of the HomeAssistantSecrets state
+                  of the integration state
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -163,16 +176,23 @@ spec:
                   - type
                   type: object
                 type: array
-              lastUpdated:
-                description: LastUpdated is the timestamp when the secrets were last
-                  updated
-                format: date-time
-                type: string
-              secretsHash:
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              configHash:
                 description: |-
-                  SecretsHash is the SHA256 hash of the generated secrets.yaml content.
-                  Used to detect changes and trigger pod restarts.
+                  ConfigHash is the SHA256 hash of the resolved configuration values.
+                  Used to detect spec changes and trigger reconfiguration (delete + re-create).
                 type: string
+              entryID:
+                description: EntryID is the Home Assistant config entry ID created
+                  or adopted by the Config Flow
+                type: string
+              observedGeneration:
+                description: ObservedGeneration reflects the generation of the most
+                  recently observed CR
+                format: int64
+                type: integer
             type: object
         type: object
     served: true

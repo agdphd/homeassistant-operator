@@ -91,6 +91,7 @@ spec:
                 properties:
                   name:
                     description: Name of the HomeAssistant resource
+                    minLength: 1
                     type: string
                 required:
                 - name

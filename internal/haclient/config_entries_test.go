@@ -243,3 +243,57 @@ func TestRemoveConfigEntry_NotFound(t *testing.T) {
 		t.Fatalf("expected nil for 404, got: %v", err)
 	}
 }
+
+func TestParseConfigEntryResult(t *testing.T) {
+	t.Run("parses valid create_entry result", func(t *testing.T) {
+		result, _ := json.Marshal(map[string]interface{}{
+			"entry_id": "abc123",
+			"domain":   "mqtt",
+			"title":    "MQTT",
+		})
+		resp := &FlowResponse{
+			Type:   "create_entry",
+			Result: json.RawMessage(result),
+		}
+		got, err := ParseConfigEntryResult(resp)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got.EntryID != "abc123" {
+			t.Errorf("expected entry_id=abc123, got %s", got.EntryID)
+		}
+		if got.Domain != "mqtt" {
+			t.Errorf("expected domain=mqtt, got %s", got.Domain)
+		}
+	})
+
+	t.Run("returns error for non-create_entry type", func(t *testing.T) {
+		resp := &FlowResponse{Type: "form"}
+		_, err := ParseConfigEntryResult(resp)
+		if err == nil {
+			t.Fatal("expected error for non-create_entry type")
+		}
+	})
+
+	t.Run("returns error for missing entry_id", func(t *testing.T) {
+		result, _ := json.Marshal(map[string]interface{}{
+			"domain": "mqtt",
+		})
+		resp := &FlowResponse{
+			Type:   "create_entry",
+			Result: json.RawMessage(result),
+		}
+		_, err := ParseConfigEntryResult(resp)
+		if err == nil {
+			t.Fatal("expected error for missing entry_id")
+		}
+	})
+
+	t.Run("returns error for nil result", func(t *testing.T) {
+		resp := &FlowResponse{Type: "create_entry", Result: nil}
+		_, err := ParseConfigEntryResult(resp)
+		if err == nil {
+			t.Fatal("expected error for nil result")
+		}
+	})
+}

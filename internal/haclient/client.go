@@ -1007,6 +1007,38 @@ func (c *Client) SubmitConfigFlowUntilDone(
 	}
 }
 
+// ParseConfigEntryResult parses the Result field of a FlowResponse after a successful create_entry.
+// Returns ConfigEntryResult with the entry_id, domain and title of the created config entry.
+func ParseConfigEntryResult(resp *FlowResponse) (*ConfigEntryResult, error) {
+	if resp.Type != "create_entry" {
+		return nil, &Error{
+			Type:    ErrorTypeInvalidResponse,
+			Message: fmt.Sprintf("expected flow type create_entry, got %s", resp.Type),
+		}
+	}
+	if resp.Result == nil {
+		return nil, &Error{
+			Type:    ErrorTypeInvalidResponse,
+			Message: "flow result is empty",
+		}
+	}
+	var result ConfigEntryResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, &Error{
+			Type:    ErrorTypeInvalidResponse,
+			Message: "failed to parse config entry result",
+			Err:     err,
+		}
+	}
+	if result.EntryID == "" {
+		return nil, &Error{
+			Type:    ErrorTypeInvalidResponse,
+			Message: "entry_id not found in flow result",
+		}
+	}
+	return &result, nil
+}
+
 // RemoveConfigEntry deletes a config entry by its entry ID.
 // Returns nil if the entry does not exist (404 treated as success).
 func (c *Client) RemoveConfigEntry(ctx context.Context, token, entryID string) error {

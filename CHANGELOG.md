@@ -10,8 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **HomeAssistantIntegration CRD** (`haint`) — declarative management of Home Assistant integrations via Config Flow API. Does not deploy containers — only registers integrations in HA.
+  - Supports single-step Config Flows (MQTT, ESPHome, and others)
+  - `spec.configuration` fields support plain text values and `secretKeyRef` references to K8s Secrets
+  - **Adopt pattern**: if integration already exists in HA (e.g. configured via UI), operator adopts the existing `entryID` without reconfiguring
+  - **Day-2 reconfiguration**: changing `spec.configuration` triggers delete + re-create of the config entry
+  - Finalizer-based cleanup: removes config entry from HA on CR deletion (best-effort)
+  - Events: `IntegrationConfigured`, `IntegrationAdopted`, `IntegrationReconfigured`, `IntegrationRemoved`, `IntegrationFailed`
+  - Condition: `IntegrationReady` with reasons: `IntegrationConfigured`, `AlreadyConfigured`, `TokenNotAvailable`, `HANotReady`, `ConfigFlowFailed`, `SecretResolutionFailed`
 - **`spec.hostNetwork` for HomeAssistant CR** — enables host networking for IoT device discovery (mDNS/SSDP/DHCP). When enabled, sets `hostNetwork: true` and `dnsPolicy: ClusterFirstWithHostNet` on the pod.
-- **Config Entry Flow API methods in haclient** — `ListConfigEntries`, `IsIntegrationConfigured`, `StartConfigFlow`, `SubmitConfigFlow`, `SubmitConfigFlowUntilDone`, `RemoveConfigEntry` — preparation for the upcoming `HomeAssistantIntegration` CRD.
+- **Config Entry Flow API methods in haclient** — `ListConfigEntries`, `IsIntegrationConfigured`, `StartConfigFlow`, `SubmitConfigFlow`, `SubmitConfigFlowUntilDone`, `RemoveConfigEntry`.
 
 ### Fixed
 
@@ -19,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **BREAKING CHANGE: HomeAssistantAddon CRD removed** — `HomeAssistantAddon` (`haad`) has been completely removed. Use Helm charts or standard Kubernetes resources (Deployment, Service, PVC) to deploy companion services like Mosquitto, MariaDB, or Node-RED. Automatic HA integration setup will be handled by the upcoming `HomeAssistantIntegration` CRD.
+- **BREAKING CHANGE: HomeAssistantAddon CRD removed** — `HomeAssistantAddon` (`haad`) has been completely removed. Use Helm charts or standard Kubernetes resources (Deployment, Service, PVC) to deploy companion services like Mosquitto, MariaDB, or Node-RED. Use the new `HomeAssistantIntegration` CRD (`haint`) to register integrations declaratively.
 
 ## [0.6.0] - 2026-03-09
 

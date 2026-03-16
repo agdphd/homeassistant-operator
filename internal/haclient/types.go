@@ -112,6 +112,7 @@ type ConfigEntry struct {
 type FlowResponse struct {
 	FlowID     string          `json:"flow_id"`
 	Type       string          `json:"type"`
+	Reason     string          `json:"reason,omitempty"`
 	Title      string          `json:"title"`
 	Result     json.RawMessage `json:"result"`
 	Version    int             `json:"version"`
@@ -128,4 +129,11 @@ type FlowField struct {
 	Default     json.RawMessage `json:"default,omitempty"`
 	ValueMin    *float64        `json:"value_min,omitempty"`
 	ValueMax    *float64        `json:"value_max,omitempty"`
+}
+
+// ConfigEntryResult represents the result field from a successful create_entry flow response
+type ConfigEntryResult struct {
+	EntryID string `json:"entry_id"`
+	Domain  string `json:"domain"`
+	Title   string `json:"title"`
 }

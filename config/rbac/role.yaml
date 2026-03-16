@@ -59,6 +59,7 @@ rules:
   resources:
   - homeassistantautomations
   - homeassistantconfigurations
+  - homeassistantintegrations
   - homeassistants
   - homeassistantscenes
   - homeassistantscripts
@@ -75,6 +76,7 @@ rules:
   resources:
   - homeassistantautomations/finalizers
   - homeassistantconfigurations/finalizers
+  - homeassistantintegrations/finalizers
   - homeassistants/finalizers
   - homeassistantscenes/finalizers
   - homeassistantscripts/finalizers
@@ -86,6 +88,7 @@ rules:
   resources:
   - homeassistantautomations/status
   - homeassistantconfigurations/status
+  - homeassistantintegrations/status
   - homeassistants/status
   - homeassistantscenes/status
   - homeassistantscripts/status

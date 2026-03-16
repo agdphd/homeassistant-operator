@@ -8,4 +8,6 @@ resources:
 - haconfig_restart_strategy.yaml
 - complete_example_with_secrets.yaml
 - ha_v1alpha1_gateway_api.yaml
+- ha_v1alpha1_homeassistantintegration_mqtt.yaml
+- ha_v1alpha1_homeassistantintegration_recorder.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

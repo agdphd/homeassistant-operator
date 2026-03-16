@@ -58,6 +58,7 @@ type HomeAssistantSecretsSpec struct {
 type HomeAssistantReference struct {
 	// Name of the HomeAssistant resource
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 }
 
