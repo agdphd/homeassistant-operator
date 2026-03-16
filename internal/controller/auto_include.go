@@ -17,10 +17,12 @@ limitations under the License.
 package controller
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
 )
@@ -37,18 +39,16 @@ var autoIncludeEntries = []struct {
 }
 
 // injectLocation injects location fields (latitude, longitude, elevation, time_zone,
-// unit_system) from spec.bootstrap.location into the homeassistant: section of
-// configuration.yaml, but only for fields not already defined by the user.
-// If the YAML cannot be parsed (e.g. it contains HA-specific !include tags), the
-// original string is returned unchanged as a safe fallback.
-func injectLocation(configYAML string, loc *hav1alpha1.LocationConfig) string {
+// unit_system, name, currency) from spec.bootstrap.location into the homeassistant:
+// section of configuration.yaml, but only for fields not already defined by the user.
+// Returns an error if the YAML cannot be parsed or marshalled.
+func injectLocation(configYAML string, loc *hav1alpha1.LocationConfig) (string, error) {
 	if loc == nil {
-		return configYAML
+		return configYAML, nil
 	}
 	var parsed map[string]interface{}
 	if err := yaml.Unmarshal([]byte(configYAML), &parsed); err != nil {
-		// Safe fallback: !include or other HA-specific tags cause parse errors
-		return configYAML
+		return "", fmt.Errorf("failed to parse configuration YAML for location injection: %w", err)
 	}
 	if parsed == nil {
 		parsed = make(map[string]interface{})
@@ -89,20 +89,27 @@ func injectLocation(configYAML string, loc *hav1alpha1.LocationConfig) string {
 
 	out, err := yaml.Marshal(parsed)
 	if err != nil {
-		return configYAML
+		return "", fmt.Errorf("failed to marshal configuration YAML after location injection: %w", err)
 	}
-	return string(out)
+	return string(out), nil
 }
 
-// buildEffectiveConfig applies ensureAutoIncludes and injectLocation transformations
+// buildEffectiveConfig applies injectLocation and ensureAutoIncludes transformations
 // to produce the final configuration.yaml content written to the ConfigMap.
 // ha may be nil (no location injection) if the HomeAssistant CR is unavailable.
+// If location injection fails (unexpected YAML parse error), the error is logged and
+// the function falls back to rawConfig before appending auto-include directives.
 func buildEffectiveConfig(rawConfig string, ha *hav1alpha1.HomeAssistant) string {
 	var loc *hav1alpha1.LocationConfig
 	if ha != nil && ha.Spec.Bootstrap != nil {
 		loc = ha.Spec.Bootstrap.Location
 	}
-	return ensureAutoIncludes(injectLocation(rawConfig, loc))
+	injected, err := injectLocation(rawConfig, loc)
+	if err != nil {
+		logf.Log.WithName("buildEffectiveConfig").Error(err, "Location injection failed, proceeding without location")
+		injected = rawConfig
+	}
+	return ensureAutoIncludes(injected)
 }
 
 // ensureAutoIncludes adds `!include` directives for automation, scene, and script
