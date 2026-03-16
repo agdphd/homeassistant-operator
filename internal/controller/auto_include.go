@@ -78,6 +78,12 @@ func injectLocation(configYAML string, loc *hav1alpha1.LocationConfig) string {
 	if _, ok := haSection["time_zone"]; !ok && loc.TimeZone != "" {
 		haSection["time_zone"] = loc.TimeZone
 	}
+	if _, ok := haSection["name"]; !ok && loc.Name != "" {
+		haSection["name"] = loc.Name
+	}
+	if _, ok := haSection["currency"]; !ok && loc.Currency != "" {
+		haSection["currency"] = loc.Currency
+	}
 
 	parsed["homeassistant"] = haSection
 
