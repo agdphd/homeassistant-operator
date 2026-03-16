@@ -52,8 +52,10 @@ type IntegrationValue struct {
 // IntegrationSecretKeyRef references a specific key within a Kubernetes Secret
 type IntegrationSecretKeyRef struct {
 	// Name of the Secret
+	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
 	// Key within the Secret
+	// +kubebuilder:validation:MinLength=1
 	Key string `json:"key"`
 }
 
