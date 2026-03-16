@@ -44,11 +44,14 @@ import (
 
 const (
 	// Default values
-	defaultImage       = "ghcr.io/home-assistant/home-assistant"
-	defaultVersion     = "stable"
-	defaultPort        = 8123
-	defaultStorageSize = "5Gi"
-	defaultTimezone    = "UTC"
+	defaultImage          = "ghcr.io/home-assistant/home-assistant"
+	defaultVersion        = "stable"
+	defaultPort           = 8123
+	defaultStorageSize    = "5Gi"
+	defaultTimezone       = "UTC"
+	defaultInitRepository = "docker.io/library"
+	defaultInitImage      = "busybox"
+	defaultInitTag        = "1.36"
 
 	// Labels
 	labelAppName      = "app.kubernetes.io/name"
@@ -586,6 +589,7 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 					Annotations: existingAnnotations,
 				},
 				Spec: corev1.PodSpec{
+					InitContainers: r.buildInitContainers(ha),
 					Containers: []corev1.Container{
 						{
 							Name:            "home-assistant",
@@ -1076,6 +1080,50 @@ func (r *HomeAssistantReconciler) findHomeAssistantForConfigMap(
 			NamespacedName: types.NamespacedName{
 				Name:      haName,
 				Namespace: configMap.Namespace,
+			},
+		},
+	}
+}
+
+// buildInitContainers returns the init containers for the Home Assistant pod.
+// The config-init container pre-creates required YAML files on the PVC so that
+// HA does not enter recovery mode on first start due to missing !include targets.
+func (r *HomeAssistantReconciler) buildInitContainers(ha *hav1alpha1.HomeAssistant) []corev1.Container {
+	repo := defaultInitRepository
+	img := defaultInitImage
+	tag := defaultInitTag
+
+	if ha.Spec.Storage != nil && ha.Spec.Storage.InitContainer != nil {
+		ic := ha.Spec.Storage.InitContainer
+		if ic.Repository != "" {
+			repo = ic.Repository
+		}
+		if ic.Image != "" {
+			img = ic.Image
+		}
+		if ic.Tag != "" {
+			tag = ic.Tag
+		}
+	}
+
+	fullImage := fmt.Sprintf("%s/%s:%s", repo, img, tag)
+
+	return []corev1.Container{
+		{
+			Name:            "config-init",
+			Image:           fullImage,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Command:         []string{"sh", "-c"},
+			Args: []string{
+				"for f in automations.yaml scenes.yaml scripts.yaml; do " +
+					"[ -f /config/$f ] || echo '[]' > /config/$f; " +
+					"done",
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{
+					Name:      "config",
+					MountPath: "/config",
+				},
 			},
 		},
 	}

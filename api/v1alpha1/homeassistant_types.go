@@ -205,6 +205,31 @@ type StorageSpec struct {
 	// +kubebuilder:default=false
 	// +optional
 	RetainPVC bool `json:"retainPVC,omitempty"`
+
+	// InitContainer configures the init container that pre-creates required YAML files
+	// (automations.yaml, scenes.yaml, scripts.yaml) on the PVC before Home Assistant starts.
+	// This prevents HA from entering recovery mode when the !include directives are present
+	// but the files do not yet exist.
+	// +optional
+	InitContainer *InitContainerSpec `json:"initContainer,omitempty"`
+}
+
+// InitContainerSpec configures the image used for the config-init init container.
+type InitContainerSpec struct {
+	// Repository is the container image repository (e.g. "docker.io/library")
+	// +kubebuilder:default="docker.io/library"
+	// +optional
+	Repository string `json:"repository,omitempty"`
+
+	// Image is the container image name (e.g. "busybox")
+	// +kubebuilder:default="busybox"
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// Tag is the container image tag (e.g. "1.36", "latest")
+	// +kubebuilder:default="1.36"
+	// +optional
+	Tag string `json:"tag,omitempty"`
 }
 
 // ServiceSpec defines how Home Assistant is exposed within the cluster.
