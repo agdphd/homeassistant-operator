@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -44,11 +45,14 @@ import (
 
 const (
 	// Default values
-	defaultImage       = "ghcr.io/home-assistant/home-assistant"
-	defaultVersion     = "stable"
-	defaultPort        = 8123
-	defaultStorageSize = "5Gi"
-	defaultTimezone    = "UTC"
+	defaultImage          = "ghcr.io/home-assistant/home-assistant"
+	defaultVersion        = "stable"
+	defaultPort           = 8123
+	defaultStorageSize    = "5Gi"
+	defaultTimezone       = "UTC"
+	defaultInitRepository = "docker.io/library"
+	defaultInitImage      = "busybox"
+	defaultInitTag        = "1.36"
 
 	// Labels
 	labelAppName      = "app.kubernetes.io/name"
@@ -181,16 +185,48 @@ func (r *HomeAssistantReconciler) reconcilePVC(ctx context.Context, ha *hav1alph
 	if err != nil && errors.IsNotFound(err) {
 		// Create new PVC
 		pvc = r.buildPVC(ha, pvcName)
-		if err := controllerutil.SetControllerReference(ha, pvc, r.Scheme); err != nil {
-			return err
+		retain := ha.Spec.Storage != nil && ha.Spec.Storage.RetainPVC
+		if !retain {
+			if err := controllerutil.SetControllerReference(ha, pvc, r.Scheme); err != nil {
+				return err
+			}
 		}
-		log.Info("Creating PVC", "PVC.Name", pvc.Name)
+		log.Info("Creating PVC", "PVC.Name", pvc.Name, "retainPVC", retain)
 		return r.Create(ctx, pvc)
 	} else if err != nil {
 		return err
 	}
 
-	// PVC exists, no update needed (PVCs are mostly immutable)
+	// PVC exists — reconcile ownerReference to match current retainPVC setting
+	retain := ha.Spec.Storage != nil && ha.Spec.Storage.RetainPVC
+	isOwned := false
+	for _, ref := range pvc.OwnerReferences {
+		if ref.Controller != nil && *ref.Controller && ref.UID == ha.UID {
+			isOwned = true
+			break
+		}
+	}
+
+	if !retain && !isOwned {
+		if err := controllerutil.SetControllerReference(ha, pvc, r.Scheme); err != nil {
+			return err
+		}
+		log.Info("Setting ownerReference on PVC (retainPVC=false)", "PVC.Name", pvc.Name)
+		return r.Update(ctx, pvc)
+	}
+
+	if retain && isOwned {
+		var filtered []metav1.OwnerReference
+		for _, ref := range pvc.OwnerReferences {
+			if ref.UID != ha.UID {
+				filtered = append(filtered, ref)
+			}
+		}
+		pvc.OwnerReferences = filtered
+		log.Info("Removing ownerReference from PVC (retainPVC=true)", "PVC.Name", pvc.Name)
+		return r.Update(ctx, pvc)
+	}
+
 	log.V(1).Info("PVC already exists", "PVC.Name", pvc.Name)
 	return nil
 }
@@ -583,6 +619,7 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 					Annotations: existingAnnotations,
 				},
 				Spec: corev1.PodSpec{
+					InitContainers: r.buildInitContainers(ha),
 					Containers: []corev1.Container{
 						{
 							Name:            "home-assistant",
@@ -923,6 +960,22 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 		return true
 	}
 
+	// Check init containers (e.g. config-init image/tag changes)
+	currentInit := current.Spec.Template.Spec.InitContainers
+	desiredInit := desired.Spec.Template.Spec.InitContainers
+	if len(currentInit) == 0 {
+		currentInit = nil
+	}
+	if len(desiredInit) == 0 {
+		desiredInit = nil
+	}
+	if !reflect.DeepEqual(currentInit, desiredInit) {
+		log.V(1).Info("InitContainers differ",
+			"current", len(currentInit),
+			"desired", len(desiredInit))
+		return true
+	}
+
 	// Check host networking
 	if current.Spec.Template.Spec.HostNetwork != desired.Spec.Template.Spec.HostNetwork {
 		log.V(1).Info("HostNetwork differs",
@@ -1073,6 +1126,51 @@ func (r *HomeAssistantReconciler) findHomeAssistantForConfigMap(
 			NamespacedName: types.NamespacedName{
 				Name:      haName,
 				Namespace: configMap.Namespace,
+			},
+		},
+	}
+}
+
+// buildInitContainers returns the init containers for the Home Assistant pod.
+// The config-init container pre-creates required YAML files on the PVC so that
+// HA does not enter recovery mode on first start due to missing !include targets.
+func (r *HomeAssistantReconciler) buildInitContainers(ha *hav1alpha1.HomeAssistant) []corev1.Container {
+	repo := defaultInitRepository
+	img := defaultInitImage
+	tag := defaultInitTag
+
+	if ha.Spec.Storage != nil && ha.Spec.Storage.InitContainer != nil {
+		ic := ha.Spec.Storage.InitContainer
+		if ic.Repository != "" {
+			repo = ic.Repository
+		}
+		if ic.Image != "" {
+			img = ic.Image
+		}
+		if ic.Tag != "" {
+			tag = ic.Tag
+		}
+	}
+
+	fullImage := fmt.Sprintf("%s/%s:%s", repo, img, tag)
+
+	return []corev1.Container{
+		{
+			Name:            "config-init",
+			Image:           fullImage,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Command:         []string{"sh", "-c"},
+			Args: []string{
+				"set -e; " +
+					"for f in automations.yaml scenes.yaml scripts.yaml; do " +
+					"[ -f /config/$f ] || echo '[]' > /config/$f; " +
+					"done",
+			},
+			VolumeMounts: []corev1.VolumeMount{
+				{
+					Name:      "config",
+					MountPath: "/config",
+				},
 			},
 		},
 	}

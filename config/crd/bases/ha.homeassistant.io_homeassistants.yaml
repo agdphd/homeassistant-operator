@@ -296,6 +296,36 @@ spec:
                     default: ReadWriteOnce
                     description: AccessMode for the PVC
                     type: string
+                  initContainer:
+                    description: |-
+                      InitContainer configures the init container that pre-creates required YAML files
+                      (automations.yaml, scenes.yaml, scripts.yaml) on the PVC before Home Assistant starts.
+                      This prevents HA from entering recovery mode when the !include directives are present
+                      but the files do not yet exist.
+                    properties:
+                      image:
+                        default: busybox
+                        description: Image is the container image name (e.g. "busybox")
+                        type: string
+                      repository:
+                        default: docker.io/library
+                        description: Repository is the container image repository
+                          (e.g. "docker.io/library")
+                        type: string
+                      tag:
+                        default: "1.36"
+                        description: Tag is the container image tag (e.g. "1.36",
+                          "latest")
+                        type: string
+                    type: object
+                  retainPVC:
+                    default: false
+                    description: |-
+                      RetainPVC controls whether the PVC survives deletion of the HomeAssistant CR.
+                      When true, no ownerReference is set on the PVC — it will not be garbage-collected
+                      when the CR is deleted (e.g. by FluxCD reconciliation), preventing accidental data loss.
+                      When false (default), the PVC is owned by the CR and deleted together with it.
+                    type: boolean
                   size:
                     anyOf:
                     - type: integer

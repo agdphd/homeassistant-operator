@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Auto-inject `!include` directives** — the operator now automatically appends `automation: !include automations.yaml`, `scene: !include scenes.yaml`, and `script: !include scripts.yaml` to `configuration.yaml` if not already present. HA 2025.x requires explicit includes for PVC-managed files.
 
+- **Recovery mode on first start** (`spec.storage.initContainer`) — HA was entering recovery mode with `Unable to read file /config/automations.yaml` because `auto_include.go` injects `!include automations.yaml` unconditionally, but the files are created by the automation/scene/script controller only after the pod is already running. An init container (`busybox` by default) now pre-creates empty `[]` files (`automations.yaml`, `scenes.yaml`, `scripts.yaml`) on the PVC before the main container starts. Image, tag, and repository are configurable via `spec.storage.initContainer`.
+
+
+- **Location not set after bootstrap** — `SetCoreConfig` during the onboarding flow was silently ignored (HA returns an error when the endpoint is not yet ready), leaving `zone.home` at `latitude: 0, longitude: 0`. The configuration controller now injects `latitude`, `longitude`, `elevation`, `unit_system`, and `time_zone` into the `homeassistant:` section of `configuration.yaml` (only for keys not already defined by the user). The correct location is applied on the first configuration reconcile via hot-reload or restart.
+
 ### Removed
 
 - **BREAKING CHANGE: HomeAssistantAddon CRD removed** — `HomeAssistantAddon` (`haad`) has been completely removed. Use Helm charts or standard Kubernetes resources (Deployment, Service, PVC) to deploy companion services like Mosquitto, MariaDB, or Node-RED. Use the new `HomeAssistantIntegration` CRD (`haint`) to register integrations declaratively.

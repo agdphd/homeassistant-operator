@@ -152,10 +152,10 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Compute the effective configuration (with auto-injected !include directives) and
-	// hash it so that changes to the transformed content — not just the raw spec — trigger
-	// a reload (e.g. after an operator upgrade that introduced ensureAutoIncludes).
-	effectiveConfig := ensureAutoIncludes(config.Spec.Configuration)
+	// Compute the effective configuration (with auto-injected !include directives and
+	// location injection) and hash it so that changes to the transformed content — not
+	// just the raw spec — trigger a reload.
+	effectiveConfig := buildEffectiveConfig(config.Spec.Configuration, ha)
 	configHash := calculateConfigHash(effectiveConfig)
 
 	// Capture old configuration BEFORE updating ConfigMap
@@ -179,14 +179,14 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	syncedContent := false
 	if config.Status.ConfigHash == configHash {
 		var syncErr error
-		syncedContent, syncErr = r.syncConfigMapFromCRD(ctx, config)
+		syncedContent, syncErr = r.syncConfigMapFromCRD(ctx, config, ha)
 		if syncErr != nil {
 			log.Error(syncErr, "Failed to sync ConfigMap from CRD")
 		}
 	}
 
 	// Create or update the ConfigMap
-	if err := r.reconcileGeneratedConfigMap(ctx, config); err != nil {
+	if err := r.reconcileGeneratedConfigMap(ctx, config, ha); err != nil {
 		log.Error(err, "Failed to reconcile generated ConfigMap")
 		meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
@@ -242,6 +242,7 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 	ctx context.Context,
 	config *hav1alpha1.HomeAssistantConfiguration,
+	ha *hav1alpha1.HomeAssistant,
 ) error {
 	log := logf.FromContext(ctx)
 
@@ -266,7 +267,7 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 					// NO hash annotation on initial creation
 				},
 				Data: map[string]string{
-					configurationYamlKey: ensureAutoIncludes(config.Spec.Configuration),
+					configurationYamlKey: buildEffectiveConfig(config.Spec.Configuration, ha),
 				},
 			}
 
@@ -323,7 +324,7 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 		}
 	}
 
-	expectedData := ensureAutoIncludes(config.Spec.Configuration)
+	expectedData := buildEffectiveConfig(config.Spec.Configuration, ha)
 	existingData := existingConfigMap.Data[configurationYamlKey]
 	if existingData != expectedData {
 		log.Info("Updating generated ConfigMap content (hash annotation preserved for hot-reload)", "name", configMapName)
@@ -663,7 +664,7 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 		// that failed before saving status, oldConfig == newConfig and we cannot determine
 		// what changed. Default to restart (safe) to avoid choosing hot-reload for changes
 		// that require a full restart (e.g. adding a new integration like prometheus:).
-		transformedConfig := ensureAutoIncludes(config.Spec.Configuration)
+		transformedConfig := buildEffectiveConfig(config.Spec.Configuration, ha)
 		if oldConfig == transformedConfig {
 			log.Info("ConfigMap already synced (retry after partial failure), defaulting to restart")
 			strategy = reloadMethodRestart
@@ -820,6 +821,7 @@ func (r *HomeAssistantConfigurationReconciler) updateConfigMapHashAnnotation(
 func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 	ctx context.Context,
 	config *hav1alpha1.HomeAssistantConfiguration,
+	ha *hav1alpha1.HomeAssistant,
 ) (bool, error) {
 	log := logf.FromContext(ctx)
 
@@ -859,7 +861,7 @@ func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 	// NOTE: We only check content, NOT hash annotation.
 	// Hash annotation is managed by performConfigReload() and should not be synced here.
 	currentContent := existingConfigMap.Data[configurationYamlKey]
-	expectedContent := ensureAutoIncludes(config.Spec.Configuration)
+	expectedContent := buildEffectiveConfig(config.Spec.Configuration, ha)
 
 	if currentContent == expectedContent {
 		// ConfigMap content is in sync with CRD
