@@ -125,7 +125,7 @@ type FlowField struct {
 	Required    bool            `json:"required"`
 	Type        string          `json:"type"`
 	Selector    map[string]any  `json:"selector,omitempty"`
-	Description *string         `json:"description,omitempty"`
+	Description json.RawMessage `json:"description,omitempty"`
 	Default     json.RawMessage `json:"default,omitempty"`
 	ValueMin    *float64        `json:"value_min,omitempty"`
 	ValueMax    *float64        `json:"value_max,omitempty"`
