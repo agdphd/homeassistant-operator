@@ -6,13 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [v0.7.1] - 2026-03-19
+## [Unreleased]
 
+### Fixed
+
+- **Config Flow `description` as object** — `FlowField.Description` was typed as `*string`, but some integrations (e.g. OpenWeatherMap) return it as an object (`{"suggested_value": "..."}`), causing JSON unmarshal errors. Changed to `json.RawMessage` to accept both formats.
+
+- **Enable automation 404 on HA 2025.x+** — the operator called `POST /api/config/automation/config/{id}/enable` after every PUT, but this endpoint no longer exists in HA 2025.x/2026.x. Automations created via API are enabled by default. Removed the `EnableAutomation` call; only `DisableAutomation` is used when `spec.enabled: false`.
+
+## [v0.7.1] - 2026-03-19
 
 ### Fixed
 
 - **`auto_include` strips `!include` tags after YAML round-trip** — when `injectLocation` re-serialised `configuration.yaml`, the `!include` YAML tag was lost (e.g. `automation: !include automations.yaml` became `automation: automations.yaml`). HA treated the bare filename as a literal string and disabled all automations. `ensureAutoIncludes` now detects bare filenames and restores the `!include` directive in-place.
-
 
 ## [v0.7.0] - 2026-03-17
 
