@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [v0.7.1] - 2026-03-19
+
+
+### Fixed
+
+- **`auto_include` strips `!include` tags after YAML round-trip** — when `injectLocation` re-serialised `configuration.yaml`, the `!include` YAML tag was lost (e.g. `automation: !include automations.yaml` became `automation: automations.yaml`). HA treated the bare filename as a literal string and disabled all automations. `ensureAutoIncludes` now detects bare filenames and restores the `!include` directive in-place.
+
+
 ## [v0.7.0] - 2026-03-17
 
 ### Added
@@ -181,7 +189,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Primary: k3s on Raspberry Pi 4/5 (ARM64)
 - Also supported: Any Kubernetes cluster (AMD64/ARM64)
 
-[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v0.7.1...HEAD
+[v0.7.1]: https://github.com/przemekhys/homeassistant-operator/compare/v0.7.0...v0.7.1
+[v0.7.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.6.0
 [0.5.1]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.5.1
 [0.5.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.5.0

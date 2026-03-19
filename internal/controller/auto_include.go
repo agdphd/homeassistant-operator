@@ -128,22 +128,35 @@ func ensureAutoIncludes(configYAML string) string {
 		parsed = make(map[string]interface{})
 	}
 
+	result := configYAML
 	var additions []string
 	for _, entry := range autoIncludeEntries {
-		if _, exists := parsed[entry.key]; !exists {
+		val, exists := parsed[entry.key]
+		if !exists {
 			additions = append(additions, entry.key+": !include "+entry.fileName)
+		} else if strVal, ok := val.(string); ok && strVal == entry.fileName {
+			// Bare filename without !include tag — lost during YAML round-trip
+			// (e.g. injectLocation's yaml.Marshal strips !include tags).
+			// Fix in-place by restoring the !include directive.
+			result = strings.Replace(
+				result,
+				entry.key+": "+entry.fileName,
+				entry.key+": !include "+entry.fileName,
+				1,
+			)
 		}
 	}
 
-	if len(additions) == 0 {
+	if len(additions) == 0 && result == configYAML {
 		return configYAML
 	}
 
-	result := configYAML
-	// Ensure trailing newline before appending
-	if result != "" && !strings.HasSuffix(result, "\n") {
-		result += "\n"
+	if len(additions) > 0 {
+		// Ensure trailing newline before appending
+		if result != "" && !strings.HasSuffix(result, "\n") {
+			result += "\n"
+		}
+		result += strings.Join(additions, "\n") + "\n"
 	}
-	result += strings.Join(additions, "\n") + "\n"
 	return result
 }
