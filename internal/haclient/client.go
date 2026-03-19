@@ -810,11 +810,6 @@ func (c *Client) DeleteAutomation(ctx context.Context, token, id string) error {
 	return c.deleteConfig(ctx, token, configPath("automation", id))
 }
 
-// EnableAutomation enables an automation via HA REST API.
-func (c *Client) EnableAutomation(ctx context.Context, token, id string) error {
-	return c.postConfig(ctx, token, configPath("automation", id)+"/enable", map[string]interface{}{})
-}
-
 // DisableAutomation disables an automation via HA REST API.
 func (c *Client) DisableAutomation(ctx context.Context, token, id string) error {
 	return c.postConfig(ctx, token, configPath("automation", id)+"/disable", map[string]interface{}{})
