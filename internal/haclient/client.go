@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -227,19 +226,13 @@ func (c *Client) ExchangeAuthCode(ctx context.Context, authCode, clientID string
 	return &tokenResp, nil
 }
 
-// CreateLongLivedToken creates a long-lived access token via WebSocket API
-// Home Assistant requires WebSocket for creating long-lived tokens
-func (c *Client) CreateLongLivedToken(
-	ctx context.Context,
-	accessToken string,
-	req *LongLivedTokenRequest,
-) (*LongLivedTokenResponse, error) {
-	// Convert HTTP URL to WebSocket URL
+// wsAuthConnect opens a WebSocket connection to HA and performs the auth handshake.
+// The caller is responsible for closing the returned connection.
+func (c *Client) wsAuthConnect(ctx context.Context, token string) (*websocket.Conn, error) {
 	wsURL := strings.Replace(c.baseURL, "http://", "ws://", 1)
 	wsURL = strings.Replace(wsURL, "https://", "wss://", 1)
 	wsURL += "/api/websocket"
 
-	// Connect to WebSocket
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
 	}
@@ -248,70 +241,121 @@ func (c *Client) CreateLongLivedToken(
 	if err != nil {
 		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to connect to websocket", Err: err}
 	}
-	defer func() { _ = conn.Close() }()
 
-	// Message ID counter
-	var msgID atomic.Int64
+	// Set read deadline for the entire session (auth + command)
+	_ = conn.SetReadDeadline(time.Now().Add(defaultTimeout))
 
-	// Read auth_required message
+	// Read auth_required
 	var authRequired map[string]interface{}
 	if err := conn.ReadJSON(&authRequired); err != nil {
+		_ = conn.Close()
 		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to read auth_required", Err: err}
 	}
-
 	if authRequired["type"] != "auth_required" {
-		return nil, &Error{Type: ErrorTypeHTTP, Message: fmt.Sprintf("unexpected message type: %v", authRequired["type"])}
+		_ = conn.Close()
+		return nil, &Error{
+			Type:    ErrorTypeHTTP,
+			Message: fmt.Sprintf("unexpected message type: %v", authRequired["type"]),
+		}
 	}
 
-	// Send auth message with access token
+	// Send auth
 	authMsg := map[string]interface{}{
 		"type":         "auth",
-		"access_token": accessToken,
+		"access_token": token,
 	}
 	if err := conn.WriteJSON(authMsg); err != nil {
+		_ = conn.Close()
 		return nil, &Error{Type: ErrorTypeAuth, Message: "failed to send auth message", Err: err}
 	}
 
 	// Read auth result
 	var authResult map[string]interface{}
 	if err := conn.ReadJSON(&authResult); err != nil {
+		_ = conn.Close()
 		return nil, &Error{Type: ErrorTypeAuth, Message: "failed to read auth result", Err: err}
 	}
-
 	if authResult["type"] != "auth_ok" {
-		return nil, &Error{Type: ErrorTypeAuth, Message: fmt.Sprintf("auth failed: %v", authResult["message"])}
+		_ = conn.Close()
+		return nil, &Error{
+			Type:    ErrorTypeAuth,
+			Message: fmt.Sprintf("auth failed: %v", authResult["message"]),
+		}
 	}
 
-	// Send long_lived_access_token request
-	id := msgID.Add(1)
-	tokenReq := map[string]interface{}{
-		"id":          id,
-		"type":        "auth/long_lived_access_token",
+	return conn, nil
+}
+
+// SendWebSocketCommand sends a single command over WebSocket and returns the result.
+// One-shot pattern: open → auth → send → receive → close.
+func (c *Client) SendWebSocketCommand(
+	ctx context.Context,
+	token string,
+	msgType string,
+	data map[string]interface{},
+) (json.RawMessage, error) {
+	conn, err := c.wsAuthConnect(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close() }()
+
+	// Build command message
+	msg := make(map[string]interface{})
+	for k, v := range data {
+		msg[k] = v
+	}
+	msg["id"] = 1
+	msg["type"] = msgType
+
+	if err := conn.WriteJSON(msg); err != nil {
+		return nil, &Error{
+			Type:    ErrorTypeHTTP,
+			Message: "failed to send websocket command",
+			Err:     err,
+		}
+	}
+
+	var resp WebSocketResponse
+	if err := conn.ReadJSON(&resp); err != nil {
+		return nil, &Error{
+			Type:    ErrorTypeHTTP,
+			Message: "failed to read websocket response",
+			Err:     err,
+		}
+	}
+
+	if !resp.Success {
+		errMsg := "unknown error"
+		if resp.Error != nil && resp.Error.Message != "" {
+			errMsg = resp.Error.Message
+		}
+		return nil, &Error{
+			Type:    ErrorTypeHTTP,
+			Message: fmt.Sprintf("websocket command %q failed: %s", msgType, errMsg),
+		}
+	}
+
+	return resp.Result, nil
+}
+
+// CreateLongLivedToken creates a long-lived access token via WebSocket API.
+// Home Assistant requires WebSocket for creating long-lived tokens.
+func (c *Client) CreateLongLivedToken(
+	ctx context.Context,
+	accessToken string,
+	req *LongLivedTokenRequest,
+) (*LongLivedTokenResponse, error) {
+	result, err := c.SendWebSocketCommand(ctx, accessToken, "auth/long_lived_access_token", map[string]interface{}{
 		"client_name": req.ClientName,
 		"lifespan":    req.Lifespan,
-	}
-	if err := conn.WriteJSON(tokenReq); err != nil {
-		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to send token request", Err: err}
-	}
-
-	// Read token response
-	var tokenResult map[string]interface{}
-	if err := conn.ReadJSON(&tokenResult); err != nil {
-		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to read token response", Err: err}
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	if tokenResult["success"] != true {
-		errMsg := "unknown error"
-		if e, ok := tokenResult["error"].(map[string]interface{}); ok {
-			if msg, ok := e["message"].(string); ok {
-				errMsg = msg
-			}
-		}
-		return nil, &Error{Type: ErrorTypeHTTP, Message: fmt.Sprintf("failed to create long-lived token: %s", errMsg)}
-	}
-
-	token, ok := tokenResult["result"].(string)
-	if !ok || token == "" {
+	var token string
+	if err := json.Unmarshal(result, &token); err != nil || token == "" {
 		return nil, &Error{Type: ErrorTypeInvalidResponse, Message: "empty token received"}
 	}
 

@@ -47,4 +47,31 @@ resources:
   kind: HomeAssistantAutomation
   path: github.com/przemekhys/homeassistant-operator/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: homeassistant.io
+  group: ha
+  kind: HomeAssistantFloor
+  path: github.com/przemekhys/homeassistant-operator/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: homeassistant.io
+  group: ha
+  kind: HomeAssistantLabel
+  path: github.com/przemekhys/homeassistant-operator/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: homeassistant.io
+  group: ha
+  kind: HomeAssistantArea
+  path: github.com/przemekhys/homeassistant-operator/api/v1alpha1
+  version: v1alpha1
 version: "3"

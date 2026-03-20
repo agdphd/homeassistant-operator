@@ -1,0 +1,46 @@
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantArea
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: living-room
+spec:
+  homeAssistantRef:
+    name: homeassistant
+  name: "Living Room"
+  floorName: "Ground Floor"
+  icon: "mdi:sofa"
+  labels:
+    - "Indoor"
+---
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantArea
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: kitchen
+spec:
+  homeAssistantRef:
+    name: homeassistant
+  name: "Kitchen"
+  floorName: "Ground Floor"
+  icon: "mdi:countertop"
+  labels:
+    - "Indoor"
+    - "Critical"
+---
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantArea
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: garage
+spec:
+  homeAssistantRef:
+    name: homeassistant
+  name: "Garage"
+  floorName: "Ground Floor"
+  icon: "mdi:garage"

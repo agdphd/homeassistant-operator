@@ -137,3 +137,18 @@ type ConfigEntryResult struct {
 	Domain  string `json:"domain"`
 	Title   string `json:"title"`
 }
+
+// WebSocketResponse represents a generic HA WebSocket command response.
+type WebSocketResponse struct {
+	ID      int64           `json:"id"`
+	Type    string          `json:"type"`
+	Success bool            `json:"success"`
+	Result  json.RawMessage `json:"result"`
+	Error   *WSError        `json:"error,omitempty"`
+}
+
+// WSError represents the error object inside a failed WebSocket response.
+type WSError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}

@@ -10,4 +10,7 @@ resources:
 - ha_v1alpha1_gateway_api.yaml
 - ha_v1alpha1_homeassistantintegration_mqtt.yaml
 - ha_v1alpha1_homeassistantintegration_recorder.yaml
+- ha_v1alpha1_homeassistantfloor.yaml
+- ha_v1alpha1_homeassistantlabel.yaml
+- ha_v1alpha1_homeassistantarea.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

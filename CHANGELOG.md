@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **HomeAssistantFloor CRD** (`hafloor`, `hafl`) — declarative management of Home Assistant floors via WebSocket registry API (`config/floor_registry/*`). Supports `name`, `level`, and `icon`. Adopts existing floors by name, finalizer-based cleanup on deletion.
+
+- **HomeAssistantLabel CRD** (`halabel`, `halb`) — declarative management of Home Assistant labels via WebSocket registry API (`config/label_registry/*`). Supports `name`, `icon`, and `color`. Adopts existing labels by name, finalizer-based cleanup on deletion.
+
+- **HomeAssistantArea CRD** (`haarea`, `haar`) — declarative management of Home Assistant areas via WebSocket registry API (`config/area_registry/*`). Supports `name`, `icon`, `floorName` (resolved to `floor_id` at reconcile time), and `labels[]` (resolved to `label_ids`). Requeues with `FloorNotFound` if referenced floor doesn't exist; missing labels produce a warning but don't block creation.
+
+- **`SendWebSocketCommand` helper in haclient** — reusable one-shot WebSocket command pattern (connect → auth → command → response → close) used by Floor/Label/Area controllers. Refactored `CreateLongLivedToken` to use the same helper.
+
 ### Fixed
 
 - **Config Flow `description` as object** — `FlowField.Description` was typed as `*string`, but some integrations (e.g. OpenWeatherMap) return it as an object (`{"suggested_value": "..."}`), causing JSON unmarshal errors. Changed to `json.RawMessage` to accept both formats.

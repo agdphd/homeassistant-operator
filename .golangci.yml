@@ -58,6 +58,9 @@ linters:
       - linters:
           - dupl
         path: ^cmd/main\.go$
+      - linters:
+          - dupl
+        path: homeassistant(floor|label|area)_controller\.go$
     paths:
       - third_party$
       - builtin$

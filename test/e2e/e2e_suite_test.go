@@ -117,6 +117,18 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		cmd = exec.Command("kubectl", "get", "crd", "homeassistantintegrations.ha.homeassistant.io")
 		_, err = utils.Run(cmd)
 		g.Expect(err).NotTo(HaveOccurred(), "HomeAssistantIntegration CRD should exist")
+
+		cmd = exec.Command("kubectl", "get", "crd", "homeassistantfloors.ha.homeassistant.io")
+		_, err = utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "HomeAssistantFloor CRD should exist")
+
+		cmd = exec.Command("kubectl", "get", "crd", "homeassistantlabels.ha.homeassistant.io")
+		_, err = utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "HomeAssistantLabel CRD should exist")
+
+		cmd = exec.Command("kubectl", "get", "crd", "homeassistantareas.ha.homeassistant.io")
+		_, err = utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred(), "HomeAssistantArea CRD should exist")
 	}, 30*time.Second, 2*time.Second).Should(Succeed(), "All CRDs should be installed and available")
 
 	By("creating controller namespace")

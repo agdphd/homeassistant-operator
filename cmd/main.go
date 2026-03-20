@@ -261,6 +261,27 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantIntegration")
 		os.Exit(1)
 	}
+	if err := (&controller.HomeAssistantFloorReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantFloor")
+		os.Exit(1)
+	}
+	if err := (&controller.HomeAssistantLabelReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantLabel")
+		os.Exit(1)
+	}
+	if err := (&controller.HomeAssistantAreaReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantArea")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {
