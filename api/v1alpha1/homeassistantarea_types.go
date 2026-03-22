@@ -63,7 +63,7 @@ type HomeAssistantAreaStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=haarea;haar
+// +kubebuilder:resource:path=homeassistantareas,shortName=haarea;haar
 // +kubebuilder:printcolumn:name="HomeAssistant",type=string,JSONPath=`.spec.homeAssistantRef.name`
 // +kubebuilder:printcolumn:name="Name",type=string,JSONPath=`.spec.name`
 // +kubebuilder:printcolumn:name="Floor",type=string,JSONPath=`.spec.floorName`

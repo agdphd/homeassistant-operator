@@ -158,8 +158,14 @@ func (r *HomeAssistantAreaReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			fmt.Sprintf("Failed to list areas: %v", err), 30*time.Second)
 	}
 
-	// --- FIND by name (idempotency) ---
-	existingArea := findAreaByName(existingAreas, area.Spec.Name)
+	// --- FIND existing (prefer ID, fallback to name) ---
+	var existingArea *haAreaEntry
+	if area.Status.AreaID != "" {
+		existingArea = findAreaByID(existingAreas, area.Status.AreaID)
+	}
+	if existingArea == nil {
+		existingArea = findAreaByName(existingAreas, area.Spec.Name)
+	}
 
 	if area.Status.AreaID != "" {
 		if existingArea == nil {
@@ -405,6 +411,15 @@ func (r *HomeAssistantAreaReconciler) deleteArea(
 func findAreaByName(areas []haAreaEntry, name string) *haAreaEntry {
 	for i := range areas {
 		if areas[i].Name == name {
+			return &areas[i]
+		}
+	}
+	return nil
+}
+
+func findAreaByID(areas []haAreaEntry, id string) *haAreaEntry {
+	for i := range areas {
+		if areas[i].AreaID == id {
 			return &areas[i]
 		}
 	}

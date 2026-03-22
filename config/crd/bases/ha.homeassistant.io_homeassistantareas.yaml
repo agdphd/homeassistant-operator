@@ -4,13 +4,13 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: homeassistantarea.ha.homeassistant.io
+  name: homeassistantareas.ha.homeassistant.io
 spec:
   group: ha.homeassistant.io
   names:
     kind: HomeAssistantArea
     listKind: HomeAssistantAreaList
-    plural: homeassistantarea
+    plural: homeassistantareas
     shortNames:
     - haarea
     - haar

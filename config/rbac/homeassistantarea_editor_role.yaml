@@ -16,7 +16,7 @@ rules:
 - apiGroups:
   - ha.homeassistant.io
   resources:
-  - homeassistantarea
+  - homeassistantareas
   verbs:
   - create
   - delete
@@ -28,6 +28,6 @@ rules:
 - apiGroups:
   - ha.homeassistant.io
   resources:
-  - homeassistantarea/status
+  - homeassistantareas/status
   verbs:
   - get

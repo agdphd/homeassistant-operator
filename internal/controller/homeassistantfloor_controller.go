@@ -120,8 +120,14 @@ func (r *HomeAssistantFloorReconciler) Reconcile(ctx context.Context, req ctrl.R
 			fmt.Sprintf("Failed to list floors: %v", err), 30*time.Second)
 	}
 
-	// --- FIND by name (idempotency) ---
-	existingFloor := findFloorByName(existingFloors, floor.Spec.Name)
+	// --- FIND existing (prefer ID, fallback to name) ---
+	var existingFloor *haFloorEntry
+	if floor.Status.FloorID != "" {
+		existingFloor = findFloorByID(existingFloors, floor.Status.FloorID)
+	}
+	if existingFloor == nil {
+		existingFloor = findFloorByName(existingFloors, floor.Spec.Name)
+	}
 
 	if floor.Status.FloorID != "" {
 		// Already created — check if update needed
@@ -329,6 +335,15 @@ func (r *HomeAssistantFloorReconciler) deleteFloor(
 func findFloorByName(floors []haFloorEntry, name string) *haFloorEntry {
 	for i := range floors {
 		if floors[i].Name == name {
+			return &floors[i]
+		}
+	}
+	return nil
+}
+
+func findFloorByID(floors []haFloorEntry, id string) *haFloorEntry {
+	for i := range floors {
+		if floors[i].FloorID == id {
 			return &floors[i]
 		}
 	}

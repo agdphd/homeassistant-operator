@@ -120,8 +120,14 @@ func (r *HomeAssistantLabelReconciler) Reconcile(ctx context.Context, req ctrl.R
 			fmt.Sprintf("Failed to list labels: %v", err), 30*time.Second)
 	}
 
-	// --- FIND by name (idempotency) ---
-	existingLabel := findLabelByName(existingLabels, label.Spec.Name)
+	// --- FIND existing (prefer ID, fallback to name) ---
+	var existingLabel *haLabelEntry
+	if label.Status.LabelID != "" {
+		existingLabel = findLabelByID(existingLabels, label.Status.LabelID)
+	}
+	if existingLabel == nil {
+		existingLabel = findLabelByName(existingLabels, label.Spec.Name)
+	}
 
 	if label.Status.LabelID != "" {
 		if existingLabel == nil {
@@ -326,6 +332,15 @@ func (r *HomeAssistantLabelReconciler) deleteLabel(
 func findLabelByName(labels []haLabelEntry, name string) *haLabelEntry {
 	for i := range labels {
 		if labels[i].Name == name {
+			return &labels[i]
+		}
+	}
+	return nil
+}
+
+func findLabelByID(labels []haLabelEntry, id string) *haLabelEntry {
+	for i := range labels {
+		if labels[i].LabelID == id {
 			return &labels[i]
 		}
 	}

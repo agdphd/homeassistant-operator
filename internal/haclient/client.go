@@ -242,8 +242,13 @@ func (c *Client) wsAuthConnect(ctx context.Context, token string) (*websocket.Co
 		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to connect to websocket", Err: err}
 	}
 
-	// Set read deadline for the entire session (auth + command)
-	_ = conn.SetReadDeadline(time.Now().Add(defaultTimeout))
+	// Set deadlines from context or fallback to defaultTimeout
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(defaultTimeout)
+	}
+	_ = conn.SetReadDeadline(deadline)
+	_ = conn.SetWriteDeadline(deadline)
 
 	// Read auth_required
 	var authRequired map[string]interface{}
