@@ -304,12 +304,8 @@ func (r *HomeAssistantLabelReconciler) updateLabel(
 	data := map[string]interface{}{
 		"label_id": label.Status.LabelID,
 		"name":     label.Spec.Name,
-	}
-	if label.Spec.Icon != "" {
-		data["icon"] = label.Spec.Icon
-	}
-	if label.Spec.Color != "" {
-		data["color"] = label.Spec.Color
+		"icon":     label.Spec.Icon,
+		"color":    label.Spec.Color,
 	}
 
 	_, err := haClient.SendWebSocketCommand(ctx, token, "config/label_registry/update", data)

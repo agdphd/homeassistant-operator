@@ -305,12 +305,12 @@ func (r *HomeAssistantFloorReconciler) updateFloor(
 	data := map[string]interface{}{
 		"floor_id": floor.Status.FloorID,
 		"name":     floor.Spec.Name,
+		"icon":     floor.Spec.Icon,
 	}
 	if floor.Spec.Level != nil {
 		data["level"] = *floor.Spec.Level
-	}
-	if floor.Spec.Icon != "" {
-		data["icon"] = floor.Spec.Icon
+	} else {
+		data["level"] = nil
 	}
 
 	_, err := haClient.SendWebSocketCommand(ctx, token, "config/floor_registry/update", data)

@@ -380,16 +380,14 @@ func (r *HomeAssistantAreaReconciler) updateArea(
 	labelIDs []string,
 ) error {
 	data := map[string]interface{}{
-		"area_id": area.Status.AreaID,
-		"name":    area.Spec.Name,
+		"area_id":  area.Status.AreaID,
+		"name":     area.Spec.Name,
+		"icon":     area.Spec.Icon,
+		"floor_id": floorID,
 	}
-	if area.Spec.Icon != "" {
-		data["icon"] = area.Spec.Icon
-	}
-	if floorID != "" {
-		data["floor_id"] = floorID
-	}
-	if labelIDs != nil {
+	if labelIDs == nil {
+		data["labels"] = []string{}
+	} else {
 		data["labels"] = labelIDs
 	}
 
