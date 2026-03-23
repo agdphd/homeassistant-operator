@@ -120,19 +120,12 @@ func (r *HomeAssistantFloorReconciler) Reconcile(ctx context.Context, req ctrl.R
 			fmt.Sprintf("Failed to list floors: %v", err), 30*time.Second)
 	}
 
-	// --- FIND existing (prefer ID, fallback to name) ---
+	// --- FIND existing (by ID when known, by name for adoption) ---
 	var existingFloor *haFloorEntry
 	if floor.Status.FloorID != "" {
 		existingFloor = findFloorByID(existingFloors, floor.Status.FloorID)
-	}
-	if existingFloor == nil {
-		existingFloor = findFloorByName(existingFloors, floor.Spec.Name)
-	}
-
-	if floor.Status.FloorID != "" {
-		// Already created — check if update needed
 		if existingFloor == nil {
-			// Floor was deleted externally — re-create
+			// Floor was deleted externally — clear stale ID and re-create
 			log.Info("Floor was deleted externally, re-creating", "name", floor.Spec.Name)
 			floor.Status.FloorID = ""
 		} else {
@@ -150,14 +143,18 @@ func (r *HomeAssistantFloorReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 	}
 
-	if existingFloor != nil && floor.Status.FloorID == "" {
-		// Adopt existing floor
+	// --- ADOPT by name (only when no ID set) ---
+	if floor.Status.FloorID == "" {
+		existingFloor = findFloorByName(existingFloors, floor.Spec.Name)
+	}
+	if existingFloor != nil {
 		floor.Status.FloorID = existingFloor.FloorID
 		log.Info("Adopted existing floor", "name", floor.Spec.Name, "floorID", floor.Status.FloorID)
-		// Update if needed
 		if r.needsFloorUpdate(floor, existingFloor) {
 			if err := r.updateFloor(ctx, haClient, token, floor); err != nil {
 				log.Error(err, "Failed to update adopted floor")
+				return r.setCondition(ctx, floor, metav1.ConditionFalse, reasonFloorFailed,
+					fmt.Sprintf("Failed to update adopted floor: %v", err), 30*time.Second)
 			}
 		}
 		return r.setCondition(ctx, floor, metav1.ConditionTrue, reasonFloorReady,

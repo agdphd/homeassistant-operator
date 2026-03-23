@@ -158,17 +158,12 @@ func (r *HomeAssistantAreaReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			fmt.Sprintf("Failed to list areas: %v", err), 30*time.Second)
 	}
 
-	// --- FIND existing (prefer ID, fallback to name) ---
+	// --- FIND existing (by ID when known, by name for adoption) ---
 	var existingArea *haAreaEntry
 	if area.Status.AreaID != "" {
 		existingArea = findAreaByID(existingAreas, area.Status.AreaID)
-	}
-	if existingArea == nil {
-		existingArea = findAreaByName(existingAreas, area.Spec.Name)
-	}
-
-	if area.Status.AreaID != "" {
 		if existingArea == nil {
+			// Area was deleted externally — clear stale ID and re-create
 			log.Info("Area was deleted externally, re-creating", "name", area.Spec.Name)
 			area.Status.AreaID = ""
 		} else {
@@ -185,12 +180,18 @@ func (r *HomeAssistantAreaReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 	}
 
-	if existingArea != nil && area.Status.AreaID == "" {
+	// --- ADOPT by name (only when no ID set) ---
+	if area.Status.AreaID == "" {
+		existingArea = findAreaByName(existingAreas, area.Spec.Name)
+	}
+	if existingArea != nil {
 		area.Status.AreaID = existingArea.AreaID
 		log.Info("Adopted existing area", "name", area.Spec.Name, "areaID", area.Status.AreaID)
 		if r.needsAreaUpdate(area, existingArea, floorID, labelIDs) {
 			if err := r.updateArea(ctx, haClient, token, area, floorID, labelIDs); err != nil {
 				log.Error(err, "Failed to update adopted area")
+				return r.setCondition(ctx, area, metav1.ConditionFalse, reasonAreaFailed,
+					fmt.Sprintf("Failed to update adopted area: %v", err), 30*time.Second)
 			}
 		}
 		return r.setCondition(ctx, area, metav1.ConditionTrue, reasonAreaReady,

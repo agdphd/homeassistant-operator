@@ -120,18 +120,12 @@ func (r *HomeAssistantLabelReconciler) Reconcile(ctx context.Context, req ctrl.R
 			fmt.Sprintf("Failed to list labels: %v", err), 30*time.Second)
 	}
 
-	// --- FIND existing (prefer ID, fallback to name) ---
+	// --- FIND existing (by ID when known, by name for adoption) ---
 	var existingLabel *haLabelEntry
 	if label.Status.LabelID != "" {
 		existingLabel = findLabelByID(existingLabels, label.Status.LabelID)
-	}
-	if existingLabel == nil {
-		existingLabel = findLabelByName(existingLabels, label.Spec.Name)
-	}
-
-	if label.Status.LabelID != "" {
 		if existingLabel == nil {
-			// Label was deleted externally — re-create
+			// Label was deleted externally — clear stale ID and re-create
 			log.Info("Label was deleted externally, re-creating", "name", label.Spec.Name)
 			label.Status.LabelID = ""
 		} else {
@@ -148,13 +142,18 @@ func (r *HomeAssistantLabelReconciler) Reconcile(ctx context.Context, req ctrl.R
 		}
 	}
 
-	if existingLabel != nil && label.Status.LabelID == "" {
-		// Adopt existing label
+	// --- ADOPT by name (only when no ID set) ---
+	if label.Status.LabelID == "" {
+		existingLabel = findLabelByName(existingLabels, label.Spec.Name)
+	}
+	if existingLabel != nil {
 		label.Status.LabelID = existingLabel.LabelID
 		log.Info("Adopted existing label", "name", label.Spec.Name, "labelID", label.Status.LabelID)
 		if r.needsLabelUpdate(label, existingLabel) {
 			if err := r.updateLabel(ctx, haClient, token, label); err != nil {
 				log.Error(err, "Failed to update adopted label")
+				return r.setCondition(ctx, label, metav1.ConditionFalse, reasonLabelFailed,
+					fmt.Sprintf("Failed to update adopted label: %v", err), 30*time.Second)
 			}
 		}
 		return r.setCondition(ctx, label, metav1.ConditionTrue, reasonLabelReady,
