@@ -52,6 +52,53 @@ spec:
           spec:
             description: HomeAssistantSpec defines the desired state of HomeAssistant.
             properties:
+              backup:
+                description: |-
+                  Backup configures automatic backups using Home Assistant's built-in backup system.
+                  Requires bootstrap with API token enabled.
+                properties:
+                  enabled:
+                    default: false
+                    description: Enabled controls whether automatic backups are configured
+                      in HA
+                    type: boolean
+                  includeDatabase:
+                    default: true
+                    description: IncludeDatabase controls whether the database is
+                      included in the backup.
+                    type: boolean
+                  recurrence:
+                    default: daily
+                    description: Recurrence defines how often to create a backup
+                    enum:
+                    - daily
+                    - mon
+                    - tue
+                    - wed
+                    - thu
+                    - fri
+                    - sat
+                    - sun
+                    - never
+                    type: string
+                  retentionCopies:
+                    description: RetentionCopies is the number of backup copies to
+                      keep. Nil means unlimited.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  retentionDays:
+                    description: RetentionDays is the number of days to keep backups.
+                      Nil means unlimited.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  time:
+                    description: |-
+                      Time is the time of day to create the backup in HH:MM:SS format (e.g. "03:00:00").
+                      If empty, Home Assistant picks automatically.
+                    type: string
+                type: object
               bootstrap:
                 description: |-
                   Bootstrap configures automatic onboarding and API token creation

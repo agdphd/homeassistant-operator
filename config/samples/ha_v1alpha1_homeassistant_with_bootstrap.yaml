@@ -88,6 +88,16 @@ spec:
     # Set to true to enable Home Assistant analytics
     analytics: false
 
+  # Automatic backup configuration (requires bootstrap with API token)
+  # Uses Home Assistant's built-in backup system via WebSocket API
+  backup:
+    enabled: true
+    recurrence: daily          # daily, mon, tue, wed, thu, fri, sat, sun, never
+    time: "03:00:00"           # HH:MM:SS — if empty, HA picks automatically
+    retentionCopies: 7         # number of backup copies to keep (nil = unlimited)
+    # retentionDays: 30        # number of days to keep backups (nil = unlimited)
+    includeDatabase: true      # include HA database in backup
+
   resources:
     requests:
       cpu: "100m"

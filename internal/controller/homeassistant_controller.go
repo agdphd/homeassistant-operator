@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -41,6 +42,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
 const (
@@ -66,7 +68,11 @@ const (
 // HomeAssistantReconciler reconciles a HomeAssistant object
 type HomeAssistantReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder events.EventRecorder
+
+	// NewHAClient overrides the default haclient constructor (for testing)
+	NewHAClient func(baseURL string) *haclient.Client
 
 	// lastConfigHashSync tracks last time config hash was synced from ConfigMap
 	// Used for debouncing to avoid rapid StatefulSet updates
@@ -166,6 +172,16 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return result, err
 	}
 	// If bootstrap needs requeue, honor it
+	if result.RequeueAfter > 0 {
+		return result, nil
+	}
+
+	// Reconcile Backup configuration (requires bootstrap token)
+	result, err = r.reconcileBackupConfig(ctx, ha)
+	if err != nil {
+		log.Error(err, "Failed to reconcile Backup config")
+		return result, err
+	}
 	if result.RequeueAfter > 0 {
 		return result, nil
 	}

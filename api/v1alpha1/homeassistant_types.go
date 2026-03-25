@@ -71,6 +71,45 @@ type HomeAssistantSpec struct {
 	// onboarding process and create a long-lived access token for API access
 	// +optional
 	Bootstrap *BootstrapSpec `json:"bootstrap,omitempty"`
+
+	// Backup configures automatic backups using Home Assistant's built-in backup system.
+	// Requires bootstrap with API token enabled.
+	// +optional
+	Backup *BackupSpec `json:"backup,omitempty"`
+}
+
+// BackupSpec configures Home Assistant's built-in backup system via WebSocket API.
+type BackupSpec struct {
+	// Enabled controls whether automatic backups are configured in HA
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Recurrence defines how often to create a backup
+	// +kubebuilder:validation:Enum=daily;mon;tue;wed;thu;fri;sat;sun;never
+	// +kubebuilder:default="daily"
+	// +optional
+	Recurrence string `json:"recurrence,omitempty"`
+
+	// Time is the time of day to create the backup in HH:MM:SS format (e.g. "03:00:00").
+	// If empty, Home Assistant picks automatically.
+	// +optional
+	Time string `json:"time,omitempty"`
+
+	// RetentionCopies is the number of backup copies to keep. Nil means unlimited.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	RetentionCopies *int32 `json:"retentionCopies,omitempty"`
+
+	// RetentionDays is the number of days to keep backups. Nil means unlimited.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	RetentionDays *int32 `json:"retentionDays,omitempty"`
+
+	// IncludeDatabase controls whether the database is included in the backup.
+	// +kubebuilder:default=true
+	// +optional
+	IncludeDatabase *bool `json:"includeDatabase,omitempty"`
 }
 
 // BootstrapSpec configures automatic Home Assistant onboarding and API token creation
