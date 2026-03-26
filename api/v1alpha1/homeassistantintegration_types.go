@@ -88,6 +88,7 @@ type HomeAssistantIntegrationStatus struct {
 // +kubebuilder:printcolumn:name="Domain",type=string,JSONPath=`.spec.domain`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="IntegrationReady")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.spec) || self.spec.homeAssistantRef == oldSelf.spec.homeAssistantRef",message="spec.homeAssistantRef is immutable after creation"
 
 // HomeAssistantIntegration manages a Home Assistant integration (config entry) via the Config Flow API.
 // It supports create, adopt, reconfigure (delete+re-create on spec change), and cleanup via finalizer.

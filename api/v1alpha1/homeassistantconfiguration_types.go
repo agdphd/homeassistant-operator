@@ -190,6 +190,7 @@ type HomeAssistantConfigurationStatus struct {
 // +kubebuilder:printcolumn:name="Strategy",type=string,JSONPath=`.spec.reloadStrategy`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.spec) || self.spec.homeAssistantRef == oldSelf.spec.homeAssistantRef",message="spec.homeAssistantRef is immutable after creation"
 
 // HomeAssistantConfiguration is the Schema for the homeassistantconfigurations API.
 type HomeAssistantConfiguration struct {

@@ -85,6 +85,7 @@ type HomeAssistantSecretsStatus struct {
 // +kubebuilder:printcolumn:name="Secrets",type=string,JSONPath=`.spec.secretRefs[*].name`,description="Referenced secrets"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.spec) || self.spec.homeAssistantRef == oldSelf.spec.homeAssistantRef",message="spec.homeAssistantRef is immutable after creation"
 
 // HomeAssistantSecrets is the Schema for the homeassistantsecrets API.
 type HomeAssistantSecrets struct {
