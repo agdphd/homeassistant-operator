@@ -49,7 +49,7 @@ var _ = Describe("Backup Controller", func() {
 	var (
 		reconciler *HomeAssistantReconciler
 		wsServer   *httptest.Server
-		upgrader   = websocket.Upgrader{}
+		upgrader   = websocket.Upgrader{CheckOrigin: func(_ *http.Request) bool { return true }}
 	)
 
 	// wsHandler creates a mock WS handler that handles auth and returns configurable responses

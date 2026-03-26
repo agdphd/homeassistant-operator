@@ -91,8 +91,9 @@ type BackupSpec struct {
 	// +optional
 	Recurrence string `json:"recurrence,omitempty"`
 
-	// Time is the time of day to create the backup in HH:MM:SS format (e.g. "03:00:00").
+	// Time is the time of day to create the backup in HH:MM:SS 24-hour format (e.g. "03:00:00").
 	// If empty, Home Assistant picks automatically.
+	// +kubebuilder:validation:Pattern="^([01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$"
 	// +optional
 	Time string `json:"time,omitempty"`
 
@@ -110,6 +111,12 @@ type BackupSpec struct {
 	// +kubebuilder:default=true
 	// +optional
 	IncludeDatabase *bool `json:"includeDatabase,omitempty"`
+
+	// AgentIDs is the list of backup agent IDs to use
+	// (e.g. "backup.local", "google_drive.my_drive").
+	// Defaults to ["backup.local"] if not specified.
+	// +optional
+	AgentIDs []string `json:"agentIDs,omitempty"`
 }
 
 // BootstrapSpec configures automatic Home Assistant onboarding and API token creation

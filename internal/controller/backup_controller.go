@@ -188,7 +188,11 @@ func (r *HomeAssistantReconciler) buildBackupConfigRequest(spec *hav1alpha1.Back
 
 	// CreateBackup
 	req.CreateBackup.IncludeDatabase = spec.IncludeDatabase
-	req.CreateBackup.AgentIDs = []string{"backup.local"}
+	if len(spec.AgentIDs) > 0 {
+		req.CreateBackup.AgentIDs = spec.AgentIDs
+	} else {
+		req.CreateBackup.AgentIDs = []string{"backup.local"}
+	}
 
 	return req
 }

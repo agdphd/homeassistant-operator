@@ -305,7 +305,9 @@ func (c *Client) SendWebSocketCommand(
 	}
 	defer func() { _ = conn.Close() }()
 
-	// Build command message
+	// Build command message.
+	// id=1 is intentional: each call opens a fresh connection (one-shot pattern),
+	// so there is no need for unique IDs. Revisit if connection reuse is added.
 	msg := make(map[string]interface{})
 	for k, v := range data {
 		msg[k] = v

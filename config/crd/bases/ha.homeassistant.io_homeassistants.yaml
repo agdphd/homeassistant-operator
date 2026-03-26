@@ -57,6 +57,14 @@ spec:
                   Backup configures automatic backups using Home Assistant's built-in backup system.
                   Requires bootstrap with API token enabled.
                 properties:
+                  agentIDs:
+                    description: |-
+                      AgentIDs is the list of backup agent IDs to use
+                      (e.g. "backup.local", "google_drive.my_drive").
+                      Defaults to ["backup.local"] if not specified.
+                    items:
+                      type: string
+                    type: array
                   enabled:
                     default: false
                     description: Enabled controls whether automatic backups are configured
@@ -95,8 +103,9 @@ spec:
                     type: integer
                   time:
                     description: |-
-                      Time is the time of day to create the backup in HH:MM:SS format (e.g. "03:00:00").
+                      Time is the time of day to create the backup in HH:MM:SS 24-hour format (e.g. "03:00:00").
                       If empty, Home Assistant picks automatically.
+                    pattern: ^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$
                     type: string
                 type: object
               bootstrap:
