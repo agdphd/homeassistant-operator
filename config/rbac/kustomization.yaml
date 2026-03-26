@@ -22,6 +22,15 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the homeassistant-operator itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- homeassistantarea_admin_role.yaml
+- homeassistantarea_editor_role.yaml
+- homeassistantarea_viewer_role.yaml
+- homeassistantlabel_admin_role.yaml
+- homeassistantlabel_editor_role.yaml
+- homeassistantlabel_viewer_role.yaml
+- homeassistantfloor_admin_role.yaml
+- homeassistantfloor_editor_role.yaml
+- homeassistantfloor_viewer_role.yaml
 - homeassistantsecrets_admin_role.yaml
 - homeassistantsecrets_editor_role.yaml
 - homeassistantsecrets_viewer_role.yaml

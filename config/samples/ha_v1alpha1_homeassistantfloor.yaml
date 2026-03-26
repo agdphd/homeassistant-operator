@@ -1,0 +1,41 @@
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantFloor
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: ground-floor
+spec:
+  homeAssistantRef:
+    name: homeassistant
+  name: "Ground Floor"
+  level: 0
+  icon: "mdi:home-floor-0"
+---
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantFloor
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: first-floor
+spec:
+  homeAssistantRef:
+    name: homeassistant
+  name: "First Floor"
+  level: 1
+  icon: "mdi:home-floor-1"
+---
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantFloor
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: basement
+spec:
+  homeAssistantRef:
+    name: homeassistant
+  name: "Basement"
+  level: -1
+  icon: "mdi:home-floor-negative-1"

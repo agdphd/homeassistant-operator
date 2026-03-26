@@ -392,16 +392,9 @@ func (r *HomeAssistantAutomationReconciler) reconcileAutomationViaAPI(
 		log.Error(patchErr, "Failed to patch automation annotation")
 	}
 
-	// Enable or disable automation based on spec.
-	enabled := true
-	if automation.Spec.Enabled != nil {
-		enabled = *automation.Spec.Enabled
-	}
-	if enabled {
-		if err := haClient.EnableAutomation(ctx, token, id); err != nil {
-			log.Error(err, "Failed to enable automation (continuing)")
-		}
-	} else {
+	// Disable automation if spec.enabled is explicitly false.
+	// Automations created via API are enabled by default, so no enable call is needed.
+	if automation.Spec.Enabled != nil && !*automation.Spec.Enabled {
 		if err := haClient.DisableAutomation(ctx, token, id); err != nil {
 			log.Error(err, "Failed to disable automation (continuing)")
 		}

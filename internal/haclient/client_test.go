@@ -363,6 +363,165 @@ var _ = Describe("HAClient", func() {
 		})
 	})
 
+	Describe("SendWebSocketCommand", func() {
+		var (
+			wsServer *httptest.Server
+			upgrader = websocket.Upgrader{}
+		)
+
+		It("Should send command and return result", func() {
+			wsServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer func() { _ = conn.Close() }()
+
+				// Auth flow
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_required"})
+				var authMsg map[string]interface{}
+				_ = conn.ReadJSON(&authMsg)
+				Expect(authMsg["access_token"]).To(Equal("test-token"))
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_ok"})
+
+				// Read command
+				var cmd map[string]interface{}
+				_ = conn.ReadJSON(&cmd)
+				Expect(cmd["type"]).To(Equal("config/floor_registry/list"))
+				Expect(cmd["id"]).To(BeNumerically("==", 1))
+
+				// Send result
+				_ = conn.WriteJSON(map[string]interface{}{
+					"id":      1,
+					"type":    "result",
+					"success": true,
+					"result":  []map[string]interface{}{{"floor_id": "abc", "name": "Ground"}},
+				})
+			}))
+
+			wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http")
+			client = NewClient(wsURL)
+
+			result, err := client.SendWebSocketCommand(ctx, "test-token", "config/floor_registry/list", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(BeNil())
+
+			var floors []map[string]interface{}
+			Expect(json.Unmarshal(result, &floors)).To(Succeed())
+			Expect(floors).To(HaveLen(1))
+			Expect(floors[0]["name"]).To(Equal("Ground"))
+		})
+
+		It("Should pass data fields in command", func() {
+			wsServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer func() { _ = conn.Close() }()
+
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_required"})
+				var authMsg map[string]interface{}
+				_ = conn.ReadJSON(&authMsg)
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_ok"})
+
+				var cmd map[string]interface{}
+				_ = conn.ReadJSON(&cmd)
+				Expect(cmd["type"]).To(Equal("config/floor_registry/create"))
+				Expect(cmd["name"]).To(Equal("Ground Floor"))
+				Expect(cmd["level"]).To(BeNumerically("==", 0))
+
+				_ = conn.WriteJSON(map[string]interface{}{
+					"id":      1,
+					"type":    "result",
+					"success": true,
+					"result":  map[string]interface{}{"floor_id": "new-id", "name": "Ground Floor"},
+				})
+			}))
+
+			wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http")
+			client = NewClient(wsURL)
+
+			result, err := client.SendWebSocketCommand(ctx, "test-token", "config/floor_registry/create", map[string]interface{}{
+				"name":  "Ground Floor",
+				"level": 0,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			var floor map[string]interface{}
+			Expect(json.Unmarshal(result, &floor)).To(Succeed())
+			Expect(floor["floor_id"]).To(Equal("new-id"))
+		})
+
+		It("Should return error on auth failure", func() {
+			wsServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer func() { _ = conn.Close() }()
+
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_required"})
+				var authMsg map[string]interface{}
+				_ = conn.ReadJSON(&authMsg)
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_invalid", "message": "bad token"})
+			}))
+
+			wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http")
+			client = NewClient(wsURL)
+
+			_, err := client.SendWebSocketCommand(ctx, "bad-token", "config/floor_registry/list", nil)
+			Expect(err).To(HaveOccurred())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeAuth))
+		})
+
+		It("Should return error when command fails", func() {
+			wsServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer func() { _ = conn.Close() }()
+
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_required"})
+				var authMsg map[string]interface{}
+				_ = conn.ReadJSON(&authMsg)
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_ok"})
+
+				var cmd map[string]interface{}
+				_ = conn.ReadJSON(&cmd)
+
+				_ = conn.WriteJSON(map[string]interface{}{
+					"id":      1,
+					"type":    "result",
+					"success": false,
+					"error":   map[string]interface{}{"code": "not_found", "message": "Unknown command"},
+				})
+			}))
+
+			wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http")
+			client = NewClient(wsURL)
+
+			_, err := client.SendWebSocketCommand(ctx, "test-token", "config/invalid/command", nil)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("Unknown command"))
+		})
+
+		It("Should return error when connection fails", func() {
+			client = NewClient("ws://localhost:1")
+
+			_, err := client.SendWebSocketCommand(ctx, "test-token", "config/floor_registry/list", nil)
+			Expect(err).To(HaveOccurred())
+			Expect(err.(*Error).Type).To(Equal(ErrorTypeHTTP))
+		})
+
+		AfterEach(func() {
+			if wsServer != nil {
+				wsServer.Close()
+			}
+		})
+	})
+
 	Describe("CreateLongLivedToken", func() {
 		var (
 			wsServer *httptest.Server

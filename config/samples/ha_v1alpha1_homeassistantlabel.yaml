@@ -1,0 +1,27 @@
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantLabel
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: outdoor-label
+spec:
+  homeAssistantRef:
+    name: homeassistant
+  name: "Outdoor"
+  icon: "mdi:tree"
+  color: "green"
+---
+apiVersion: ha.homeassistant.io/v1alpha1
+kind: HomeAssistantLabel
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: critical-label
+spec:
+  homeAssistantRef:
+    name: homeassistant
+  name: "Critical"
+  icon: "mdi:alert"
+  color: "red"

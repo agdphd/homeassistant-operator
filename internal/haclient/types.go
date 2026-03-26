@@ -125,7 +125,7 @@ type FlowField struct {
 	Required    bool            `json:"required"`
 	Type        string          `json:"type"`
 	Selector    map[string]any  `json:"selector,omitempty"`
-	Description *string         `json:"description,omitempty"`
+	Description json.RawMessage `json:"description,omitempty"`
 	Default     json.RawMessage `json:"default,omitempty"`
 	ValueMin    *float64        `json:"value_min,omitempty"`
 	ValueMax    *float64        `json:"value_max,omitempty"`
@@ -136,4 +136,19 @@ type ConfigEntryResult struct {
 	EntryID string `json:"entry_id"`
 	Domain  string `json:"domain"`
 	Title   string `json:"title"`
+}
+
+// WebSocketResponse represents a generic HA WebSocket command response.
+type WebSocketResponse struct {
+	ID      int64           `json:"id"`
+	Type    string          `json:"type"`
+	Success bool            `json:"success"`
+	Result  json.RawMessage `json:"result"`
+	Error   *WSError        `json:"error,omitempty"`
+}
+
+// WSError represents the error object inside a failed WebSocket response.
+type WSError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }

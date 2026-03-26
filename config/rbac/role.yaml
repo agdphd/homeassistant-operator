@@ -57,9 +57,12 @@ rules:
 - apiGroups:
   - ha.homeassistant.io
   resources:
+  - homeassistantareas
   - homeassistantautomations
   - homeassistantconfigurations
+  - homeassistantfloors
   - homeassistantintegrations
+  - homeassistantlabels
   - homeassistants
   - homeassistantscenes
   - homeassistantscripts
@@ -74,9 +77,12 @@ rules:
 - apiGroups:
   - ha.homeassistant.io
   resources:
+  - homeassistantareas/finalizers
   - homeassistantautomations/finalizers
   - homeassistantconfigurations/finalizers
+  - homeassistantfloors/finalizers
   - homeassistantintegrations/finalizers
+  - homeassistantlabels/finalizers
   - homeassistants/finalizers
   - homeassistantscenes/finalizers
   - homeassistantscripts/finalizers
@@ -86,9 +92,12 @@ rules:
 - apiGroups:
   - ha.homeassistant.io
   resources:
+  - homeassistantareas/status
   - homeassistantautomations/status
   - homeassistantconfigurations/status
+  - homeassistantfloors/status
   - homeassistantintegrations/status
+  - homeassistantlabels/status
   - homeassistants/status
   - homeassistantscenes/status
   - homeassistantscripts/status
