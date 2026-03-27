@@ -56,7 +56,7 @@ var _ = Describe("Backup E2E", Label("backup"), Ordered, func() {
 
 		By("Deleting test namespace: " + namespace)
 		if err := utils.DeleteNamespace(namespace); err != nil {
-			fmt.Printf("Warning: failed to delete namespace %s: %v\n", namespace, err)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Warning: failed to delete namespace %s: %v\n", namespace, err)
 		}
 	})
 
