@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`SendWebSocketCommand` helper in haclient** — reusable one-shot WebSocket command pattern (connect → auth → command → response → close) used by Floor/Label/Area controllers. Refactored `CreateLongLivedToken` to use the same helper.
 
+- **`spec.backup` for HomeAssistant CR** — declarative configuration of Home Assistant's built-in backup system via WebSocket API (`backup/config/info`, `backup/config/update`). Supports schedule (daily, per-day-of-week, never), time, retention (copies/days), and database inclusion. Requires bootstrap with API token enabled.
+  - Idempotent: compares current HA config with desired state, only updates when drift detected
+  - Condition: `BackupConfigured` with reasons: `BackupConfigured`, `BackupConfigFailed`, `TokenNotAvailable`
+  - Events: `BackupConfigured` (Normal), `BackupConfigFailed` (Warning)
+
 ### Fixed
 
 - **Config Flow `description` as object** — `FlowField.Description` was typed as `*string`, but some integrations (e.g. OpenWeatherMap) return it as an object (`{"suggested_value": "..."}`), causing JSON unmarshal errors. Changed to `json.RawMessage` to accept both formats.

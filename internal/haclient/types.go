@@ -152,3 +152,36 @@ type WSError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
+
+// BackupSchedule represents the schedule section of HA backup config
+type BackupSchedule struct {
+	Recurrence string  `json:"recurrence"` // "daily", "mon", "tue", ..., "never"
+	Time       *string `json:"time"`       // "HH:MM:SS" or null
+}
+
+// BackupRetention represents the retention section of HA backup config
+type BackupRetention struct {
+	Copies *int `json:"copies"` // null = unlimited
+	Days   *int `json:"days"`   // null = unlimited
+}
+
+// BackupCreateConfig represents the create_backup section of HA backup config
+type BackupCreateConfig struct {
+	IncludeDatabase *bool    `json:"include_database,omitempty"`
+	AgentIDs        []string `json:"agent_ids,omitempty"`
+	Password        *string  `json:"password,omitempty"`
+}
+
+// BackupConfig represents the full HA backup configuration
+type BackupConfig struct {
+	Schedule     BackupSchedule     `json:"schedule"`
+	Retention    BackupRetention    `json:"retention"`
+	CreateBackup BackupCreateConfig `json:"create_backup"`
+}
+
+// BackupConfigRequest represents the request for backup/config/update
+type BackupConfigRequest struct {
+	Schedule     *BackupSchedule     `json:"schedule,omitempty"`
+	Retention    *BackupRetention    `json:"retention,omitempty"`
+	CreateBackup *BackupCreateConfig `json:"create_backup,omitempty"`
+}

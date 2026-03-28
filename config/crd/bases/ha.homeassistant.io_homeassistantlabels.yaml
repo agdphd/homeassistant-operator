@@ -157,6 +157,9 @@ spec:
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: spec.homeAssistantRef is immutable after creation
+          rule: '!has(oldSelf.spec) || self.spec.homeAssistantRef == oldSelf.spec.homeAssistantRef'
     served: true
     storage: true
     subresources:

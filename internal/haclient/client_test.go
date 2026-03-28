@@ -1323,4 +1323,282 @@ var _ = Describe("HAClient", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
+
+	Describe("GetBackupConfig", func() {
+		var (
+			wsServer *httptest.Server
+			upgrader = websocket.Upgrader{}
+		)
+
+		AfterEach(func() {
+			if wsServer != nil {
+				wsServer.Close()
+			}
+		})
+
+		It("Should return backup config from HA", func() {
+			wsServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer func() { _ = conn.Close() }()
+
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_required"})
+				var authMsg map[string]interface{}
+				_ = conn.ReadJSON(&authMsg)
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_ok"})
+
+				var cmd map[string]interface{}
+				_ = conn.ReadJSON(&cmd)
+				Expect(cmd["type"]).To(Equal("backup/config/info"))
+
+				_ = conn.WriteJSON(map[string]interface{}{
+					"id":      cmd["id"],
+					"type":    "result",
+					"success": true,
+					"result": map[string]interface{}{
+						"schedule": map[string]interface{}{
+							"recurrence": "daily",
+							"time":       "03:00:00",
+						},
+						"retention": map[string]interface{}{
+							"copies": 7,
+							"days":   nil,
+						},
+						"create_backup": map[string]interface{}{
+							"include_database": true,
+							"agent_ids":        []string{"backup.local"},
+						},
+					},
+				})
+			}))
+
+			wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http")
+			client = NewClient(wsURL)
+
+			config, err := client.GetBackupConfig(ctx, "test-token")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(config).NotTo(BeNil())
+			Expect(config.Schedule.Recurrence).To(Equal("daily"))
+			Expect(config.Schedule.Time).NotTo(BeNil())
+			Expect(*config.Schedule.Time).To(Equal("03:00:00"))
+			Expect(config.Retention.Copies).NotTo(BeNil())
+			Expect(*config.Retention.Copies).To(Equal(7))
+			Expect(config.Retention.Days).To(BeNil())
+			Expect(config.CreateBackup.IncludeDatabase).NotTo(BeNil())
+			Expect(*config.CreateBackup.IncludeDatabase).To(BeTrue())
+			Expect(config.CreateBackup.AgentIDs).To(ConsistOf("backup.local"))
+		})
+
+		It("Should handle config with null time and unlimited retention", func() {
+			wsServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer func() { _ = conn.Close() }()
+
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_required"})
+				var authMsg map[string]interface{}
+				_ = conn.ReadJSON(&authMsg)
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_ok"})
+
+				var cmd map[string]interface{}
+				_ = conn.ReadJSON(&cmd)
+
+				_ = conn.WriteJSON(map[string]interface{}{
+					"id":      cmd["id"],
+					"type":    "result",
+					"success": true,
+					"result": map[string]interface{}{
+						"schedule": map[string]interface{}{
+							"recurrence": "never",
+							"time":       nil,
+						},
+						"retention": map[string]interface{}{
+							"copies": nil,
+							"days":   nil,
+						},
+						"create_backup": map[string]interface{}{
+							"include_database": false,
+						},
+					},
+				})
+			}))
+
+			wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http")
+			client = NewClient(wsURL)
+
+			config, err := client.GetBackupConfig(ctx, "test-token")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(config.Schedule.Recurrence).To(Equal("never"))
+			Expect(config.Schedule.Time).To(BeNil())
+			Expect(config.Retention.Copies).To(BeNil())
+			Expect(config.Retention.Days).To(BeNil())
+			Expect(config.CreateBackup.IncludeDatabase).NotTo(BeNil())
+			Expect(*config.CreateBackup.IncludeDatabase).To(BeFalse())
+		})
+
+		It("Should return error on WS failure", func() {
+			client = NewClient("ws://localhost:19999")
+			config, err := client.GetBackupConfig(ctx, "test-token")
+			Expect(err).To(HaveOccurred())
+			Expect(config).To(BeNil())
+		})
+	})
+
+	Describe("ConfigureBackup", func() {
+		var (
+			wsServer *httptest.Server
+			upgrader = websocket.Upgrader{}
+		)
+
+		AfterEach(func() {
+			if wsServer != nil {
+				wsServer.Close()
+			}
+		})
+
+		It("Should send backup config update with all fields", func() {
+			var receivedCmd map[string]json.RawMessage
+
+			wsServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer func() { _ = conn.Close() }()
+
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_required"})
+				var authMsg map[string]interface{}
+				_ = conn.ReadJSON(&authMsg)
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_ok"})
+
+				_ = conn.ReadJSON(&receivedCmd)
+
+				_ = conn.WriteJSON(map[string]interface{}{
+					"id":      1,
+					"type":    "result",
+					"success": true,
+					"result":  nil,
+				})
+			}))
+
+			wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http")
+			client = NewClient(wsURL)
+
+			copies := 5
+			includeDB := true
+			timeStr := "04:00:00"
+			err := client.ConfigureBackup(ctx, "test-token", &BackupConfigRequest{
+				Schedule: &BackupSchedule{
+					Recurrence: "daily",
+					Time:       &timeStr,
+				},
+				Retention: &BackupRetention{
+					Copies: &copies,
+				},
+				CreateBackup: &BackupCreateConfig{
+					IncludeDatabase: &includeDB,
+					AgentIDs:        []string{"backup.local"},
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify the command type
+			var cmdType string
+			Expect(json.Unmarshal(receivedCmd["type"], &cmdType)).To(Succeed())
+			Expect(cmdType).To(Equal("backup/config/update"))
+
+			// Verify schedule was sent
+			var schedule BackupSchedule
+			Expect(json.Unmarshal(receivedCmd["schedule"], &schedule)).To(Succeed())
+			Expect(schedule.Recurrence).To(Equal("daily"))
+			Expect(*schedule.Time).To(Equal("04:00:00"))
+
+			// Verify retention was sent
+			var retention BackupRetention
+			Expect(json.Unmarshal(receivedCmd["retention"], &retention)).To(Succeed())
+			Expect(*retention.Copies).To(Equal(5))
+		})
+
+		It("Should send only provided fields", func() {
+			var receivedCmd map[string]json.RawMessage
+
+			wsServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer func() { _ = conn.Close() }()
+
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_required"})
+				var authMsg map[string]interface{}
+				_ = conn.ReadJSON(&authMsg)
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_ok"})
+
+				_ = conn.ReadJSON(&receivedCmd)
+
+				_ = conn.WriteJSON(map[string]interface{}{
+					"id":      1,
+					"type":    "result",
+					"success": true,
+					"result":  nil,
+				})
+			}))
+
+			wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http")
+			client = NewClient(wsURL)
+
+			err := client.ConfigureBackup(ctx, "test-token", &BackupConfigRequest{
+				Schedule: &BackupSchedule{
+					Recurrence: "never",
+				},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Should have schedule but NOT retention or create_backup
+			Expect(receivedCmd).To(HaveKey("schedule"))
+			Expect(receivedCmd).NotTo(HaveKey("retention"))
+			Expect(receivedCmd).NotTo(HaveKey("create_backup"))
+		})
+
+		It("Should return error on WS command failure", func() {
+			wsServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := upgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				defer func() { _ = conn.Close() }()
+
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_required"})
+				var authMsg map[string]interface{}
+				_ = conn.ReadJSON(&authMsg)
+				_ = conn.WriteJSON(map[string]interface{}{"type": "auth_ok"})
+
+				var cmd map[string]interface{}
+				_ = conn.ReadJSON(&cmd)
+
+				_ = conn.WriteJSON(map[string]interface{}{
+					"id":      cmd["id"],
+					"type":    "result",
+					"success": false,
+					"error": map[string]interface{}{
+						"code":    "unknown_error",
+						"message": "Backup component not loaded",
+					},
+				})
+			}))
+
+			wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http")
+			client = NewClient(wsURL)
+
+			err := client.ConfigureBackup(ctx, "test-token", &BackupConfigRequest{
+				Schedule: &BackupSchedule{Recurrence: "daily"},
+			})
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("Backup component not loaded"))
+		})
+	})
 })

@@ -120,6 +120,7 @@ type HomeAssistantSceneStatus struct {
 // +kubebuilder:printcolumn:name="Entities",type=integer,JSONPath=`.status.entityCount`,description="Number of entities"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.spec) || self.spec.homeAssistantRef == oldSelf.spec.homeAssistantRef",message="spec.homeAssistantRef is immutable after creation"
 
 // HomeAssistantScene is the Schema for the homeassistantscenes API
 type HomeAssistantScene struct {
