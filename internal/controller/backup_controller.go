@@ -227,6 +227,9 @@ func (r *HomeAssistantReconciler) needsBackupUpdate(
 		if !ptrBoolEqual(current.CreateBackup.IncludeDatabase, desired.CreateBackup.IncludeDatabase) {
 			return true
 		}
+		if !stringSliceEqual(current.CreateBackup.AgentIDs, desired.CreateBackup.AgentIDs) {
+			return true
+		}
 	}
 
 	return false
@@ -263,6 +266,19 @@ func ptrBoolEqual(a, b *bool) bool {
 		return false
 	}
 	return *a == *b
+}
+
+// stringSliceEqual compares two string slices (order-sensitive).
+func stringSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // emitBackupEvent emits a Kubernetes event for backup operations.
