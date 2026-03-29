@@ -28,6 +28,7 @@ const (
 	testAuthToken       = "/auth/token"
 	testCoreConfig      = "/api/onboarding/core_config"
 	testAnalytics       = "/api/onboarding/analytics"
+	testIntegration     = "/api/onboarding/integration"
 	testWebsocket       = "/api/websocket"
 )
 
@@ -672,14 +673,15 @@ var _ = Describe("HAClient", func() {
 
 	Describe("PerformBootstrap", func() {
 		var (
-			wsServer        *httptest.Server
-			upgrader        = websocket.Upgrader{}
-			msgID           atomic.Int64
-			healthCalled    bool
-			onboardCalled   bool
-			userCalled      bool
-			configCalled    bool
-			analyticsCalled bool
+			wsServer          *httptest.Server
+			upgrader          = websocket.Upgrader{}
+			msgID             atomic.Int64
+			healthCalled      bool
+			onboardCalled     bool
+			userCalled        bool
+			configCalled      bool
+			analyticsCalled   bool
+			integrationCalled bool
 		)
 
 		BeforeEach(func() {
@@ -688,6 +690,7 @@ var _ = Describe("HAClient", func() {
 			userCalled = false
 			configCalled = false
 			analyticsCalled = false
+			integrationCalled = false
 			msgID.Store(0)
 		})
 
@@ -701,7 +704,7 @@ var _ = Describe("HAClient", func() {
 				case testOnboardingPath:
 					onboardCalled = true
 					w.WriteHeader(http.StatusOK)
-					_, _ = w.Write([]byte(`["user", "core_config", "analytics"]`))
+					_, _ = w.Write([]byte(`["user", "core_config", "analytics", "integration"]`))
 				case testOnboardingUsers:
 					userCalled = true
 					w.WriteHeader(http.StatusOK)
@@ -714,6 +717,9 @@ var _ = Describe("HAClient", func() {
 					w.WriteHeader(http.StatusOK)
 				case testAnalytics:
 					analyticsCalled = true
+					w.WriteHeader(http.StatusOK)
+				case testIntegration:
+					integrationCalled = true
 					w.WriteHeader(http.StatusOK)
 				case testWebsocket:
 					// WebSocket upgrade
@@ -759,6 +765,7 @@ var _ = Describe("HAClient", func() {
 			Expect(userCalled).To(BeTrue())
 			Expect(configCalled).To(BeTrue())
 			Expect(analyticsCalled).To(BeTrue())
+			Expect(integrationCalled).To(BeTrue())
 		})
 
 		It("Should skip long-lived token creation when not requested", func() {
@@ -776,6 +783,8 @@ var _ = Describe("HAClient", func() {
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte(`{"access_token": "test-access-token", "token_type": "Bearer", "expires_in": 1800}`))
 				case testAnalytics:
+					w.WriteHeader(http.StatusOK)
+				case testIntegration:
 					w.WriteHeader(http.StatusOK)
 				}
 			}))

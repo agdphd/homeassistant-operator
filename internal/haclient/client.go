@@ -488,6 +488,39 @@ func (c *Client) SetAnalytics(ctx context.Context, accessToken string, enabled b
 	return nil
 }
 
+// CompleteIntegrationStep marks the integration onboarding step as done.
+// This is the 4th and final onboarding step required by Home Assistant.
+// Without it, non-admin users are blocked from accessing the websocket API.
+func (c *Client) CompleteIntegrationStep(ctx context.Context, accessToken string) error {
+	httpReq, err := http.NewRequestWithContext(
+		ctx, "POST", c.baseURL+"/api/onboarding/integration",
+		bytes.NewReader([]byte("{}")),
+	)
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", userAgent)
+	httpReq.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to complete integration step", Err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return &Error{
+			Type:       ErrorTypeHTTP,
+			Message:    fmt.Sprintf("failed to complete integration step (HTTP %d): %s", resp.StatusCode, string(bodyBytes)),
+			StatusCode: resp.StatusCode,
+		}
+	}
+
+	return nil
+}
+
 // BootstrapOptions contains optional configuration for bootstrap
 type BootstrapOptions struct {
 	CreateLongLivedToken bool
@@ -499,10 +532,11 @@ type BootstrapOptions struct {
 // 1. Check health
 // 2. Check onboarding status
 // 3. Create user
-// 4. Set core config (location) if provided
-// 5. Set analytics preferences
-// 6. Exchange auth code for token
-// 7. Create long-lived token (if requested)
+// 4. Exchange auth code for token
+// 5. Set core config (location) if provided
+// 6. Set analytics preferences
+// 7. Complete integration step (marks onboarding as fully done)
+// 8. Create long-lived token (if requested)
 // Returns the long-lived token or empty string if not created
 func (c *Client) PerformBootstrap(
 	ctx context.Context,
@@ -556,7 +590,11 @@ func (c *Client) PerformBootstrap(
 	// Ignore errors - analytics config is optional and failure doesn't block bootstrap
 	_ = c.SetAnalytics(ctx, tokenResp.AccessToken, opts.EnableAnalytics)
 
-	// 7. Create long-lived token if requested
+	// 7. Complete integration step - marks onboarding as fully done
+	// Without this, non-admin users are blocked from accessing the websocket API
+	_ = c.CompleteIntegrationStep(ctx, tokenResp.AccessToken)
+
+	// 8. Create long-lived token if requested
 	if !opts.CreateLongLivedToken {
 		return "", nil
 	}

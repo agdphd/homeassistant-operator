@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bootstrap missing `integration` onboarding step** — `PerformBootstrap()` only completed 3 of 4 required HA onboarding steps (`user`, `core_config`, `analytics`), leaving out `integration`. This caused non-admin users to be blocked from accessing HA's websocket API and redirected to `/onboarding.html`.
+
 - **Config Flow `description` as object** — `FlowField.Description` was typed as `*string`, but some integrations (e.g. OpenWeatherMap) return it as an object (`{"suggested_value": "..."}`), causing JSON unmarshal errors. Changed to `json.RawMessage` to accept both formats.
 
 - **Enable automation 404 on HA 2025.x+** — the operator called `POST /api/config/automation/config/{id}/enable` after every PUT, but this endpoint no longer exists in HA 2025.x/2026.x. Automations created via API are enabled by default. Removed the `EnableAutomation` call; only `DisableAutomation` is used when `spec.enabled: false`.
