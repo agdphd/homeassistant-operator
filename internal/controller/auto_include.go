@@ -90,13 +90,18 @@ func injectLocation(configYAML string, loc *hav1alpha1.LocationConfig) (string, 
 	}
 
 	// Inject location fields only if not already defined by user
+	log := logf.Log.WithName("injectLocation")
 	if loc.Latitude != "" {
-		if _, err := strconv.ParseFloat(loc.Latitude, 64); err == nil {
+		if _, err := strconv.ParseFloat(loc.Latitude, 64); err != nil {
+			log.Error(err, "Invalid latitude value, skipping", "latitude", loc.Latitude)
+		} else {
 			setNodeField(haSection, "latitude", loc.Latitude, "!!float")
 		}
 	}
 	if loc.Longitude != "" {
-		if _, err := strconv.ParseFloat(loc.Longitude, 64); err == nil {
+		if _, err := strconv.ParseFloat(loc.Longitude, 64); err != nil {
+			log.Error(err, "Invalid longitude value, skipping", "longitude", loc.Longitude)
+		} else {
 			setNodeField(haSection, "longitude", loc.Longitude, "!!float")
 		}
 	}
