@@ -17,7 +17,10 @@ limitations under the License.
 package controller
 
 import (
+	"strings"
 	"testing"
+
+	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
 )
 
 func TestEnsureAutoIncludes(t *testing.T) {
@@ -97,6 +100,101 @@ func TestEnsureAutoIncludes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestInjectLocation(t *testing.T) {
+	elevation := 100
+	loc := &hav1alpha1.LocationConfig{
+		Latitude:   "52.2297",
+		Longitude:  "21.0122",
+		Elevation:  &elevation,
+		UnitSystem: "metric",
+		TimeZone:   "Europe/Warsaw",
+		Name:       "Home",
+		Currency:   "PLN",
+	}
+
+	t.Run("preserves !secret tags", func(t *testing.T) {
+		input := "homeassistant:\n  name: My Home\nrecorder:\n  db_url: !secret recorder_db_url\n"
+		result, err := injectLocation(input, loc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(result, "!secret recorder_db_url") {
+			t.Errorf("!secret tag was stripped, got:\n%s", result)
+		}
+		// name already defined by user — should not be overwritten
+		if !strings.Contains(result, "name: My Home") {
+			t.Errorf("user-defined name was overwritten, got:\n%s", result)
+		}
+	})
+
+	t.Run("preserves !include tags", func(t *testing.T) {
+		input := "automation: !include automations.yaml\n"
+		result, err := injectLocation(input, loc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(result, "!include automations.yaml") {
+			t.Errorf("!include tag was stripped, got:\n%s", result)
+		}
+	})
+
+	t.Run("nil location returns input unchanged", func(t *testing.T) {
+		input := "recorder:\n  db_url: !secret recorder_db_url\n"
+		result, err := injectLocation(input, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if result != input {
+			t.Errorf("expected unchanged input, got:\n%s", result)
+		}
+	})
+
+	t.Run("injects location fields into empty homeassistant section", func(t *testing.T) {
+		input := "homeassistant:\n"
+		result, err := injectLocation(input, loc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(result, "latitude: 52.2297") {
+			t.Errorf("latitude not injected, got:\n%s", result)
+		}
+		if !strings.Contains(result, "longitude: 21.0122") {
+			t.Errorf("longitude not injected, got:\n%s", result)
+		}
+		if !strings.Contains(result, "elevation: 100") {
+			t.Errorf("elevation not injected, got:\n%s", result)
+		}
+	})
+
+	t.Run("does not overwrite existing fields", func(t *testing.T) {
+		input := "homeassistant:\n  latitude: 50.0\n  name: Custom\n"
+		result, err := injectLocation(input, loc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(result, "latitude: 50") {
+			t.Errorf("existing latitude was overwritten, got:\n%s", result)
+		}
+		if !strings.Contains(result, "name: Custom") {
+			t.Errorf("existing name was overwritten, got:\n%s", result)
+		}
+	})
+
+	t.Run("creates homeassistant section if missing", func(t *testing.T) {
+		input := "recorder:\n  purge_keep_days: 5\n"
+		result, err := injectLocation(input, loc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(result, "homeassistant:") {
+			t.Errorf("homeassistant section not created, got:\n%s", result)
+		}
+		if !strings.Contains(result, "latitude: 52.2297") {
+			t.Errorf("latitude not injected, got:\n%s", result)
+		}
+	})
 }
 
 func TestEnsureAutoIncludes_Idempotent(t *testing.T) {

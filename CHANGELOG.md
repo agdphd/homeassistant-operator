@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`!secret` YAML tags stripped during location injection** — `injectLocation` used `map[string]interface{}` for YAML round-trip, which discards custom tags like `!secret` and `!include`. Switched to `yaml.Node` tree which preserves all YAML tags through the unmarshal/marshal cycle. Only affected configs with `spec.bootstrap.location` set.
+
 - **Bootstrap missing `integration` onboarding step** — `PerformBootstrap()` only completed 3 of 4 required HA onboarding steps (`user`, `core_config`, `analytics`), leaving out `integration`. This caused non-admin users to be blocked from accessing HA's websocket API and redirected to `/onboarding.html`.
 
 - **Config Flow `description` as object** — `FlowField.Description` was typed as `*string`, but some integrations (e.g. OpenWeatherMap) return it as an object (`{"suggested_value": "..."}`), causing JSON unmarshal errors. Changed to `json.RawMessage` to accept both formats.

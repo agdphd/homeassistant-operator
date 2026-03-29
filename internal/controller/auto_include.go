@@ -41,57 +41,107 @@ var autoIncludeEntries = []struct {
 // injectLocation injects location fields (latitude, longitude, elevation, time_zone,
 // unit_system, name, currency) from spec.bootstrap.location into the homeassistant:
 // section of configuration.yaml, but only for fields not already defined by the user.
+// Uses yaml.Node to preserve custom YAML tags (e.g. !secret, !include) through
+// the unmarshal/marshal round-trip.
 // Returns an error if the YAML cannot be parsed or marshalled.
 func injectLocation(configYAML string, loc *hav1alpha1.LocationConfig) (string, error) {
 	if loc == nil {
 		return configYAML, nil
 	}
-	var parsed map[string]interface{}
-	if err := yaml.Unmarshal([]byte(configYAML), &parsed); err != nil {
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(configYAML), &doc); err != nil {
 		return "", fmt.Errorf("failed to parse configuration YAML for location injection: %w", err)
 	}
-	if parsed == nil {
-		parsed = make(map[string]interface{})
+
+	// Handle empty document
+	if doc.Kind == 0 {
+		doc = yaml.Node{
+			Kind:    yaml.DocumentNode,
+			Content: []*yaml.Node{{Kind: yaml.MappingNode}},
+		}
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return "", fmt.Errorf("expected mapping at root of configuration YAML")
 	}
 
-	haSection, _ := parsed["homeassistant"].(map[string]interface{})
+	// Find or create "homeassistant" mapping section
+	haSection := nodeMappingValue(root, "homeassistant")
 	if haSection == nil {
-		haSection = make(map[string]interface{})
+		haSection = &yaml.Node{Kind: yaml.MappingNode}
+		root.Content = append(root.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "homeassistant"},
+			haSection,
+		)
+	} else if haSection.Kind == yaml.ScalarNode && haSection.Value == "" {
+		// Empty value (e.g. "homeassistant:\n") — upgrade to mapping in-place
+		haSection.Kind = yaml.MappingNode
+		haSection.Tag = ""
+		haSection.Value = ""
+	}
+	if haSection.Kind != yaml.MappingNode {
+		// homeassistant is not a mapping (e.g. scalar) — cannot inject, return as-is
+		out, err := yaml.Marshal(&doc)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal configuration YAML: %w", err)
+		}
+		return string(out), nil
 	}
 
-	if _, ok := haSection["latitude"]; !ok && loc.Latitude != "" {
-		if v, err := strconv.ParseFloat(loc.Latitude, 64); err == nil {
-			haSection["latitude"] = v
+	// Inject location fields only if not already defined by user
+	if loc.Latitude != "" {
+		if _, err := strconv.ParseFloat(loc.Latitude, 64); err == nil {
+			setNodeField(haSection, "latitude", loc.Latitude, "!!float")
 		}
 	}
-	if _, ok := haSection["longitude"]; !ok && loc.Longitude != "" {
-		if v, err := strconv.ParseFloat(loc.Longitude, 64); err == nil {
-			haSection["longitude"] = v
+	if loc.Longitude != "" {
+		if _, err := strconv.ParseFloat(loc.Longitude, 64); err == nil {
+			setNodeField(haSection, "longitude", loc.Longitude, "!!float")
 		}
 	}
-	if _, ok := haSection["elevation"]; !ok && loc.Elevation != nil {
-		haSection["elevation"] = *loc.Elevation
+	if loc.Elevation != nil {
+		setNodeField(haSection, "elevation", strconv.Itoa(*loc.Elevation), "!!int")
 	}
-	if _, ok := haSection["unit_system"]; !ok && loc.UnitSystem != "" {
-		haSection["unit_system"] = loc.UnitSystem
+	if loc.UnitSystem != "" {
+		setNodeField(haSection, "unit_system", loc.UnitSystem, "!!str")
 	}
-	if _, ok := haSection["time_zone"]; !ok && loc.TimeZone != "" {
-		haSection["time_zone"] = loc.TimeZone
+	if loc.TimeZone != "" {
+		setNodeField(haSection, "time_zone", loc.TimeZone, "!!str")
 	}
-	if _, ok := haSection["name"]; !ok && loc.Name != "" {
-		haSection["name"] = loc.Name
+	if loc.Name != "" {
+		setNodeField(haSection, "name", loc.Name, "!!str")
 	}
-	if _, ok := haSection["currency"]; !ok && loc.Currency != "" {
-		haSection["currency"] = loc.Currency
+	if loc.Currency != "" {
+		setNodeField(haSection, "currency", loc.Currency, "!!str")
 	}
 
-	parsed["homeassistant"] = haSection
-
-	out, err := yaml.Marshal(parsed)
+	out, err := yaml.Marshal(&doc)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal configuration YAML after location injection: %w", err)
 	}
 	return string(out), nil
+}
+
+// nodeMappingValue returns the value node for a given key in a mapping node, or nil.
+func nodeMappingValue(mapping *yaml.Node, key string) *yaml.Node {
+	for i := 0; i < len(mapping.Content)-1; i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// setNodeField adds a key-value pair to a mapping node if the key doesn't already exist.
+func setNodeField(mapping *yaml.Node, key, value, tag string) {
+	if nodeMappingValue(mapping, key) != nil {
+		return
+	}
+	mapping.Content = append(mapping.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Value: key},
+		&yaml.Node{Kind: yaml.ScalarNode, Value: value, Tag: tag},
+	)
 }
 
 // buildEffectiveConfig applies injectLocation and ensureAutoIncludes transformations
