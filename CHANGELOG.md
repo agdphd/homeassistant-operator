@@ -29,11 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Config Flow `description` as object** — `FlowField.Description` was typed as `*string`, but some integrations (e.g. OpenWeatherMap) return it as an object (`{"suggested_value": "..."}`), causing JSON unmarshal errors. Changed to `json.RawMessage` to accept both formats.
 
-- **Enable automation 404 on HA 2025.x+**
+- **Enable automation 404 on HA 2025.x+** — the operator called `POST /api/config/automation/config/{id}/enable` after every PUT, but this endpoint no longer exists in HA 2025.x/2026.x. Automations created via API are enabled by default. Removed the `EnableAutomation` call; only `DisableAutomation` is used when `spec.enabled: false`.
 
 ### Changed
 
-- Bump `k8s.io/api`, `k8s.io/apimachinery`, `k8s.io/client-go` from v0.35.2 to v0.35.3 — the operator called `POST /api/config/automation/config/{id}/enable` after every PUT, but this endpoint no longer exists in HA 2025.x/2026.x. Automations created via API are enabled by default. Removed the `EnableAutomation` call; only `DisableAutomation` is used when `spec.enabled: false`.
+- Bump `k8s.io/api`, `k8s.io/apimachinery`, `k8s.io/client-go` from v0.35.2 to v0.35.3
 
 ## [v0.7.1] - 2026-03-19
 
