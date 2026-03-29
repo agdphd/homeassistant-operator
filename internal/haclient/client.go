@@ -591,8 +591,11 @@ func (c *Client) PerformBootstrap(
 	_ = c.SetAnalytics(ctx, tokenResp.AccessToken, opts.EnableAnalytics)
 
 	// 7. Complete integration step - marks onboarding as fully done
-	// Without this, non-admin users are blocked from accessing the websocket API
-	_ = c.CompleteIntegrationStep(ctx, tokenResp.AccessToken)
+	// Unlike core_config/analytics, this is NOT optional: without it
+	// non-admin users are blocked from accessing the websocket API.
+	if err := c.CompleteIntegrationStep(ctx, tokenResp.AccessToken); err != nil {
+		return "", err
+	}
 
 	// 8. Create long-lived token if requested
 	if !opts.CreateLongLivedToken {
