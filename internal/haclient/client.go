@@ -292,7 +292,7 @@ func (c *Client) LoginWithCredentials(
 
 	credResp, err := c.httpClient.Do(credReq)
 	if err != nil {
-		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to submit credentials", Err: err}
+		return nil, &Error{Type: ErrorTypeNotReady, Message: "failed to submit credentials", Err: err}
 	}
 	defer func() { _ = credResp.Body.Close() }()
 
