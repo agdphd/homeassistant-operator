@@ -236,9 +236,10 @@ func (c *Client) LoginWithCredentials(
 	clientID := c.baseURL + "/"
 
 	// Step 1: Create login flow
-	flowReqBody, _ := json.Marshal(map[string]string{
+	// HA expects handler as a list: ["homeassistant", null]
+	flowReqBody, _ := json.Marshal(map[string]interface{}{
 		"client_id":    clientID,
-		"handler":      "homeassistant",
+		"handler":      []interface{}{"homeassistant", nil},
 		"redirect_uri": clientID,
 	})
 	flowReq, err := http.NewRequestWithContext(
