@@ -308,9 +308,9 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 }
 
 // handleOnboardingAlreadyDone handles the case where onboarding was
-// already completed (e.g., manually or by a previous run). It
-// attempts to create an API token Secret if requested, even though
-// onboarding is done.
+// already completed (e.g., by a previous run or because HA completed it
+// before the operator could). It logs in with the configured credentials
+// and creates a long-lived API token if requested.
 func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 	ctx context.Context,
 	ha *hav1alpha1.HomeAssistant,
@@ -334,7 +334,6 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 		Namespace: ha.Namespace,
 	}, existingSecret)
 	if err == nil {
-		// Secret already exists
 		log.Info("API token Secret already exists",
 			"Secret.Name", secretName)
 		return r.updateBootstrapStatus(
@@ -344,83 +343,66 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 		)
 	}
 	if !errors.IsNotFound(err) {
-		// Error other than NotFound
 		log.Error(err, "Failed to check for existing API Secret")
 		return r.updateBootstrapStatus(
 			ctx, ha, reasonBootstrapFailed,
-			fmt.Sprintf(
-				"Failed to check API Secret: %v", err,
-			), false, false,
+			fmt.Sprintf("Failed to check API Secret: %v", err),
+			false, false,
 		)
 	}
 
-	// Secret doesn't exist - onboarding was completed manually before bootstrap ran
-	// Since onboarding is done, we can't use CreateUser (it would fail).
-	// Solution: Delete the HA pod ONCE to force fresh start and allow bootstrap to run properly
-	log.Info("Onboarding already completed but no API token Secret exists. " +
-		"This typically happens when HA was manually configured before bootstrap ran.")
+	// Secret doesn't exist — login with credentials and create token
+	log.Info("Onboarding already completed, logging in to create API token")
 
-	// Check if we already tried deleting the pod (prevent infinite loop)
-	// Use annotation on HomeAssistant CR to track deletion attempts
-	const (
-		bootstrapRetryAttemptedKey = "ha.homeassistant.io/bootstrap-retry-attempted"
-		trueValue                  = "true"
+	username, password, err := r.getBootstrapCredentials(ctx, ha)
+	if err != nil {
+		log.Error(err, "Failed to get credentials for token recovery")
+		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
+			fmt.Sprintf("Failed to get credentials: %v", err),
+			false, false)
+	}
+
+	haURL := r.buildHomeAssistantURL(ha)
+	client := haclient.NewClient(haURL).WithTimeout(30 * time.Second)
+
+	// Login via HA auth flow
+	tokenResp, err := client.LoginWithCredentials(ctx, username, password)
+	if err != nil {
+		log.Error(err, "Failed to login with credentials")
+		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
+			fmt.Sprintf("Login failed: %v", err),
+			false, false)
+	}
+
+	// Create long-lived token
+	longLivedResp, err := client.CreateLongLivedToken(
+		ctx, tokenResp.AccessToken,
+		&haclient.LongLivedTokenRequest{
+			ClientName: "kubernetes-operator",
+			Lifespan:   3650,
+		},
 	)
-
-	if ha.Annotations != nil && ha.Annotations[bootstrapRetryAttemptedKey] == trueValue {
-		// Already attempted pod deletion - give up to prevent loop
-		log.Info("Bootstrap retry already attempted (annotation present), not retrying deletion to prevent loop")
+	if err != nil {
+		log.Error(err, "Failed to create long-lived token after login")
 		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
-			"Onboarding completed manually, API token requested but cannot be created. "+
-				"Options: (1) disable createApiToken, (2) create Secret manually, or (3) delete PVC to start fresh.",
+			fmt.Sprintf("Token creation failed: %v", err),
 			false, false)
 	}
 
-	// Get pod for deletion
-	podName := ha.Name + "-0"
-	pod := &corev1.Pod{}
-	podKey := types.NamespacedName{Name: podName, Namespace: ha.Namespace}
-	if err := r.Get(ctx, podKey, pod); err != nil {
-		if !errors.IsNotFound(err) {
-			log.Error(err, "Failed to get pod for deletion")
-			return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
-				fmt.Sprintf("Failed to get pod: %v", err),
-				false, false)
-		}
-		// Pod doesn't exist - wait for StatefulSet to recreate it
-		log.Info("Pod not found, waiting for recreation")
-		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapInProgress,
-			"Waiting for pod recreation",
-			false, false)
-	}
-
-	// Delete the pod to force fresh start
-	log.Info("Deleting pod to force fresh start and retry bootstrap", "pod", podName)
-	if err := r.Delete(ctx, pod); err != nil {
-		log.Error(err, "Failed to delete pod for fresh bootstrap")
+	// Store token in Secret
+	if err := r.createAPITokenSecret(ctx, ha, longLivedResp.Token); err != nil {
+		log.Error(err, "Failed to create API token Secret")
 		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
-			fmt.Sprintf("Failed to delete pod: %v", err),
+			fmt.Sprintf("Failed to create token Secret: %v", err),
 			false, false)
 	}
-	log.Info("Deleted pod successfully", "pod", podName)
 
-	// Mark that we've attempted deletion by setting annotation
-	// (Only set after successful deletion to allow retry on transient delete failures)
-	if ha.Annotations == nil {
-		ha.Annotations = make(map[string]string)
-	}
-	ha.Annotations[bootstrapRetryAttemptedKey] = trueValue
-	if err := r.Update(ctx, ha); err != nil {
-		log.Error(err, "Failed to set bootstrap retry annotation after pod deletion")
-		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
-			fmt.Sprintf("Pod deleted but failed to mark retry attempt: %v", err),
-			false, false)
-	}
-	log.Info("Set bootstrap retry annotation after successful pod deletion")
-
-	return r.updateBootstrapStatus(ctx, ha, reasonBootstrapInProgress,
-		"Deleted pod to force fresh start - bootstrap will retry when pod recreates",
-		false, false)
+	log.Info("Successfully recovered: logged in and created API token")
+	return r.updateBootstrapStatus(
+		ctx, ha, reasonBootstrapCompleted,
+		"Bootstrap completed (token created via login recovery)",
+		true, true,
+	)
 }
 
 // updateBootstrapStatus updates the bootstrap status and returns appropriate

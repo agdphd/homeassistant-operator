@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bootstrap fails when onboarding already completed** — `CheckOnboardingStatus` did not handle HTTP 404 (which HA returns when onboarding is fully done, as the endpoint is unregistered). Also, when onboarding was already done, the operator tried to delete the pod (which doesn't reset PVC data) instead of logging in with credentials. Fixed: 404 is now correctly detected as "onboarding done", partial onboarding (user step done) is detected from the step array, and `handleOnboardingAlreadyDone` now logs in via HA's auth flow and creates the API token instead of deleting the pod.
+
 - **Bootstrap pod delete forbidden** — RBAC ClusterRole was missing `delete` verb on `pods` resource, causing bootstrap to fail with "pods is forbidden" when the operator tried to restart the HA pod after onboarding.
 
 - **`!secret` YAML tags stripped during location injection** — `injectLocation` used `map[string]interface{}` for YAML round-trip, which discards custom tags like `!secret` and `!include`. Switched to `yaml.Node` tree which preserves all YAML tags through the unmarshal/marshal cycle. Only affected configs with `spec.bootstrap.location` set.

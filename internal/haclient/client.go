@@ -74,8 +74,10 @@ func (c *Client) CheckHealth(ctx context.Context) error {
 	}
 }
 
-// CheckOnboardingStatus checks if onboarding is needed
-// Returns nil if onboarding needed, ErrorTypeOnboardingDone if already done
+// CheckOnboardingStatus checks if onboarding is needed.
+// Returns nil if onboarding needed, ErrorTypeOnboardingDone if already done.
+// HA returns 200 + JSON array of steps when onboarding is pending,
+// and 404 when onboarding is fully complete (endpoint is not registered).
 func (c *Client) CheckOnboardingStatus(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/onboarding", nil)
 	if err != nil {
@@ -89,36 +91,35 @@ func (c *Client) CheckOnboardingStatus(ctx context.Context) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// 404 = onboarding fully complete (HA does not register the endpoint)
+	if resp.StatusCode == http.StatusNotFound {
+		return &Error{Type: ErrorTypeOnboardingDone, Message: "onboarding already completed"}
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return &Error{
 			Type:       ErrorTypeHTTP,
-			Message:    "unexpected status code",
+			Message:    fmt.Sprintf("unexpected status code %d from /api/onboarding", resp.StatusCode),
 			StatusCode: resp.StatusCode,
 		}
 	}
 
+	// Parse the array of onboarding steps
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return &Error{Type: ErrorTypeHTTP, Message: "failed to read response", Err: err}
 	}
 
-	// Check if response is array (onboarding needed) or object (done)
-	trimmed := strings.TrimSpace(string(body))
-	if strings.HasPrefix(trimmed, "[") {
-		// Onboarding needed
-		return nil
+	var steps []OnboardingStep
+	if err := json.Unmarshal(body, &steps); err != nil {
+		return &Error{Type: ErrorTypeInvalidResponse, Message: "failed to parse onboarding steps", Err: err}
 	}
 
-	// Check if user step is done
-	var status map[string]interface{}
-	if err := json.Unmarshal(body, &status); err != nil {
-		return &Error{Type: ErrorTypeInvalidResponse, Message: "failed to parse response", Err: err}
-	}
-
-	// Check if user step exists and is done
-	if userStep, ok := status["user"].(map[string]interface{}); ok {
-		if done, ok := userStep["done"].(bool); ok && done {
-			return &Error{Type: ErrorTypeOnboardingDone, Message: "onboarding already completed"}
+	// If the "user" step is done, onboarding was partially completed
+	// (e.g. user created manually) — we can't re-run CreateUser
+	for _, step := range steps {
+		if step.Step == "user" && step.Done {
+			return &Error{Type: ErrorTypeOnboardingDone, Message: "onboarding user step already completed"}
 		}
 	}
 
@@ -224,6 +225,102 @@ func (c *Client) ExchangeAuthCode(ctx context.Context, authCode, clientID string
 	}
 
 	return &tokenResp, nil
+}
+
+// LoginWithCredentials authenticates with username/password via HA's login flow.
+// This is used when onboarding is already done and we need an access token.
+// Flow: POST /auth/login_flow → POST /auth/login_flow/{flow_id} → POST /auth/token
+func (c *Client) LoginWithCredentials(
+	ctx context.Context, username, password string,
+) (*TokenResponse, error) {
+	clientID := c.baseURL + "/"
+
+	// Step 1: Create login flow
+	flowReqBody, _ := json.Marshal(map[string]string{
+		"client_id":    clientID,
+		"handler":      "homeassistant",
+		"redirect_uri": clientID,
+	})
+	flowReq, err := http.NewRequestWithContext(
+		ctx, "POST", c.baseURL+"/auth/login_flow",
+		bytes.NewReader(flowReqBody),
+	)
+	if err != nil {
+		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to create login flow request", Err: err}
+	}
+	flowReq.Header.Set("Content-Type", "application/json")
+	flowReq.Header.Set("User-Agent", userAgent)
+
+	flowResp, err := c.httpClient.Do(flowReq)
+	if err != nil {
+		return nil, &Error{Type: ErrorTypeNotReady, Message: "failed to create login flow", Err: err}
+	}
+	defer func() { _ = flowResp.Body.Close() }()
+
+	if flowResp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(flowResp.Body)
+		return nil, &Error{
+			Type:       ErrorTypeHTTP,
+			Message:    fmt.Sprintf("login flow creation failed (HTTP %d): %s", flowResp.StatusCode, string(bodyBytes)),
+			StatusCode: flowResp.StatusCode,
+		}
+	}
+
+	var flowData struct {
+		FlowID string `json:"flow_id"`
+		Type   string `json:"type"`
+	}
+	if err := json.NewDecoder(flowResp.Body).Decode(&flowData); err != nil {
+		return nil, &Error{Type: ErrorTypeInvalidResponse, Message: "failed to parse login flow response", Err: err}
+	}
+
+	// Step 2: Submit credentials
+	credBody, _ := json.Marshal(map[string]string{
+		"username":  username,
+		"password":  password,
+		"client_id": clientID,
+	})
+	credReq, err := http.NewRequestWithContext(
+		ctx, "POST", c.baseURL+"/auth/login_flow/"+flowData.FlowID,
+		bytes.NewReader(credBody),
+	)
+	if err != nil {
+		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to create credential request", Err: err}
+	}
+	credReq.Header.Set("Content-Type", "application/json")
+	credReq.Header.Set("User-Agent", userAgent)
+
+	credResp, err := c.httpClient.Do(credReq)
+	if err != nil {
+		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to submit credentials", Err: err}
+	}
+	defer func() { _ = credResp.Body.Close() }()
+
+	if credResp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(credResp.Body)
+		return nil, &Error{
+			Type:       ErrorTypeAuth,
+			Message:    fmt.Sprintf("login failed (HTTP %d): %s", credResp.StatusCode, string(bodyBytes)),
+			StatusCode: credResp.StatusCode,
+		}
+	}
+
+	var credData struct {
+		Type   string `json:"type"`
+		Result string `json:"result"`
+	}
+	if err := json.NewDecoder(credResp.Body).Decode(&credData); err != nil {
+		return nil, &Error{Type: ErrorTypeInvalidResponse, Message: "failed to parse credential response", Err: err}
+	}
+	if credData.Type != "create_entry" || credData.Result == "" {
+		return nil, &Error{
+			Type:    ErrorTypeAuth,
+			Message: fmt.Sprintf("login flow did not return auth code (type=%s)", credData.Type),
+		}
+	}
+
+	// Step 3: Exchange auth code for access token
+	return c.ExchangeAuthCode(ctx, credData.Result, clientID)
 }
 
 // wsAuthConnect opens a WebSocket connection to HA and performs the auth handshake.
