@@ -275,11 +275,10 @@ func (c *Client) LoginWithCredentials(
 		return nil, &Error{Type: ErrorTypeInvalidResponse, Message: "failed to parse login flow response", Err: err}
 	}
 
-	// Step 2: Submit credentials
+	// Step 2: Submit credentials (only username and password, no client_id)
 	credBody, _ := json.Marshal(map[string]string{
-		"username":  username,
-		"password":  password,
-		"client_id": clientID,
+		"username": username,
+		"password": password,
 	})
 	credReq, err := http.NewRequestWithContext(
 		ctx, "POST", c.baseURL+"/auth/login_flow/"+flowData.FlowID,
