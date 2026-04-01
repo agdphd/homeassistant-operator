@@ -31,6 +31,7 @@ const (
 	// Reconciliation intervals
 	bootstrapRetryInterval    = 30 * time.Second
 	bootstrapHealthCheckRetry = 10 * time.Second
+	onboardingConfirmDelay    = 30 * time.Second
 
 	// Condition reasons
 	reasonBootstrapInProgress         = "BootstrapInProgress"
@@ -296,8 +297,8 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 	if haclient.IsOnboardingDone(err) {
 		// During HA startup, /api/onboarding may 404 briefly before the
 		// onboarding component registers its views. To avoid a false positive,
-		// only proceed to login recovery if we've seen OnboardingDone in a
-		// previous reconcile (indicated by the condition reason).
+		// only proceed to login recovery after the condition has been set for
+		// at least onboardingConfirmDelay (wall-clock time).
 		cond := meta.FindStatusCondition(
 			ha.Status.Conditions, "BootstrapReady",
 		)
@@ -305,7 +306,7 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 			cond.Reason == reasonBootstrapAlreadyDone
 		if !prevWasOnboardingDone {
 			log.Info("Onboarding endpoint returned done, "+
-				"waiting one cycle to confirm",
+				"setting confirmation timer",
 				"error", err.Error())
 			return r.updateBootstrapStatus(
 				ctx, ha, reasonBootstrapAlreadyDone,
@@ -313,8 +314,19 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 				false, false,
 			)
 		}
-		log.Info("Onboarding confirmed done, " +
-			"attempting token creation")
+		// Check if enough wall-clock time has passed since we first saw 404
+		elapsed := time.Since(cond.LastTransitionTime.Time)
+		if elapsed < onboardingConfirmDelay {
+			log.Info("Onboarding 404 confirmation pending, waiting",
+				"elapsed", elapsed.Round(time.Second),
+				"required", onboardingConfirmDelay)
+			return ctrl.Result{
+				RequeueAfter: onboardingConfirmDelay - elapsed,
+			}, nil
+		}
+		log.Info("Onboarding confirmed done after delay, "+
+			"attempting token creation",
+			"elapsed", elapsed.Round(time.Second))
 		return r.handleOnboardingAlreadyDone(ctx, ha)
 	}
 
