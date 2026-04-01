@@ -78,6 +78,10 @@ func (c *Client) CheckHealth(ctx context.Context) error {
 // Returns nil if onboarding needed, ErrorTypeOnboardingDone if already done.
 // HA returns 200 + JSON array of steps when onboarding is pending,
 // and 404 when onboarding is fully complete (endpoint is not registered).
+//
+// Caveat: during HA startup, /api/onboarding may briefly return 404 before
+// the onboarding component registers its views. Callers should not trust a
+// single OnboardingDone result — see reconcileBootstrap for confirmation logic.
 func (c *Client) CheckOnboardingStatus(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/onboarding", nil)
 	if err != nil {

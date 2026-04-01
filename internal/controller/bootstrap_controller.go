@@ -294,7 +294,26 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 	}
 
 	if haclient.IsOnboardingDone(err) {
-		log.Info("Onboarding already completed, " +
+		// During HA startup, /api/onboarding may 404 briefly before the
+		// onboarding component registers its views. To avoid a false positive,
+		// only proceed to login recovery if we've seen OnboardingDone in a
+		// previous reconcile (indicated by the condition reason).
+		cond := meta.FindStatusCondition(
+			ha.Status.Conditions, "BootstrapReady",
+		)
+		prevWasOnboardingDone := cond != nil &&
+			cond.Reason == reasonBootstrapAlreadyDone
+		if !prevWasOnboardingDone {
+			log.Info("Onboarding endpoint returned done, "+
+				"waiting one cycle to confirm",
+				"error", err.Error())
+			return r.updateBootstrapStatus(
+				ctx, ha, reasonBootstrapAlreadyDone,
+				"Onboarding appears done, confirming...",
+				false, false,
+			)
+		}
+		log.Info("Onboarding confirmed done, " +
 			"attempting token creation")
 		return r.handleOnboardingAlreadyDone(ctx, ha)
 	}
