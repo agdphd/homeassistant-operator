@@ -432,11 +432,13 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 	haURL := r.buildHomeAssistantURL(ha)
 	client := haclient.NewClient(haURL).WithTimeout(30 * time.Second)
 
-	// Fix 1: Re-check /api/onboarding before attempting login recovery.
-	// If onboarding is now available (returns 200), the earlier 404 was a
-	// transient false-positive during HA startup. Reset so normal bootstrap
-	// flow (CreateUser) can run on the next reconcile.
-	if checkErr := client.CheckOnboardingStatus(ctx); checkErr == nil {
+	// Re-check /api/onboarding before attempting login recovery.
+	// Three cases:
+	//   nil          — onboarding is pending (transient 404 resolved) → reset
+	//   IsOnboardingDone — onboarding genuinely done → fall through to login
+	//   other error  — transient probe failure (timeout/network) → requeue
+	checkErr := client.CheckOnboardingStatus(ctx)
+	if checkErr == nil {
 		log.Info("Onboarding endpoint is now available — " +
 			"earlier 404 was transient, resetting bootstrap")
 		return r.updateBootstrapStatus(
@@ -447,6 +449,15 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 				s.OnboardingDoneFirstSeen = nil
 				s.LoginRecoveryAttempts = 0
 			},
+		)
+	}
+	if !haclient.IsOnboardingDone(checkErr) {
+		log.Info("Onboarding re-check returned transient error, requeueing",
+			"error", checkErr)
+		return r.updateBootstrapStatus(
+			ctx, ha, reasonBootstrapNotReady,
+			fmt.Sprintf("Onboarding re-check failed: %v", checkErr),
+			false, false,
 		)
 	}
 
