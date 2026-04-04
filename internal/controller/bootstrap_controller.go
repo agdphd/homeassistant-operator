@@ -31,7 +31,12 @@ const (
 	// Reconciliation intervals
 	bootstrapRetryInterval    = 30 * time.Second
 	bootstrapHealthCheckRetry = 10 * time.Second
-	onboardingConfirmDelay    = 30 * time.Second
+	// onboardingConfirmDelay is how long we wait after first seeing a 404 from
+	// /api/onboarding before concluding that onboarding is genuinely complete.
+	// 30s was too short: on resource-constrained CI the HA HTTP server comes up
+	// before the onboarding component finishes registering its routes, so the
+	// 404 is a transient startup artifact that can persist for 1-2 minutes.
+	onboardingConfirmDelay = 3 * time.Minute
 
 	// Login recovery
 	maxLoginRecoveryRetries = 3
@@ -299,9 +304,27 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 	}
 
 	if haclient.IsOnboardingDone(err) {
-		// Check if we've already exhausted login recovery retries — stop looping.
+		// Check if we've already exhausted login recovery retries.
+		// Before giving up permanently, re-check /api/onboarding: if it now
+		// returns 200 the earlier 404s were a startup false-positive and HA is
+		// now ready for normal bootstrap. Reset the state so CreateUser can run.
 		cond := meta.FindStatusCondition(ha.Status.Conditions, "BootstrapReady")
 		if cond != nil && cond.Reason == reasonBootstrapLoginFailed {
+			haURL := r.buildHomeAssistantURL(ha)
+			client := haclient.NewClient(haURL).WithTimeout(30 * time.Second)
+			if checkErr := client.CheckOnboardingStatus(ctx); checkErr == nil {
+				log.Info("Onboarding endpoint available after LoginRecoveryFailed — " +
+					"earlier 404s were transient, resetting bootstrap")
+				return r.updateBootstrapStatus(
+					ctx, ha, reasonBootstrapNotReady,
+					"Onboarding endpoint recovered, retrying bootstrap",
+					false, false,
+					func(s *hav1alpha1.BootstrapStatus) {
+						s.OnboardingDoneFirstSeen = nil
+						s.LoginRecoveryAttempts = 0
+					},
+				)
+			}
 			log.Info("Login recovery previously exhausted, " +
 				"waiting for manual intervention")
 			return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
