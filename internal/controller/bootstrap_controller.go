@@ -33,12 +33,16 @@ const (
 	bootstrapHealthCheckRetry = 10 * time.Second
 	onboardingConfirmDelay    = 30 * time.Second
 
+	// Login recovery
+	maxLoginRecoveryRetries = 3
+
 	// Condition reasons
 	reasonBootstrapInProgress         = "BootstrapInProgress"
 	reasonBootstrapCompleted          = "BootstrapCompleted"
 	reasonBootstrapFailed             = "BootstrapFailed"
 	reasonBootstrapNotReady           = "HomeAssistantNotReady"
 	reasonBootstrapAlreadyDone        = "BootstrapAlreadyDone"
+	reasonBootstrapLoginFailed        = "LoginRecoveryFailed"
 	reasonBootstrapMissingCredentials = "MissingCredentials"
 )
 
@@ -295,27 +299,39 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 	}
 
 	if haclient.IsOnboardingDone(err) {
+		// Check if we've already exhausted login recovery retries — stop looping.
+		cond := meta.FindStatusCondition(ha.Status.Conditions, "BootstrapReady")
+		if cond != nil && cond.Reason == reasonBootstrapLoginFailed {
+			log.Info("Login recovery previously exhausted, " +
+				"waiting for manual intervention")
+			return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+		}
+
 		// During HA startup, /api/onboarding may 404 briefly before the
 		// onboarding component registers its views. To avoid a false positive,
-		// only proceed to login recovery after the condition has been set for
-		// at least onboardingConfirmDelay (wall-clock time).
-		cond := meta.FindStatusCondition(
-			ha.Status.Conditions, "BootstrapReady",
-		)
-		prevWasOnboardingDone := cond != nil &&
-			cond.Reason == reasonBootstrapAlreadyDone
-		if !prevWasOnboardingDone {
+		// we use OnboardingDoneFirstSeen (a status field) as the reference time
+		// instead of condition.LastTransitionTime, which only updates when
+		// Status (True/False) changes — not when just the Reason changes.
+		bs := ha.Status.Bootstrap
+		if bs == nil || bs.OnboardingDoneFirstSeen == nil {
+			// First time seeing OnboardingDone — record the timestamp.
 			log.Info("Onboarding endpoint returned done, "+
 				"setting confirmation timer",
 				"error", err.Error())
+			now := metav1.Now()
 			return r.updateBootstrapStatus(
 				ctx, ha, reasonBootstrapAlreadyDone,
 				"Onboarding appears done, confirming...",
 				false, false,
+				func(s *hav1alpha1.BootstrapStatus) {
+					s.OnboardingDoneFirstSeen = &now
+					s.LoginRecoveryAttempts = 0
+				},
 			)
 		}
-		// Check if enough wall-clock time has passed since we first saw 404
-		elapsed := time.Since(cond.LastTransitionTime.Time)
+
+		// Check if enough wall-clock time has passed since we first saw 404.
+		elapsed := time.Since(bs.OnboardingDoneFirstSeen.Time)
 		if elapsed < onboardingConfirmDelay {
 			log.Info("Onboarding 404 confirmation pending, waiting",
 				"elapsed", elapsed.Round(time.Second),
@@ -354,6 +370,10 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 		return r.updateBootstrapStatus(
 			ctx, ha, reasonBootstrapAlreadyDone,
 			"Onboarding already completed", true, false,
+			func(s *hav1alpha1.BootstrapStatus) {
+				s.OnboardingDoneFirstSeen = nil
+				s.LoginRecoveryAttempts = 0
+			},
 		)
 	}
 
@@ -371,6 +391,10 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 			ctx, ha, reasonBootstrapAlreadyDone,
 			"Onboarding completed, token exists",
 			true, true,
+			func(s *hav1alpha1.BootstrapStatus) {
+				s.OnboardingDoneFirstSeen = nil
+				s.LoginRecoveryAttempts = 0
+			},
 		)
 	}
 	if !errors.IsNotFound(err) {
@@ -382,9 +406,28 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 		)
 	}
 
-	// Secret doesn't exist — login with credentials and create token
-	log.Info("Onboarding already completed, logging in to create API token")
+	haURL := r.buildHomeAssistantURL(ha)
+	client := haclient.NewClient(haURL).WithTimeout(30 * time.Second)
 
+	// Fix 1: Re-check /api/onboarding before attempting login recovery.
+	// If onboarding is now available (returns 200), the earlier 404 was a
+	// transient false-positive during HA startup. Reset so normal bootstrap
+	// flow (CreateUser) can run on the next reconcile.
+	if checkErr := client.CheckOnboardingStatus(ctx); checkErr == nil {
+		log.Info("Onboarding endpoint is now available — " +
+			"earlier 404 was transient, resetting bootstrap")
+		return r.updateBootstrapStatus(
+			ctx, ha, reasonBootstrapNotReady,
+			"Onboarding endpoint recovered, retrying bootstrap",
+			false, false,
+			func(s *hav1alpha1.BootstrapStatus) {
+				s.OnboardingDoneFirstSeen = nil
+				s.LoginRecoveryAttempts = 0
+			},
+		)
+	}
+
+	// Secret doesn't exist — login with credentials and create token.
 	username, password, err := r.getBootstrapCredentials(ctx, ha)
 	if err != nil {
 		log.Error(err, "Failed to get credentials for token recovery")
@@ -393,16 +436,41 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 			false, false)
 	}
 
-	haURL := r.buildHomeAssistantURL(ha)
-	client := haclient.NewClient(haURL).WithTimeout(30 * time.Second)
-
-	// Login via HA auth flow
+	log.Info("Onboarding already completed, logging in to create API token")
 	tokenResp, err := client.LoginWithCredentials(ctx, username, password)
 	if err != nil {
-		log.Error(err, "Failed to login with credentials")
-		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
-			fmt.Sprintf("Login failed: %v", err),
-			false, false)
+		attempts := 1
+		if ha.Status.Bootstrap != nil {
+			attempts = ha.Status.Bootstrap.LoginRecoveryAttempts + 1
+		}
+		log.Error(err, "Failed to login with credentials",
+			"attempt", attempts, "maxAttempts", maxLoginRecoveryRetries)
+
+		// Fix 3: After exhausting retries, stop looping and require manual
+		// intervention (credential fix or HA reset).
+		if attempts >= maxLoginRecoveryRetries {
+			log.Error(err, "Login recovery exhausted — manual intervention required")
+			return r.updateBootstrapStatus(ctx, ha, reasonBootstrapLoginFailed,
+				fmt.Sprintf(
+					"Login recovery failed after %d attempts: %v — "+
+						"check credentials or reset HA onboarding",
+					attempts, err,
+				),
+				false, false,
+				func(s *hav1alpha1.BootstrapStatus) {
+					s.LoginRecoveryAttempts = attempts
+				},
+			)
+		}
+
+		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapAlreadyDone,
+			fmt.Sprintf("Login failed (attempt %d/%d): %v",
+				attempts, maxLoginRecoveryRetries, err),
+			false, false,
+			func(s *hav1alpha1.BootstrapStatus) {
+				s.LoginRecoveryAttempts = attempts
+			},
+		)
 	}
 
 	// Create long-lived token
@@ -433,17 +501,27 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 		ctx, ha, reasonBootstrapCompleted,
 		"Bootstrap completed (token created via login recovery)",
 		true, true,
+		func(s *hav1alpha1.BootstrapStatus) {
+			s.OnboardingDoneFirstSeen = nil
+			s.LoginRecoveryAttempts = 0
+		},
 	)
 }
 
+// bootstrapStatusModifier is an optional function applied to BootstrapStatus
+// before saving, allowing callers to update fields beyond the standard ones.
+type bootstrapStatusModifier func(*hav1alpha1.BootstrapStatus)
+
 // updateBootstrapStatus updates the bootstrap status and returns appropriate
 // Result. tokenCreated indicates whether an API token was actually created
-// (vs onboarding already done).
+// (vs onboarding already done). Optional modifiers can update additional
+// status fields (e.g. OnboardingDoneFirstSeen, LoginRecoveryAttempts).
 func (r *HomeAssistantReconciler) updateBootstrapStatus(
 	ctx context.Context,
 	ha *hav1alpha1.HomeAssistant,
 	reason, message string,
 	completed, tokenCreated bool,
+	mods ...bootstrapStatusModifier,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -474,6 +552,11 @@ func (r *HomeAssistantReconciler) updateBootstrapStatus(
 			freshHA.Status.Bootstrap.ApiTokenReady = true
 			freshHA.Status.Bootstrap.ApiTokenSecretName =
 				r.getApiTokenSecretName(freshHA)
+		}
+
+		// Apply optional field modifiers (e.g. OnboardingDoneFirstSeen, LoginRecoveryAttempts)
+		for _, mod := range mods {
+			mod(freshHA.Status.Bootstrap)
 		}
 
 		// Update main status condition
@@ -520,6 +603,9 @@ func (r *HomeAssistantReconciler) updateBootstrapStatus(
 	case reasonBootstrapNotReady:
 		// HA not ready - retry quickly
 		return ctrl.Result{RequeueAfter: bootstrapHealthCheckRetry}, nil
+	case reasonBootstrapLoginFailed:
+		// Login recovery exhausted - long wait, needs manual intervention
+		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	case reasonBootstrapFailed, reasonBootstrapMissingCredentials:
 		// Error - retry with backoff
 		return ctrl.Result{RequeueAfter: bootstrapRetryInterval}, nil
