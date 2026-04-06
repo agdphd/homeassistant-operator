@@ -95,9 +95,19 @@ func (c *Client) CheckOnboardingStatus(ctx context.Context) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// 404 = onboarding fully complete (HA does not register the endpoint)
+	// 404 = onboarding fully complete (HA does not register the endpoint).
+	// Include a snippet of the body so callers can distinguish a proper
+	// backend 404 from an unexpected proxy/HTML 404.
 	if resp.StatusCode == http.StatusNotFound {
-		return &Error{Type: ErrorTypeOnboardingDone, Message: "onboarding already completed"}
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		snippet := string(bodyBytes)
+		if len(snippet) > 120 {
+			snippet = snippet[:120] + "…"
+		}
+		return &Error{
+			Type:    ErrorTypeOnboardingDone,
+			Message: fmt.Sprintf("onboarding already completed (404 body: %s)", snippet),
+		}
 	}
 
 	if resp.StatusCode != http.StatusOK {

@@ -33,10 +33,11 @@ const (
 	bootstrapHealthCheckRetry = 10 * time.Second
 	// onboardingConfirmDelay is how long we wait after first seeing a 404 from
 	// /api/onboarding before concluding that onboarding is genuinely complete.
-	// 30s was too short: on resource-constrained CI the HA HTTP server comes up
-	// before the onboarding component finishes registering its routes, so the
-	// 404 is a transient startup artifact that can persist for 1-2 minutes.
-	onboardingConfirmDelay = 3 * time.Minute
+	// During this window the controller re-polls every bootstrapRetryInterval (30 s)
+	// so it can catch the moment HA finishes registering its onboarding routes.
+	// 10 min covers slow CI starts where the HA HTTP server comes up (health check
+	// passes) before the onboarding component finishes loading its routes.
+	onboardingConfirmDelay = 10 * time.Minute
 
 	// Login recovery
 	maxLoginRecoveryRetries = 3
@@ -354,13 +355,15 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 		}
 
 		// Check if enough wall-clock time has passed since we first saw 404.
+		// Re-poll every bootstrapRetryInterval so that if onboarding becomes
+		// available mid-window the next PerformBootstrap call will catch it.
 		elapsed := time.Since(bs.OnboardingDoneFirstSeen.Time)
 		if elapsed < onboardingConfirmDelay {
 			log.Info("Onboarding 404 confirmation pending, waiting",
 				"elapsed", elapsed.Round(time.Second),
 				"required", onboardingConfirmDelay)
 			return ctrl.Result{
-				RequeueAfter: onboardingConfirmDelay - elapsed,
+				RequeueAfter: bootstrapRetryInterval,
 			}, nil
 		}
 		log.Info("Onboarding confirmed done after delay, "+

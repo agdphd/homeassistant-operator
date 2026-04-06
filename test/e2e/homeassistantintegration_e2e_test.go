@@ -566,6 +566,12 @@ func collectIntegrationDebugInfo(namespace, haName string) {
 	fmt.Println("\n--- HomeAssistant status ---")
 	fmt.Println(utils.Kubectl("get", "ha", haName, "-n", namespace, "-o", "jsonpath={.status}"))
 
+	fmt.Println("\n--- HA Pod Logs (last 150 lines) ---")
+	fmt.Println(utils.Kubectl("logs", "-n", namespace, haName+"-0", "--tail=150"))
+
+	fmt.Println("\n--- HA Pod Description ---")
+	fmt.Println(utils.Kubectl("describe", "pod", "-n", namespace, haName+"-0"))
+
 	fmt.Println("\n--- Recent events ---")
 	fmt.Println(utils.Kubectl("get", "events", "-n", namespace, "--sort-by=.lastTimestamp"))
 }

@@ -776,6 +776,20 @@ func collectAutomationDebugInfo(namespace, haName string) {
 		writeDebug("%s\n", output)
 	}
 
+	writeDebug("\n--- HA Pod Logs (last 150 lines) ---\n")
+	cmd = exec.Command("kubectl", "logs", "-n", namespace, haName+"-0", "--tail=150")
+	output, err = utils.Run(cmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	}
+
+	writeDebug("\n--- HA Pod Description ---\n")
+	cmd = exec.Command("kubectl", "describe", "pod", "-n", namespace, haName+"-0")
+	output, err = utils.Run(cmd)
+	if err == nil {
+		writeDebug("%s\n", output)
+	}
+
 	writeDebug("\n--- Controller Logs (last 200 lines) ---\n")
 	cmd = exec.Command(
 		"kubectl", "logs", "-n", "homeassistant-operator-system",

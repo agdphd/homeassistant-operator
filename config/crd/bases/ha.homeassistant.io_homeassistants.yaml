@@ -429,9 +429,21 @@ spec:
                       attempt
                     format: date-time
                     type: string
+                  loginRecoveryAttempts:
+                    description: |-
+                      LoginRecoveryAttempts tracks how many times login recovery was attempted.
+                      Reset to zero when onboarding is confirmed fresh or bootstrap succeeds.
+                    type: integer
                   message:
                     description: Message provides additional information about the
                       bootstrap status
+                    type: string
+                  onboardingDoneFirstSeen:
+                    description: |-
+                      OnboardingDoneFirstSeen is the timestamp when /api/onboarding first returned 404.
+                      Used to implement confirmation delay without relying on condition LastTransitionTime
+                      (which does not update when only the Reason changes).
+                    format: date-time
                     type: string
                 type: object
               conditions:

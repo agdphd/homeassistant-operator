@@ -20,8 +20,10 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2" // nolint:revive,staticcheck
@@ -165,12 +167,86 @@ func IsCertManagerCRDsInstalled() bool {
 	return false
 }
 
+// K3dClusterName returns the k3d cluster name from K3D_CLUSTER env var or the default.
+func K3dClusterName() string {
+	if v, ok := os.LookupEnv("K3D_CLUSTER"); ok {
+		return v
+	}
+	return "homeassistant-operator-test-e2e"
+}
+
+// K3dContextName returns the kubectl context name for the k3d cluster.
+func K3dContextName() string {
+	return "k3d-" + K3dClusterName()
+}
+
+// IsolateKubeconfigForK3d copies the current kubeconfig to a temp file, sets KUBECONFIG
+// env var to that file, and switches the context to the k3d test cluster within the copy.
+// This ensures that any context changes made by the user in their terminal do not affect
+// the test process, and vice versa — the test never touches ~/.kube/config.
+// Returns the path to the temp file so the caller can delete it in AfterSuite.
+func IsolateKubeconfigForK3d() (string, error) {
+	// Locate the source kubeconfig (respects KUBECONFIG if already set)
+	src := os.Getenv("KUBECONFIG")
+	if src == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("cannot determine home dir: %w", err)
+		}
+		src = filepath.Join(home, ".kube", "config")
+	}
+
+	// Copy to a temp file
+	in, err := os.Open(src)
+	if err != nil {
+		return "", fmt.Errorf("cannot open kubeconfig %q: %w", src, err)
+	}
+	defer in.Close() //nolint:errcheck
+
+	tmp, err := os.CreateTemp("", "e2e-kubeconfig-*.yaml")
+	if err != nil {
+		return "", fmt.Errorf("cannot create temp kubeconfig: %w", err)
+	}
+	if _, err := io.Copy(tmp, in); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return "", fmt.Errorf("cannot copy kubeconfig: %w", err)
+	}
+	_ = tmp.Close()
+
+	// Point this process (and all child kubectl calls) at the copy
+	if err := os.Setenv("KUBECONFIG", tmp.Name()); err != nil {
+		_ = os.Remove(tmp.Name())
+		return "", fmt.Errorf("cannot set KUBECONFIG: %w", err)
+	}
+
+	// Switch context inside the copy — never touches ~/.kube/config
+	ctx := K3dContextName()
+	cmd := exec.Command("kubectl", "config", "use-context", ctx)
+	out, err := Run(cmd)
+	if err != nil {
+		_ = os.Remove(tmp.Name())
+		return "", fmt.Errorf("failed to switch kubectl context to %q: %v\nOutput: %s", ctx, err, out)
+	}
+
+	return tmp.Name(), nil
+}
+
+// SwitchToK3dContext switches the kubectl context to the k3d test cluster.
+// It returns an error if the context does not exist (cluster not running).
+func SwitchToK3dContext() error {
+	ctx := K3dContextName()
+	cmd := exec.Command("kubectl", "config", "use-context", ctx)
+	out, err := Run(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to switch kubectl context to %q: %v\nOutput: %s", ctx, err, out)
+	}
+	return nil
+}
+
 // LoadImageToK3dClusterWithName loads a local docker image to the k3d cluster
 func LoadImageToK3dClusterWithName(name string) error {
-	cluster := "homeassistant-operator-test-e2e"
-	if v, ok := os.LookupEnv("K3D_CLUSTER"); ok {
-		cluster = v
-	}
+	cluster := K3dClusterName()
 	k3dOptions := []string{"image", "import", name, "-c", cluster}
 	cmd := exec.Command("k3d", k3dOptions...)
 	_, err := Run(cmd)
