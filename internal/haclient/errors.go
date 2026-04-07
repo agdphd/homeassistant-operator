@@ -11,6 +11,7 @@ const (
 	ErrorTypeHTTP            ErrorType = "HTTP"            // HTTP error
 	ErrorTypeInvalidResponse ErrorType = "InvalidResponse" // Parse error
 	ErrorTypeAuth            ErrorType = "Auth"            // Authentication error
+	ErrorTypeLoginNoUser     ErrorType = "LoginNoUser"     // Login flow returned type=form (no user exists yet)
 )
 
 // Error represents a Home Assistant API error
@@ -44,6 +45,17 @@ func IsNotReady(err error) bool {
 func IsOnboardingDone(err error) bool {
 	if haErr, ok := err.(*Error); ok {
 		return haErr.Type == ErrorTypeOnboardingDone
+	}
+	return false
+}
+
+// IsLoginNoUser returns true if login failed because no user exists in HA yet
+// (login flow returned type=form instead of type=create_entry).
+// This indicates onboarding was not actually completed — HA startup may have
+// returned a transient 404 from /api/onboarding before routes were registered.
+func IsLoginNoUser(err error) bool {
+	if haErr, ok := err.(*Error); ok {
+		return haErr.Type == ErrorTypeLoginNoUser
 	}
 	return false
 }

@@ -31,6 +31,16 @@ const (
 	// Reconciliation intervals
 	bootstrapRetryInterval    = 30 * time.Second
 	bootstrapHealthCheckRetry = 10 * time.Second
+	// onboardingConfirmDelay is how long we wait after first seeing a 404 from
+	// /api/onboarding before concluding that onboarding is genuinely complete.
+	// During this window the controller re-polls every bootstrapRetryInterval (30 s)
+	// so it can catch the moment HA finishes registering its onboarding routes.
+	// 10 min covers slow CI starts where the HA HTTP server comes up (health check
+	// passes) before the onboarding component finishes loading its routes.
+	onboardingConfirmDelay = 10 * time.Minute
+
+	// Login recovery
+	maxLoginRecoveryRetries = 3
 
 	// Condition reasons
 	reasonBootstrapInProgress         = "BootstrapInProgress"
@@ -38,6 +48,7 @@ const (
 	reasonBootstrapFailed             = "BootstrapFailed"
 	reasonBootstrapNotReady           = "HomeAssistantNotReady"
 	reasonBootstrapAlreadyDone        = "BootstrapAlreadyDone"
+	reasonBootstrapLoginFailed        = "LoginRecoveryFailed"
 	reasonBootstrapMissingCredentials = "MissingCredentials"
 )
 
@@ -294,8 +305,70 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 	}
 
 	if haclient.IsOnboardingDone(err) {
-		log.Info("Onboarding already completed, " +
-			"attempting token creation")
+		// Check if we've already exhausted login recovery retries.
+		// Before giving up permanently, re-check /api/onboarding: if it now
+		// returns 200 the earlier 404s were a startup false-positive and HA is
+		// now ready for normal bootstrap. Reset the state so CreateUser can run.
+		cond := meta.FindStatusCondition(ha.Status.Conditions, "BootstrapReady")
+		if cond != nil && cond.Reason == reasonBootstrapLoginFailed {
+			haURL := r.buildHomeAssistantURL(ha)
+			client := haclient.NewClient(haURL).WithTimeout(30 * time.Second)
+			if checkErr := client.CheckOnboardingStatus(ctx); checkErr == nil {
+				log.Info("Onboarding endpoint available after LoginRecoveryFailed — " +
+					"earlier 404s were transient, resetting bootstrap")
+				return r.updateBootstrapStatus(
+					ctx, ha, reasonBootstrapNotReady,
+					"Onboarding endpoint recovered, retrying bootstrap",
+					false, false,
+					func(s *hav1alpha1.BootstrapStatus) {
+						s.OnboardingDoneFirstSeen = nil
+						s.LoginRecoveryAttempts = 0
+					},
+				)
+			}
+			log.Info("Login recovery previously exhausted, " +
+				"waiting for manual intervention")
+			return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+		}
+
+		// During HA startup, /api/onboarding may 404 briefly before the
+		// onboarding component registers its views. To avoid a false positive,
+		// we use OnboardingDoneFirstSeen (a status field) as the reference time
+		// instead of condition.LastTransitionTime, which only updates when
+		// Status (True/False) changes — not when just the Reason changes.
+		bs := ha.Status.Bootstrap
+		if bs == nil || bs.OnboardingDoneFirstSeen == nil {
+			// First time seeing OnboardingDone — record the timestamp.
+			log.Info("Onboarding endpoint returned done, "+
+				"setting confirmation timer",
+				"error", err.Error())
+			now := metav1.Now()
+			return r.updateBootstrapStatus(
+				ctx, ha, reasonBootstrapAlreadyDone,
+				"Onboarding appears done, confirming...",
+				false, false,
+				func(s *hav1alpha1.BootstrapStatus) {
+					s.OnboardingDoneFirstSeen = &now
+					s.LoginRecoveryAttempts = 0
+				},
+			)
+		}
+
+		// Check if enough wall-clock time has passed since we first saw 404.
+		// Re-poll every bootstrapRetryInterval so that if onboarding becomes
+		// available mid-window the next PerformBootstrap call will catch it.
+		elapsed := time.Since(bs.OnboardingDoneFirstSeen.Time)
+		if elapsed < onboardingConfirmDelay {
+			log.Info("Onboarding 404 confirmation pending, waiting",
+				"elapsed", elapsed.Round(time.Second),
+				"required", onboardingConfirmDelay)
+			return ctrl.Result{
+				RequeueAfter: bootstrapRetryInterval,
+			}, nil
+		}
+		log.Info("Onboarding confirmed done after delay, "+
+			"attempting token creation",
+			"elapsed", elapsed.Round(time.Second))
 		return r.handleOnboardingAlreadyDone(ctx, ha)
 	}
 
@@ -308,9 +381,9 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 }
 
 // handleOnboardingAlreadyDone handles the case where onboarding was
-// already completed (e.g., manually or by a previous run). It
-// attempts to create an API token Secret if requested, even though
-// onboarding is done.
+// already completed (e.g., by a previous run or because HA completed it
+// before the operator could). It logs in with the configured credentials
+// and creates a long-lived API token if requested.
 func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 	ctx context.Context,
 	ha *hav1alpha1.HomeAssistant,
@@ -323,6 +396,10 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 		return r.updateBootstrapStatus(
 			ctx, ha, reasonBootstrapAlreadyDone,
 			"Onboarding already completed", true, false,
+			func(s *hav1alpha1.BootstrapStatus) {
+				s.OnboardingDoneFirstSeen = nil
+				s.LoginRecoveryAttempts = 0
+			},
 		)
 	}
 
@@ -334,103 +411,175 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 		Namespace: ha.Namespace,
 	}, existingSecret)
 	if err == nil {
-		// Secret already exists
 		log.Info("API token Secret already exists",
 			"Secret.Name", secretName)
 		return r.updateBootstrapStatus(
 			ctx, ha, reasonBootstrapAlreadyDone,
 			"Onboarding completed, token exists",
 			true, true,
+			func(s *hav1alpha1.BootstrapStatus) {
+				s.OnboardingDoneFirstSeen = nil
+				s.LoginRecoveryAttempts = 0
+			},
 		)
 	}
 	if !errors.IsNotFound(err) {
-		// Error other than NotFound
 		log.Error(err, "Failed to check for existing API Secret")
 		return r.updateBootstrapStatus(
 			ctx, ha, reasonBootstrapFailed,
-			fmt.Sprintf(
-				"Failed to check API Secret: %v", err,
-			), false, false,
+			fmt.Sprintf("Failed to check API Secret: %v", err),
+			false, false,
 		)
 	}
 
-	// Secret doesn't exist - onboarding was completed manually before bootstrap ran
-	// Since onboarding is done, we can't use CreateUser (it would fail).
-	// Solution: Delete the HA pod ONCE to force fresh start and allow bootstrap to run properly
-	log.Info("Onboarding already completed but no API token Secret exists. " +
-		"This typically happens when HA was manually configured before bootstrap ran.")
+	haURL := r.buildHomeAssistantURL(ha)
+	client := haclient.NewClient(haURL).WithTimeout(30 * time.Second)
 
-	// Check if we already tried deleting the pod (prevent infinite loop)
-	// Use annotation on HomeAssistant CR to track deletion attempts
-	const (
-		bootstrapRetryAttemptedKey = "ha.homeassistant.io/bootstrap-retry-attempted"
-		trueValue                  = "true"
-	)
+	// Re-check /api/onboarding before attempting login recovery.
+	// Three cases:
+	//   nil          — onboarding is pending (transient 404 resolved) → reset
+	//   IsOnboardingDone — onboarding genuinely done → fall through to login
+	//   other error  — transient probe failure (timeout/network) → requeue
+	checkErr := client.CheckOnboardingStatus(ctx)
+	if checkErr == nil {
+		log.Info("Onboarding endpoint is now available — " +
+			"earlier 404 was transient, resetting bootstrap")
+		return r.updateBootstrapStatus(
+			ctx, ha, reasonBootstrapNotReady,
+			"Onboarding endpoint recovered, retrying bootstrap",
+			false, false,
+			func(s *hav1alpha1.BootstrapStatus) {
+				s.OnboardingDoneFirstSeen = nil
+				s.LoginRecoveryAttempts = 0
+			},
+		)
+	}
+	if !haclient.IsOnboardingDone(checkErr) {
+		log.Info("Onboarding re-check returned transient error, requeueing",
+			"error", checkErr)
+		return r.updateBootstrapStatus(
+			ctx, ha, reasonBootstrapNotReady,
+			fmt.Sprintf("Onboarding re-check failed: %v", checkErr),
+			false, false,
+		)
+	}
 
-	if ha.Annotations != nil && ha.Annotations[bootstrapRetryAttemptedKey] == trueValue {
-		// Already attempted pod deletion - give up to prevent loop
-		log.Info("Bootstrap retry already attempted (annotation present), not retrying deletion to prevent loop")
+	// Secret doesn't exist — login with credentials and create token.
+	username, password, err := r.getBootstrapCredentials(ctx, ha)
+	if err != nil {
+		log.Error(err, "Failed to get credentials for token recovery")
 		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
-			"Onboarding completed manually, API token requested but cannot be created. "+
-				"Options: (1) disable createApiToken, (2) create Secret manually, or (3) delete PVC to start fresh.",
+			fmt.Sprintf("Failed to get credentials: %v", err),
 			false, false)
 	}
 
-	// Get pod for deletion
-	podName := ha.Name + "-0"
-	pod := &corev1.Pod{}
-	podKey := types.NamespacedName{Name: podName, Namespace: ha.Namespace}
-	if err := r.Get(ctx, podKey, pod); err != nil {
-		if !errors.IsNotFound(err) {
-			log.Error(err, "Failed to get pod for deletion")
-			return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
-				fmt.Sprintf("Failed to get pod: %v", err),
-				false, false)
+	log.Info("Onboarding already completed, logging in to create API token")
+	tokenResp, err := client.LoginWithCredentials(ctx, username, password)
+	if err != nil {
+		attempts := 1
+		if ha.Status.Bootstrap != nil {
+			attempts = ha.Status.Bootstrap.LoginRecoveryAttempts + 1
 		}
-		// Pod doesn't exist - wait for StatefulSet to recreate it
-		log.Info("Pod not found, waiting for recreation")
-		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapInProgress,
-			"Waiting for pod recreation",
-			false, false)
+		log.Error(err, "Failed to login with credentials",
+			"attempt", attempts, "maxAttempts", maxLoginRecoveryRetries)
+
+		// After exhausting retries, stop looping and require manual
+		// intervention (credential fix or HA reset).
+		if attempts >= maxLoginRecoveryRetries {
+			log.Error(err, "Login recovery exhausted — manual intervention required")
+			return r.updateBootstrapStatus(ctx, ha, reasonBootstrapLoginFailed,
+				fmt.Sprintf(
+					"Login recovery failed after %d attempts: %v — "+
+						"check credentials or reset HA onboarding",
+					attempts, err,
+				),
+				false, false,
+				func(s *hav1alpha1.BootstrapStatus) {
+					s.LoginRecoveryAttempts = attempts
+				},
+			)
+		}
+
+		// type=form means HA returned "no such user" — onboarding routes were
+		// not registered yet when we first saw the 404 (transient CI startup).
+		// Reset OnboardingDoneFirstSeen so the confirmation window restarts and
+		// PerformBootstrap is retried once onboarding becomes available.
+		// LoginRecoveryAttempts is intentionally kept to limit total resets.
+		if haclient.IsLoginNoUser(err) {
+			log.Info("Login returned type=form — no user exists, "+
+				"resetting onboarding window to await registration",
+				"attempt", attempts, "maxAttempts", maxLoginRecoveryRetries)
+			return r.updateBootstrapStatus(ctx, ha, reasonBootstrapNotReady,
+				fmt.Sprintf("No user in HA yet (attempt %d/%d), "+
+					"resetting onboarding window",
+					attempts, maxLoginRecoveryRetries),
+				false, false,
+				func(s *hav1alpha1.BootstrapStatus) {
+					s.OnboardingDoneFirstSeen = nil
+					s.LoginRecoveryAttempts = attempts
+				},
+			)
+		}
+
+		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapAlreadyDone,
+			fmt.Sprintf("Login failed (attempt %d/%d): %v",
+				attempts, maxLoginRecoveryRetries, err),
+			false, false,
+			func(s *hav1alpha1.BootstrapStatus) {
+				s.LoginRecoveryAttempts = attempts
+			},
+		)
 	}
 
-	// Delete the pod to force fresh start
-	log.Info("Deleting pod to force fresh start and retry bootstrap", "pod", podName)
-	if err := r.Delete(ctx, pod); err != nil {
-		log.Error(err, "Failed to delete pod for fresh bootstrap")
+	// Create long-lived token
+	longLivedResp, err := client.CreateLongLivedToken(
+		ctx, tokenResp.AccessToken,
+		&haclient.LongLivedTokenRequest{
+			ClientName: "kubernetes-operator",
+			Lifespan:   3650,
+		},
+	)
+	if err != nil {
+		log.Error(err, "Failed to create long-lived token after login")
 		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
-			fmt.Sprintf("Failed to delete pod: %v", err),
+			fmt.Sprintf("Token creation failed: %v", err),
 			false, false)
 	}
-	log.Info("Deleted pod successfully", "pod", podName)
 
-	// Mark that we've attempted deletion by setting annotation
-	// (Only set after successful deletion to allow retry on transient delete failures)
-	if ha.Annotations == nil {
-		ha.Annotations = make(map[string]string)
-	}
-	ha.Annotations[bootstrapRetryAttemptedKey] = trueValue
-	if err := r.Update(ctx, ha); err != nil {
-		log.Error(err, "Failed to set bootstrap retry annotation after pod deletion")
+	// Store token in Secret
+	if err := r.createAPITokenSecret(ctx, ha, longLivedResp.Token); err != nil {
+		log.Error(err, "Failed to create API token Secret")
 		return r.updateBootstrapStatus(ctx, ha, reasonBootstrapFailed,
-			fmt.Sprintf("Pod deleted but failed to mark retry attempt: %v", err),
+			fmt.Sprintf("Failed to create token Secret: %v", err),
 			false, false)
 	}
-	log.Info("Set bootstrap retry annotation after successful pod deletion")
 
-	return r.updateBootstrapStatus(ctx, ha, reasonBootstrapInProgress,
-		"Deleted pod to force fresh start - bootstrap will retry when pod recreates",
-		false, false)
+	log.Info("Successfully recovered: logged in and created API token")
+	return r.updateBootstrapStatus(
+		ctx, ha, reasonBootstrapCompleted,
+		"Bootstrap completed (token created via login recovery)",
+		true, true,
+		func(s *hav1alpha1.BootstrapStatus) {
+			s.OnboardingDoneFirstSeen = nil
+			s.LoginRecoveryAttempts = 0
+		},
+	)
 }
+
+// bootstrapStatusModifier is an optional function applied to BootstrapStatus
+// before saving, allowing callers to update fields beyond the standard ones.
+type bootstrapStatusModifier func(*hav1alpha1.BootstrapStatus)
 
 // updateBootstrapStatus updates the bootstrap status and returns appropriate
 // Result. tokenCreated indicates whether an API token was actually created
-// (vs onboarding already done).
+// (vs onboarding already done). Optional modifiers can update additional
+// status fields (e.g. OnboardingDoneFirstSeen, LoginRecoveryAttempts).
 func (r *HomeAssistantReconciler) updateBootstrapStatus(
 	ctx context.Context,
 	ha *hav1alpha1.HomeAssistant,
 	reason, message string,
 	completed, tokenCreated bool,
+	mods ...bootstrapStatusModifier,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -461,6 +610,11 @@ func (r *HomeAssistantReconciler) updateBootstrapStatus(
 			freshHA.Status.Bootstrap.ApiTokenReady = true
 			freshHA.Status.Bootstrap.ApiTokenSecretName =
 				r.getApiTokenSecretName(freshHA)
+		}
+
+		// Apply optional field modifiers (e.g. OnboardingDoneFirstSeen, LoginRecoveryAttempts)
+		for _, mod := range mods {
+			mod(freshHA.Status.Bootstrap)
 		}
 
 		// Update main status condition
@@ -507,6 +661,9 @@ func (r *HomeAssistantReconciler) updateBootstrapStatus(
 	case reasonBootstrapNotReady:
 		// HA not ready - retry quickly
 		return ctrl.Result{RequeueAfter: bootstrapHealthCheckRetry}, nil
+	case reasonBootstrapLoginFailed:
+		// Login recovery exhausted - long wait, needs manual intervention
+		return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
 	case reasonBootstrapFailed, reasonBootstrapMissingCredentials:
 		// Error - retry with backoff
 		return ctrl.Result{RequeueAfter: bootstrapRetryInterval}, nil

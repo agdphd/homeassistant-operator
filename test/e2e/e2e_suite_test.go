@@ -42,6 +42,10 @@ var (
 	// projectImage is the name of the image which will be build and loaded
 	// with the code source changes to be tested.
 	projectImage = "example.com/homeassistant-operator:v0.0.1"
+
+	// tempKubeconfigPath holds the path to the isolated kubeconfig used by this test run.
+	// It is deleted in SynchronizedAfterSuite.
+	tempKubeconfigPath string
 )
 
 // TestE2E runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
@@ -56,6 +60,18 @@ func TestE2E(t *testing.T) {
 // SynchronizedBeforeSuite ensures setup runs only ONCE across all parallel processes
 var _ = SynchronizedBeforeSuite(func() []byte {
 	// This runs ONCE in process 1 only - do ALL setup here to avoid race conditions
+
+	// SAFETY: Copy kubeconfig to a temp file and switch context inside the copy.
+	// This isolates the test process from the user's ~/.kube/config so that:
+	//   - the user can freely switch contexts in their terminal without affecting tests
+	//   - tests never accidentally destroy a production cluster (e.g. kaczki-context)
+	By(fmt.Sprintf("isolating kubeconfig for k3d test cluster %q", utils.K3dContextName()))
+	var kubeconfigErr error
+	tempKubeconfigPath, kubeconfigErr = utils.IsolateKubeconfigForK3d()
+	ExpectWithOffset(1, kubeconfigErr).NotTo(HaveOccurred(),
+		"Cannot isolate kubeconfig for k3d context %q — is the k3d cluster running? "+
+			"Run: make k3d-create", utils.K3dContextName())
+
 	By("building the manager(Operator) image")
 	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
 	_, err := utils.Run(cmd)
@@ -151,18 +167,28 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 
 	return nil // No data to share between processes
 }, func(data []byte) {
-	// This runs in ALL processes after process 1 completes
-	// No setup needed here - everything is done in the first function
-	// All processes can now run tests against the shared cluster setup
+	// This runs in ALL processes (including process 1) after process 1 finishes setup.
+	// CRITICAL: each parallel process must isolate its own kubeconfig so that kubectl
+	// commands within specs target k3d, not whatever context the user has in their shell.
+	// Without this, specs running in process 2/3/4 would hit the wrong cluster.
+	By(fmt.Sprintf("isolating kubeconfig for k3d test cluster %q (per-process)", utils.K3dContextName()))
+	var err error
+	tempKubeconfigPath, err = utils.IsolateKubeconfigForK3d()
+	ExpectWithOffset(1, err).NotTo(HaveOccurred(),
+		"Cannot isolate kubeconfig for k3d context %q in worker process", utils.K3dContextName())
 })
 
 // SynchronizedAfterSuite ensures cleanup runs only ONCE after all parallel processes complete
 var _ = SynchronizedAfterSuite(func() {
-	// This runs in EACH process after its tests complete
-	// Keep empty or add per-process cleanup if needed
+	// This runs in EACH process after its tests complete.
+	// Clean up the per-process isolated kubeconfig temp file.
+	if tempKubeconfigPath != "" {
+		_ = os.Remove(tempKubeconfigPath)
+	}
 }, func() {
 	// This runs ONCE in process 1 AFTER all processes complete
 	// Do ALL cleanup here to avoid race conditions
+
 	By("undeploying the controller-manager")
 	cmd := exec.Command("make", "undeploy")
 	_, _ = utils.Run(cmd)
@@ -180,4 +206,5 @@ var _ = SynchronizedAfterSuite(func() {
 		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling CertManager...\n")
 		utils.UninstallCertManager()
 	}
+
 })

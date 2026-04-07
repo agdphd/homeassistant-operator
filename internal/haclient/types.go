@@ -2,23 +2,8 @@ package haclient
 
 import "encoding/json"
 
-// OnboardingStatus represents the response from /api/onboarding
-// When onboarding is needed, HA returns an array of steps
-// When onboarding is done, HA returns an object with step statuses
-type OnboardingStatus struct {
-	IsArray bool
-	Steps   []OnboardingStep
-	Status  map[string]StepStatus
-}
-
-// OnboardingStep represents a step in the onboarding process
+// OnboardingStep represents a step in the onboarding array returned by GET /api/onboarding.
 type OnboardingStep struct {
-	Step string `json:"step"`
-	Done bool   `json:"done"`
-}
-
-// StepStatus represents the status of an onboarding step
-type StepStatus struct {
 	Step string `json:"step"`
 	Done bool   `json:"done"`
 }

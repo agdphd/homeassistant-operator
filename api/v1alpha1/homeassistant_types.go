@@ -380,6 +380,17 @@ type BootstrapStatus struct {
 	// Message provides additional information about the bootstrap status
 	// +optional
 	Message string `json:"message,omitempty"`
+
+	// OnboardingDoneFirstSeen is the timestamp when /api/onboarding first returned 404.
+	// Used to implement confirmation delay without relying on condition LastTransitionTime
+	// (which does not update when only the Reason changes).
+	// +optional
+	OnboardingDoneFirstSeen *metav1.Time `json:"onboardingDoneFirstSeen,omitempty"`
+
+	// LoginRecoveryAttempts tracks how many times login recovery was attempted.
+	// Reset to zero when onboarding is confirmed fresh or bootstrap succeeds.
+	// +optional
+	LoginRecoveryAttempts int `json:"loginRecoveryAttempts,omitempty"`
 }
 
 // HomeAssistantPhase represents the current phase of the HomeAssistant instance.

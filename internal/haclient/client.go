@@ -74,8 +74,14 @@ func (c *Client) CheckHealth(ctx context.Context) error {
 	}
 }
 
-// CheckOnboardingStatus checks if onboarding is needed
-// Returns nil if onboarding needed, ErrorTypeOnboardingDone if already done
+// CheckOnboardingStatus checks if onboarding is needed.
+// Returns nil if onboarding needed, ErrorTypeOnboardingDone if already done.
+// HA returns 200 + JSON array of steps when onboarding is pending,
+// and 404 when onboarding is fully complete (endpoint is not registered).
+//
+// Caveat: during HA startup, /api/onboarding may briefly return 404 before
+// the onboarding component registers its views. Callers should not trust a
+// single OnboardingDone result — see reconcileBootstrap for confirmation logic.
 func (c *Client) CheckOnboardingStatus(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/onboarding", nil)
 	if err != nil {
@@ -89,36 +95,45 @@ func (c *Client) CheckOnboardingStatus(ctx context.Context) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// 404 = onboarding fully complete (HA does not register the endpoint).
+	// Include a snippet of the body so callers can distinguish a proper
+	// backend 404 from an unexpected proxy/HTML 404.
+	if resp.StatusCode == http.StatusNotFound {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		snippet := string(bodyBytes)
+		if len(snippet) > 120 {
+			snippet = snippet[:120] + "…"
+		}
+		return &Error{
+			Type:    ErrorTypeOnboardingDone,
+			Message: fmt.Sprintf("onboarding already completed (404 body: %s)", snippet),
+		}
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return &Error{
 			Type:       ErrorTypeHTTP,
-			Message:    "unexpected status code",
+			Message:    fmt.Sprintf("unexpected status code %d from /api/onboarding", resp.StatusCode),
 			StatusCode: resp.StatusCode,
 		}
 	}
 
+	// Parse the array of onboarding steps
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return &Error{Type: ErrorTypeHTTP, Message: "failed to read response", Err: err}
 	}
 
-	// Check if response is array (onboarding needed) or object (done)
-	trimmed := strings.TrimSpace(string(body))
-	if strings.HasPrefix(trimmed, "[") {
-		// Onboarding needed
-		return nil
+	var steps []OnboardingStep
+	if err := json.Unmarshal(body, &steps); err != nil {
+		return &Error{Type: ErrorTypeInvalidResponse, Message: "failed to parse onboarding steps", Err: err}
 	}
 
-	// Check if user step is done
-	var status map[string]interface{}
-	if err := json.Unmarshal(body, &status); err != nil {
-		return &Error{Type: ErrorTypeInvalidResponse, Message: "failed to parse response", Err: err}
-	}
-
-	// Check if user step exists and is done
-	if userStep, ok := status["user"].(map[string]interface{}); ok {
-		if done, ok := userStep["done"].(bool); ok && done {
-			return &Error{Type: ErrorTypeOnboardingDone, Message: "onboarding already completed"}
+	// If the "user" step is done, onboarding was partially completed
+	// (e.g. user created manually) — we can't re-run CreateUser
+	for _, step := range steps {
+		if step.Step == "user" && step.Done {
+			return &Error{Type: ErrorTypeOnboardingDone, Message: "onboarding user step already completed"}
 		}
 	}
 
@@ -224,6 +239,110 @@ func (c *Client) ExchangeAuthCode(ctx context.Context, authCode, clientID string
 	}
 
 	return &tokenResp, nil
+}
+
+// LoginWithCredentials authenticates with username/password via HA's login flow.
+// This is used when onboarding is already done and we need an access token.
+// Flow: POST /auth/login_flow → POST /auth/login_flow/{flow_id} → POST /auth/token
+func (c *Client) LoginWithCredentials(
+	ctx context.Context, username, password string,
+) (*TokenResponse, error) {
+	clientID := c.baseURL + "/"
+
+	// Step 1: Create login flow
+	// HA expects handler as a list: ["homeassistant", null]
+	flowReqBody, _ := json.Marshal(map[string]interface{}{
+		"client_id":    clientID,
+		"handler":      []interface{}{"homeassistant", nil},
+		"redirect_uri": clientID,
+	})
+	flowReq, err := http.NewRequestWithContext(
+		ctx, "POST", c.baseURL+"/auth/login_flow",
+		bytes.NewReader(flowReqBody),
+	)
+	if err != nil {
+		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to create login flow request", Err: err}
+	}
+	flowReq.Header.Set("Content-Type", "application/json")
+	flowReq.Header.Set("User-Agent", userAgent)
+
+	flowResp, err := c.httpClient.Do(flowReq)
+	if err != nil {
+		return nil, &Error{Type: ErrorTypeNotReady, Message: "failed to create login flow", Err: err}
+	}
+	defer func() { _ = flowResp.Body.Close() }()
+
+	if flowResp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(flowResp.Body)
+		return nil, &Error{
+			Type:       ErrorTypeHTTP,
+			Message:    fmt.Sprintf("login flow creation failed (HTTP %d): %s", flowResp.StatusCode, string(bodyBytes)),
+			StatusCode: flowResp.StatusCode,
+		}
+	}
+
+	var flowData struct {
+		FlowID string `json:"flow_id"`
+		Type   string `json:"type"`
+	}
+	if err := json.NewDecoder(flowResp.Body).Decode(&flowData); err != nil {
+		return nil, &Error{Type: ErrorTypeInvalidResponse, Message: "failed to parse login flow response", Err: err}
+	}
+
+	// Step 2: Submit credentials
+	credBody, _ := json.Marshal(map[string]string{
+		"username":  username,
+		"password":  password,
+		"client_id": clientID,
+	})
+	credReq, err := http.NewRequestWithContext(
+		ctx, "POST", c.baseURL+"/auth/login_flow/"+flowData.FlowID,
+		bytes.NewReader(credBody),
+	)
+	if err != nil {
+		return nil, &Error{Type: ErrorTypeHTTP, Message: "failed to create credential request", Err: err}
+	}
+	credReq.Header.Set("Content-Type", "application/json")
+	credReq.Header.Set("User-Agent", userAgent)
+
+	credResp, err := c.httpClient.Do(credReq)
+	if err != nil {
+		return nil, &Error{Type: ErrorTypeNotReady, Message: "failed to submit credentials", Err: err}
+	}
+	defer func() { _ = credResp.Body.Close() }()
+
+	if credResp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(credResp.Body)
+		return nil, &Error{
+			Type:       ErrorTypeAuth,
+			Message:    fmt.Sprintf("login failed (HTTP %d): %s", credResp.StatusCode, string(bodyBytes)),
+			StatusCode: credResp.StatusCode,
+		}
+	}
+
+	var credData struct {
+		Type   string `json:"type"`
+		Result string `json:"result"`
+	}
+	if err := json.NewDecoder(credResp.Body).Decode(&credData); err != nil {
+		return nil, &Error{Type: ErrorTypeInvalidResponse, Message: "failed to parse credential response", Err: err}
+	}
+	if credData.Type != "create_entry" || credData.Result == "" {
+		// type=form means HA rejected the credentials because no user exists yet —
+		// onboarding was not completed. Use a distinct error type so the controller
+		// can reset the onboarding confirmation window instead of giving up.
+		errType := ErrorTypeAuth
+		if credData.Type == "form" {
+			errType = ErrorTypeLoginNoUser
+		}
+		return nil, &Error{
+			Type:    errType,
+			Message: fmt.Sprintf("login flow did not return auth code (type=%s)", credData.Type),
+		}
+	}
+
+	// Step 3: Exchange auth code for access token
+	return c.ExchangeAuthCode(ctx, credData.Result, clientID)
 }
 
 // wsAuthConnect opens a WebSocket connection to HA and performs the auth handshake.
@@ -488,6 +607,39 @@ func (c *Client) SetAnalytics(ctx context.Context, accessToken string, enabled b
 	return nil
 }
 
+// CompleteIntegrationStep marks the integration onboarding step as done.
+// This is the 4th and final onboarding step required by Home Assistant.
+// Without it, non-admin users are blocked from accessing the websocket API.
+func (c *Client) CompleteIntegrationStep(ctx context.Context, accessToken string) error {
+	httpReq, err := http.NewRequestWithContext(
+		ctx, "POST", c.baseURL+"/api/onboarding/integration",
+		bytes.NewReader([]byte("{}")),
+	)
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", userAgent)
+	httpReq.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to complete integration step", Err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return &Error{
+			Type:       ErrorTypeHTTP,
+			Message:    fmt.Sprintf("failed to complete integration step (HTTP %d): %s", resp.StatusCode, string(bodyBytes)),
+			StatusCode: resp.StatusCode,
+		}
+	}
+
+	return nil
+}
+
 // BootstrapOptions contains optional configuration for bootstrap
 type BootstrapOptions struct {
 	CreateLongLivedToken bool
@@ -499,10 +651,11 @@ type BootstrapOptions struct {
 // 1. Check health
 // 2. Check onboarding status
 // 3. Create user
-// 4. Set core config (location) if provided
-// 5. Set analytics preferences
-// 6. Exchange auth code for token
-// 7. Create long-lived token (if requested)
+// 4. Exchange auth code for token
+// 5. Set core config (location) if provided
+// 6. Set analytics preferences
+// 7. Complete integration step (marks onboarding as fully done)
+// 8. Create long-lived token (if requested)
 // Returns the long-lived token or empty string if not created
 func (c *Client) PerformBootstrap(
 	ctx context.Context,
@@ -556,7 +709,14 @@ func (c *Client) PerformBootstrap(
 	// Ignore errors - analytics config is optional and failure doesn't block bootstrap
 	_ = c.SetAnalytics(ctx, tokenResp.AccessToken, opts.EnableAnalytics)
 
-	// 7. Create long-lived token if requested
+	// 7. Complete integration step - marks onboarding as fully done
+	// Unlike core_config/analytics, this is NOT optional: without it
+	// non-admin users are blocked from accessing the websocket API.
+	if err := c.CompleteIntegrationStep(ctx, tokenResp.AccessToken); err != nil {
+		return "", err
+	}
+
+	// 8. Create long-lived token if requested
 	if !opts.CreateLongLivedToken {
 		return "", nil
 	}

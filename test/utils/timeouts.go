@@ -29,11 +29,11 @@ const (
 
 	// BootstrapTimeout is the timeout for complete bootstrap process including:
 	// - HA startup (see HAPodReadyTimeout)
-	// - Onboarding workflow
+	// - Onboarding workflow (including up to 2 × 10 min confirmation windows for
+	//   slow CI starts where /api/onboarding 404s transiently)
 	// - API token generation
-	// Increased for CI environments with limited resources
-	// Increased to 25 minutes to account for HAPodReadyTimeout increase
-	BootstrapTimeout = 25 * time.Minute
+	// 45 min covers: ~13 min CI startup + 10 min window + reset + 10 min window + buffer
+	BootstrapTimeout = 45 * time.Minute
 
 	// HotReloadTimeout is the timeout for hot-reload operations via REST API.
 	// Should be fast as it's just an HTTP call to reload config.

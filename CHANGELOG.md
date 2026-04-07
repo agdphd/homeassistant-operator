@@ -25,9 +25,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bootstrap fails when onboarding already completed** — `CheckOnboardingStatus` did not handle HTTP 404 (which HA returns when onboarding is fully done, as the endpoint is unregistered). Also, when onboarding was already done, the operator tried to delete the pod (which doesn't reset PVC data) instead of logging in with credentials. Fixed: 404 is now correctly detected as "onboarding done", partial onboarding (user step done) is detected from the step array, and `handleOnboardingAlreadyDone` now logs in via HA's auth flow and creates the API token instead of deleting the pod.
+
+- **Bootstrap pod delete forbidden** — RBAC ClusterRole was missing `delete` verb on `pods` resource, causing bootstrap to fail with "pods is forbidden" when the operator tried to restart the HA pod after onboarding.
+
+- **`!secret` YAML tags stripped during location injection** — `injectLocation` used `map[string]interface{}` for YAML round-trip, which discards custom tags like `!secret` and `!include`. Switched to `yaml.Node` tree which preserves all YAML tags through the unmarshal/marshal cycle. Only affected configs with `spec.bootstrap.location` set.
+
+- **Bootstrap missing `integration` onboarding step** — `PerformBootstrap()` only completed 3 of 4 required HA onboarding steps (`user`, `core_config`, `analytics`), leaving out `integration`. This caused non-admin users to be blocked from accessing HA's websocket API and redirected to `/onboarding.html`.
+
 - **Config Flow `description` as object** — `FlowField.Description` was typed as `*string`, but some integrations (e.g. OpenWeatherMap) return it as an object (`{"suggested_value": "..."}`), causing JSON unmarshal errors. Changed to `json.RawMessage` to accept both formats.
 
 - **Enable automation 404 on HA 2025.x+** — the operator called `POST /api/config/automation/config/{id}/enable` after every PUT, but this endpoint no longer exists in HA 2025.x/2026.x. Automations created via API are enabled by default. Removed the `EnableAutomation` call; only `DisableAutomation` is used when `spec.enabled: false`.
+
+### Changed
+
+- Bump `k8s.io/api`, `k8s.io/apimachinery`, `k8s.io/client-go` from v0.35.2 to v0.35.3
 
 ## [v0.7.1] - 2026-03-19
 

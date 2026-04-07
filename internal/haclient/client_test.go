@@ -28,6 +28,7 @@ const (
 	testAuthToken       = "/auth/token"
 	testCoreConfig      = "/api/onboarding/core_config"
 	testAnalytics       = "/api/onboarding/analytics"
+	testIntegration     = "/api/onboarding/integration"
 	testWebsocket       = "/api/websocket"
 )
 
@@ -94,12 +95,12 @@ var _ = Describe("HAClient", func() {
 	})
 
 	Describe("CheckOnboardingStatus", func() {
-		It("Should return nil when onboarding is needed (array response)", func() {
+		It("Should return nil when onboarding is needed (all steps pending)", func() {
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				Expect(r.URL.Path).To(Equal(testOnboardingPath))
 				Expect(r.Method).To(Equal("GET"))
 				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`["user", "core_config", "analytics"]`))
+				_, _ = w.Write([]byte(`[{"step":"user","done":false},{"step":"core_config","done":false}]`))
 			}))
 
 			client = NewClient(server.URL)
@@ -107,10 +108,9 @@ var _ = Describe("HAClient", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 
-		It("Should return OnboardingDone error when user step is done", func() {
+		It("Should return OnboardingDone when 404 (endpoint not registered)", func() {
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"user": {"step": "user", "done": true}}`))
+				w.WriteHeader(http.StatusNotFound)
 			}))
 
 			client = NewClient(server.URL)
@@ -119,18 +119,21 @@ var _ = Describe("HAClient", func() {
 			Expect(IsOnboardingDone(err)).To(BeTrue())
 		})
 
-		It("Should return nil when user step is not done", func() {
+		It("Should return OnboardingDone when user step is done in array", func() {
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"user": {"step": "user", "done": false}}`))
+				_, _ = w.Write([]byte(
+					`[{"step":"user","done":true},{"step":"core_config","done":false}]`,
+				))
 			}))
 
 			client = NewClient(server.URL)
 			err := client.CheckOnboardingStatus(ctx)
-			Expect(err).NotTo(HaveOccurred())
+			Expect(err).To(HaveOccurred())
+			Expect(IsOnboardingDone(err)).To(BeTrue())
 		})
 
-		It("Should return HTTP error for non-200 status", func() {
+		It("Should return HTTP error for non-200/non-404 status", func() {
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
 			}))
@@ -672,14 +675,15 @@ var _ = Describe("HAClient", func() {
 
 	Describe("PerformBootstrap", func() {
 		var (
-			wsServer        *httptest.Server
-			upgrader        = websocket.Upgrader{}
-			msgID           atomic.Int64
-			healthCalled    bool
-			onboardCalled   bool
-			userCalled      bool
-			configCalled    bool
-			analyticsCalled bool
+			wsServer          *httptest.Server
+			upgrader          = websocket.Upgrader{}
+			msgID             atomic.Int64
+			healthCalled      bool
+			onboardCalled     bool
+			userCalled        bool
+			configCalled      bool
+			analyticsCalled   bool
+			integrationCalled bool
 		)
 
 		BeforeEach(func() {
@@ -688,6 +692,7 @@ var _ = Describe("HAClient", func() {
 			userCalled = false
 			configCalled = false
 			analyticsCalled = false
+			integrationCalled = false
 			msgID.Store(0)
 		})
 
@@ -701,7 +706,11 @@ var _ = Describe("HAClient", func() {
 				case testOnboardingPath:
 					onboardCalled = true
 					w.WriteHeader(http.StatusOK)
-					_, _ = w.Write([]byte(`["user", "core_config", "analytics"]`))
+					steps := `[{"step":"user","done":false},` +
+						`{"step":"core_config","done":false},` +
+						`{"step":"analytics","done":false},` +
+						`{"step":"integration","done":false}]`
+					_, _ = w.Write([]byte(steps))
 				case testOnboardingUsers:
 					userCalled = true
 					w.WriteHeader(http.StatusOK)
@@ -714,6 +723,9 @@ var _ = Describe("HAClient", func() {
 					w.WriteHeader(http.StatusOK)
 				case testAnalytics:
 					analyticsCalled = true
+					w.WriteHeader(http.StatusOK)
+				case testIntegration:
+					integrationCalled = true
 					w.WriteHeader(http.StatusOK)
 				case testWebsocket:
 					// WebSocket upgrade
@@ -759,6 +771,7 @@ var _ = Describe("HAClient", func() {
 			Expect(userCalled).To(BeTrue())
 			Expect(configCalled).To(BeTrue())
 			Expect(analyticsCalled).To(BeTrue())
+			Expect(integrationCalled).To(BeTrue())
 		})
 
 		It("Should skip long-lived token creation when not requested", func() {
@@ -768,7 +781,7 @@ var _ = Describe("HAClient", func() {
 					w.WriteHeader(http.StatusOK)
 				case testOnboardingPath:
 					w.WriteHeader(http.StatusOK)
-					_, _ = w.Write([]byte(`["user"]`))
+					_, _ = w.Write([]byte(`[{"step":"user","done":false}]`))
 				case testOnboardingUsers:
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte(`{"auth_code": "test-auth-code"}`))
@@ -776,6 +789,8 @@ var _ = Describe("HAClient", func() {
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte(`{"access_token": "test-access-token", "token_type": "Bearer", "expires_in": 1800}`))
 				case testAnalytics:
+					w.WriteHeader(http.StatusOK)
+				case testIntegration:
 					w.WriteHeader(http.StatusOK)
 				}
 			}))
@@ -795,8 +810,8 @@ var _ = Describe("HAClient", func() {
 				case testAPIPath:
 					w.WriteHeader(http.StatusOK)
 				case testOnboardingPath:
-					w.WriteHeader(http.StatusOK)
-					_, _ = w.Write([]byte(`{"user": {"step": "user", "done": true}}`))
+					// HA returns 404 when onboarding is fully complete
+					w.WriteHeader(http.StatusNotFound)
 				}
 			}))
 
@@ -828,7 +843,7 @@ var _ = Describe("HAClient", func() {
 					w.WriteHeader(http.StatusOK)
 				case testOnboardingPath:
 					w.WriteHeader(http.StatusOK)
-					_, _ = w.Write([]byte(`["user"]`))
+					_, _ = w.Write([]byte(`[{"step":"user","done":false}]`))
 				case testOnboardingUsers:
 					w.WriteHeader(http.StatusBadRequest)
 					_, _ = w.Write([]byte(`{"error": "invalid username"}`))
