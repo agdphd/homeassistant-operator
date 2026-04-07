@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.8.0] - 2026-04-07
+
 ### Added
 
 - **HomeAssistantFloor CRD** (`hafloor`, `hafl`) — declarative management of Home Assistant floors via WebSocket registry API (`config/floor_registry/*`). Supports `name`, `level`, and `icon`. Adopts existing floors by name, finalizer-based cleanup on deletion.
@@ -36,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config Flow `description` as object** — `FlowField.Description` was typed as `*string`, but some integrations (e.g. OpenWeatherMap) return it as an object (`{"suggested_value": "..."}`), causing JSON unmarshal errors. Changed to `json.RawMessage` to accept both formats.
 
 - **Enable automation 404 on HA 2025.x+** — the operator called `POST /api/config/automation/config/{id}/enable` after every PUT, but this endpoint no longer exists in HA 2025.x/2026.x. Automations created via API are enabled by default. Removed the `EnableAutomation` call; only `DisableAutomation` is used when `spec.enabled: false`.
+
+- **Bootstrap startup race: false-positive onboarding 404** — on slow clusters (CI, resource-constrained environments), HA's HTTP server becomes healthy before the onboarding component registers its routes, causing `/api/onboarding` to return 404 transiently. The controller now uses a time-based 10-minute confirmation window (`OnboardingDoneFirstSeen`) and re-polls every 30 seconds instead of trusting a single 404. If onboarding routes register during the window, normal bootstrap proceeds without disruption.
+
+- **Bootstrap stuck in `LoginRecoveryFailed` when onboarding was never completed** — when the 10-minute confirmation window elapsed but `/api/onboarding` was still transiently unavailable, login recovery ran and failed with `type=form` (HA's auth flow returns this when no user exists). The controller now detects `type=form` as a signal that onboarding was never completed, resets `OnboardingDoneFirstSeen`, and restarts the confirmation window. `LoginRecoveryAttempts` is preserved across resets to limit total retries to `maxLoginRecoveryRetries` (3), preventing infinite loops on genuine credential errors.
 
 ### Changed
 
@@ -222,7 +228,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Primary: k3s on Raspberry Pi 4/5 (ARM64)
 - Also supported: Any Kubernetes cluster (AMD64/ARM64)
 
-[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v0.8.0...HEAD
+[v0.8.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.7.1...v0.8.0
 [v0.7.1]: https://github.com/przemekhys/homeassistant-operator/compare/v0.7.0...v0.7.1
 [v0.7.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.6.0
