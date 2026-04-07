@@ -483,7 +483,7 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 		log.Error(err, "Failed to login with credentials",
 			"attempt", attempts, "maxAttempts", maxLoginRecoveryRetries)
 
-		// Fix 3: After exhausting retries, stop looping and require manual
+		// After exhausting retries, stop looping and require manual
 		// intervention (credential fix or HA reset).
 		if attempts >= maxLoginRecoveryRetries {
 			log.Error(err, "Login recovery exhausted — manual intervention required")
@@ -495,6 +495,27 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 				),
 				false, false,
 				func(s *hav1alpha1.BootstrapStatus) {
+					s.LoginRecoveryAttempts = attempts
+				},
+			)
+		}
+
+		// type=form means HA returned "no such user" — onboarding routes were
+		// not registered yet when we first saw the 404 (transient CI startup).
+		// Reset OnboardingDoneFirstSeen so the confirmation window restarts and
+		// PerformBootstrap is retried once onboarding becomes available.
+		// LoginRecoveryAttempts is intentionally kept to limit total resets.
+		if haclient.IsLoginNoUser(err) {
+			log.Info("Login returned type=form — no user exists, "+
+				"resetting onboarding window to await registration",
+				"attempt", attempts, "maxAttempts", maxLoginRecoveryRetries)
+			return r.updateBootstrapStatus(ctx, ha, reasonBootstrapNotReady,
+				fmt.Sprintf("No user in HA yet (attempt %d/%d), "+
+					"resetting onboarding window",
+					attempts, maxLoginRecoveryRetries),
+				false, false,
+				func(s *hav1alpha1.BootstrapStatus) {
+					s.OnboardingDoneFirstSeen = nil
 					s.LoginRecoveryAttempts = attempts
 				},
 			)

@@ -328,8 +328,15 @@ func (c *Client) LoginWithCredentials(
 		return nil, &Error{Type: ErrorTypeInvalidResponse, Message: "failed to parse credential response", Err: err}
 	}
 	if credData.Type != "create_entry" || credData.Result == "" {
+		// type=form means HA rejected the credentials because no user exists yet —
+		// onboarding was not completed. Use a distinct error type so the controller
+		// can reset the onboarding confirmation window instead of giving up.
+		errType := ErrorTypeAuth
+		if credData.Type == "form" {
+			errType = ErrorTypeLoginNoUser
+		}
 		return nil, &Error{
-			Type:    ErrorTypeAuth,
+			Type:    errType,
 			Message: fmt.Sprintf("login flow did not return auth code (type=%s)", credData.Type),
 		}
 	}
