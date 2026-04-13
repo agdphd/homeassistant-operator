@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`spec.recorder.databaseSecretRef` for HomeAssistantConfiguration** — resolves the `!secret` tag stripping problem: when `configuration.yaml` is round-tripped through YAML, custom tags (`!secret`, `!include`) are lost. `DatabaseSecretRef` reads the database URL from a K8s Secret and writes it as plain text into the generated ConfigMap, bypassing the `!secret` mechanism entirely. Takes precedence over `spec.recorder.database` when both are set. `spec.recorder.enabled: false` skips injection. `purgeKeepDays` is also injected when set. The injection uses `yaml.Node` so `!include`/`!secret` tags in other sections are preserved.
+
 - **API readiness gate in bootstrap** — `CheckAPIReady` (GET `/api/config` without auth) is now called between health check and onboarding status check. Returns 401 when HA routes are fully loaded, 404 during startup (same as `/api/onboarding`). This eliminates the ambiguity that required the 10-minute confirmation window.
 
 ### Changed
