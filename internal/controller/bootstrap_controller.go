@@ -31,13 +31,12 @@ const (
 	// Reconciliation intervals
 	bootstrapRetryInterval    = 30 * time.Second
 	bootstrapHealthCheckRetry = 10 * time.Second
+	bootstrapAPIReadyRetry    = 5 * time.Second
 	// onboardingConfirmDelay is how long we wait after first seeing a 404 from
 	// /api/onboarding before concluding that onboarding is genuinely complete.
-	// During this window the controller re-polls every bootstrapRetryInterval (30 s)
-	// so it can catch the moment HA finishes registering its onboarding routes.
-	// 10 min covers slow CI starts where the HA HTTP server comes up (health check
-	// passes) before the onboarding component finishes loading its routes.
-	onboardingConfirmDelay = 10 * time.Minute
+	// With the API readiness gate (CheckAPIReady), a 404 after API is confirmed
+	// ready is highly trustworthy. This is just a safety net.
+	onboardingConfirmDelay = 30 * time.Second
 
 	// Login recovery
 	maxLoginRecoveryRetries = 3
@@ -122,7 +121,14 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(
 			false, false,
 		)
 	}
-	log.Info("Health check passed, proceeding with bootstrap")
+	// Full API readiness check: ensure all API routes are registered before
+	// checking onboarding. This eliminates the ambiguous 404 from /api/onboarding
+	// during the startup window where HTTP is up but routes aren't loaded.
+	if err := client.CheckAPIReady(ctx); err != nil {
+		log.Info("Home Assistant API not fully loaded yet", "error", err.Error())
+		return ctrl.Result{RequeueAfter: bootstrapAPIReadyRetry}, nil
+	}
+	log.Info("API fully ready, proceeding with bootstrap")
 
 	// Get bootstrap configuration
 	ownerName := getOrDefault(ha.Spec.Bootstrap.OwnerName, defaultOwnerName)

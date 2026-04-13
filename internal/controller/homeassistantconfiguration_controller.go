@@ -72,6 +72,10 @@ var reloadableSections = map[string]bool{
 	"input_datetime": true,
 	"timer":          true,
 	"counter":        true,
+	"logger":         true,
+	// "template" and "zone" require dedicated reload services (template.reload,
+	// zone.reload) — not covered by ReloadCoreConfig. Implement proper dispatch
+	// before adding them here to avoid incorrect lastReloadMethod=hot-reload.
 }
 
 // Keys under homeassistant: that require restart

@@ -1,4 +1,4 @@
-name: E2E Tests (Parallel)
+name: E2E Tests
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
 
 env:
   K3D_VERSION: v5.7.4
+  HA_VERSION: stable
 
 jobs:
   # Job 1: Build and cache operator image
@@ -35,90 +36,13 @@ jobs:
           path: operator-e2e.tar
           retention-days: 1
 
-  # Job 2-N: Run tests in parallel with matrix strategy
-  # All tests use 4× parallelization for optimal speed (~12-15× faster than sequential)
-  e2e:
-    name: E2E (${{ matrix.name }})
+  # Job 2: Critical path E2E — 1 bootstrap, 11 tests sequential
+  # Estimated time: ~40-50 min (bootstrap ~30 min + tests ~10 min)
+  e2e-critical-path:
+    name: E2E Critical Path
     needs: build
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: core
-            label: "core"
-            procs: 4
-            timeout: 5
-
-          - name: homeassistant
-            label: "homeassistant"
-            procs: 4
-            timeout: 30
-
-          - name: secrets
-            label: "secrets"
-            procs: 4
-            timeout: 30
-
-          - name: configuration
-            label: "configuration"
-            procs: 4
-            timeout: 30
-
-          - name: negative
-            label: "negative"
-            procs: 4
-            timeout: 8
-
-          # Automation tests - fast path (no bootstrap)
-          - name: automation-fast
-            label: "automation && fast"
-            procs: 4
-            timeout: 20
-
-          # Automation tests - slow path (with bootstrap/hot-reload)
-          - name: automation-slow
-            label: "automation && slow"
-            procs: 4
-            timeout: 45
-
-          # Scene tests - fast path (no bootstrap)
-          - name: scene-fast
-            label: "scene && fast"
-            procs: 4
-            timeout: 20
-
-          # Scene tests - slow path (with bootstrap/hot-reload)
-          - name: scene-slow
-            label: "scene && slow"
-            procs: 4
-            timeout: 45
-
-          # Script tests - fast path (no bootstrap)
-          - name: script-fast
-            label: "script && fast"
-            procs: 4
-            timeout: 20
-
-          # Script tests - slow path (with bootstrap/hot-reload)
-          - name: script-slow
-            label: "script && slow"
-            procs: 4
-            timeout: 45
-
-          # Integration tests - fast path (no bootstrap)
-          - name: integration-fast
-            label: "integration && fast"
-            procs: 4
-            timeout: 20
-
-          # Integration tests - slow path (with bootstrap)
-          - name: integration-slow
-            label: "integration && slow"
-            procs: 4
-            timeout: 45
-
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.timeout }}
+    timeout-minutes: 60
 
     steps:
       - name: Clone the code
@@ -151,7 +75,7 @@ jobs:
 
       - name: Create k3d cluster
         run: |
-          k3d cluster create e2e-${{ matrix.name }} \
+          k3d cluster create e2e-critical \
             --agents 0 \
             --servers-memory 12g \
             --wait \
@@ -160,27 +84,27 @@ jobs:
       - name: Load operator image into k3d
         run: |
           docker load -i operator-e2e.tar
-          k3d image import operator:e2e -c e2e-${{ matrix.name }}
+          k3d image import operator:e2e -c e2e-critical
+
+      - name: Preload Home Assistant image into k3d
+        run: |
+          docker pull ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }}
+          k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-critical
 
       - name: Verify cluster is ready
         run: |
           kubectl cluster-info
           kubectl get nodes
 
-      - name: Run E2E tests for ${{ matrix.name }}
+      - name: Run E2E critical path tests
         env:
-          K3D_CLUSTER: e2e-${{ matrix.name }}
+          K3D_CLUSTER: e2e-critical
+          HA_VERSION: ${{ env.HA_VERSION }}
         run: |
-          # All tests use Ginkgo CLI with parallelization
           make ginkgo
-          echo "Running ${{ matrix.name }} tests with Ginkgo procs=${{ matrix.procs }}"
-          # Set Ginkgo timeout 1 min less than job timeout to allow graceful cleanup
-          GINKGO_TIMEOUT=$(( ${{ matrix.timeout }} - 1 ))
           ./bin/ginkgo run \
-            --label-filter="${{ matrix.label }}" \
-            --procs=${{ matrix.procs }} \
             -v \
-            --timeout=${GINKGO_TIMEOUT}m \
+            --timeout=59m \
             ./test/e2e/
 
       - name: Collect controller logs on failure
@@ -215,6 +139,12 @@ jobs:
           kubectl get homeassistantscripts --all-namespaces -o wide || true
           echo "=== HomeAssistantIntegrations ==="
           kubectl get homeassistantintegrations --all-namespaces -o wide || true
+          echo "=== HomeAssistantFloors ==="
+          kubectl get homeassistantfloors --all-namespaces -o wide || true
+          echo "=== HomeAssistantLabels ==="
+          kubectl get homeassistantlabels --all-namespaces -o wide || true
+          echo "=== HomeAssistantAreas ==="
+          kubectl get homeassistantareas --all-namespaces -o wide || true
           echo "=== Pods ==="
           kubectl get pods --all-namespaces -o wide || true
           echo "=== StatefulSets ==="
@@ -222,4 +152,4 @@ jobs:
 
       - name: Cleanup k3d cluster
         if: always()
-        run: k3d cluster delete e2e-${{ matrix.name }}
+        run: k3d cluster delete e2e-critical

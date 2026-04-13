@@ -132,20 +132,15 @@ setup-test-e2e: ## Set up a k3d cluster for e2e tests (always creates fresh clus
 	@docker image inspect ghcr.io/home-assistant/home-assistant:stable >/dev/null 2>&1 || \
 		docker pull ghcr.io/home-assistant/home-assistant:stable
 	@echo "Importing Home Assistant image from local Docker cache into k3d containerd..."
-	@docker save ghcr.io/home-assistant/home-assistant:stable | \
-		docker exec -i k3d-$(K3D_CLUSTER_E2E)-server-0 ctr images import -
-	@echo "Verifying image is available in k3d containerd..."
-	@docker exec k3d-$(K3D_CLUSTER_E2E)-server-0 crictl images | grep home-assistant
+	@k3d image import ghcr.io/home-assistant/home-assistant:stable -c $(K3D_CLUSTER_E2E)
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ginkgo ## Run ALL E2E tests with 4× parallelization (~15 min, 12-15× faster than sequential)
-	@echo "Running ALL E2E tests with 4× parallelization..."
-	@echo "Expected time: ~15 min (all 54 specs, baseline: ~180-225 min)"
-	@echo "ℹ️  Resource requirements: 4 × 1Gi limits + 2.5GB overhead = ~6.5GB"
+test-e2e: setup-test-e2e manifests generate fmt vet ginkgo ## Run E2E critical path tests — 1 bootstrap, 11 tests (~40-50 min)
+	@echo "Running E2E critical path tests (1 bootstrap, sequential)..."
+	@echo "Expected time: ~40-50 min (bootstrap ~30 min + 11 tests ~10 min)"
 	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) $(GINKGO) run \
-		--procs=4 \
 		-v \
-		--timeout=45m \
+		--timeout=60m \
 		./test/e2e/ | tee test-e2e.log; \
 	status=$$?; \
 	$(MAKE) cleanup-test-e2e; \

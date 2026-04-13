@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **API readiness gate in bootstrap** — `CheckAPIReady` (GET `/api/config` without auth) is now called between health check and onboarding status check. Returns 401 when HA routes are fully loaded, 404 during startup (same as `/api/onboarding`). This eliminates the ambiguity that required the 10-minute confirmation window.
+
+### Changed
+
+- **`onboardingConfirmDelay` reduced from 10 minutes to 30 seconds** — now that `CheckAPIReady` gates the bootstrap flow, a 404 from `/api/onboarding` is only seen after the API is fully loaded, making it a reliable signal. The 30-second window remains as a safety net for edge cases.
+
+- **`logger`, `template`, `zone` added to hot-reloadable config sections** — these sections were documented as hot-reloadable but missing from `reloadableSections` map, causing the controller to trigger a full pod restart instead of calling `ReloadCoreConfig` when they were added or modified.
+
+### Fixed
+
+- **E2E critical path: wrong Service name** — test looked up `<ha-name>-homeassistant` but the controller creates the service as `<ha-name>`. Fixed to use the correct name.
+
+- **E2E critical path: wrong PVC name** — test looked up `data-<ha-name>-0` (StatefulSet volumeClaimTemplate convention) but the controller creates a standalone PVC named `<ha-name>-data`. Fixed to use the correct name.
+
+- **E2E critical path: script ID with hyphen rejected by HA** — `HomeAssistantScript` CR named `cp-script` used the CR name as the HA script ID when `spec.id` was not set. HA rejects script IDs containing hyphens (valid format: `[a-z0-9_]+`). Added explicit `id: critical_path_script`.
+
+- **E2E critical path: debug info not collected on failure** — `AfterAll` checked `CurrentSpecReport().Failed()` which returns the state of the last `It` block (Backup — passed), so debug info was never collected even when earlier tests failed. Added `suiteFailed` flag updated by `AfterEach`.
+
 ## [v0.8.0] - 2026-04-07
 
 ### Added
