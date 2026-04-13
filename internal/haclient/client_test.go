@@ -94,6 +94,62 @@ var _ = Describe("HAClient", func() {
 		})
 	})
 
+	Describe("CheckAPIReady", func() {
+		It("Should return nil for 401 Unauthorized (API routes loaded)", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Expect(r.URL.Path).To(Equal("/api/config"))
+				Expect(r.Method).To(Equal("GET"))
+				Expect(r.Header.Get("Authorization")).To(BeEmpty())
+				w.WriteHeader(http.StatusUnauthorized)
+			}))
+
+			client = NewClient(server.URL)
+			err := client.CheckAPIReady(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should return nil for 200 OK (API ready, unexpected but valid)", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{}`))
+			}))
+
+			client = NewClient(server.URL)
+			err := client.CheckAPIReady(ctx)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("Should return NotReady for 404 (routes not registered yet)", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			}))
+
+			client = NewClient(server.URL)
+			err := client.CheckAPIReady(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(IsNotReady(err)).To(BeTrue())
+		})
+
+		It("Should return NotReady for 500 (server error)", func() {
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusInternalServerError)
+			}))
+
+			client = NewClient(server.URL)
+			err := client.CheckAPIReady(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(IsNotReady(err)).To(BeTrue())
+		})
+
+		It("Should return NotReady on connection failure", func() {
+			client = NewClient("http://localhost:1")
+			client = client.WithTimeout(100 * time.Millisecond)
+			err := client.CheckAPIReady(ctx)
+			Expect(err).To(HaveOccurred())
+			Expect(IsNotReady(err)).To(BeTrue())
+		})
+	})
+
 	Describe("CheckOnboardingStatus", func() {
 		It("Should return nil when onboarding is needed (all steps pending)", func() {
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

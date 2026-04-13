@@ -74,6 +74,45 @@ func (c *Client) CheckHealth(ctx context.Context) error {
 	}
 }
 
+// CheckAPIReady verifies that Home Assistant API routes are fully registered.
+// During startup, HA's HTTP server responds on /api/ (health check passes) before
+// all components finish registering their routes. This method hits /api/config
+// without auth — once routes are loaded it returns 401, during startup it returns 404.
+// Returns nil if API is fully ready, ErrorTypeNotReady if routes not loaded yet.
+func (c *Client) CheckAPIReady(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/config", nil)
+	if err != nil {
+		return &Error{Type: ErrorTypeHTTP, Message: "failed to create request", Err: err}
+	}
+	req.Header.Set("User-Agent", userAgent)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return &Error{Type: ErrorTypeNotReady, Message: "API readiness check failed", Err: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// 401 = routes registered, API fully loaded (expected without auth)
+	// 200 = API responded with config (unexpected without auth, but API is ready)
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusOK {
+		return nil
+	}
+
+	// 404 = routes not yet registered (startup race)
+	if resp.StatusCode == http.StatusNotFound {
+		return &Error{
+			Type:    ErrorTypeNotReady,
+			Message: "API routes not fully registered yet (404 from /api/config)",
+		}
+	}
+
+	return &Error{
+		Type:       ErrorTypeNotReady,
+		Message:    fmt.Sprintf("unexpected status %d from /api/config readiness check", resp.StatusCode),
+		StatusCode: resp.StatusCode,
+	}
+}
+
 // CheckOnboardingStatus checks if onboarding is needed.
 // Returns nil if onboarding needed, ErrorTypeOnboardingDone if already done.
 // HA returns 200 + JSON array of steps when onboarding is pending,

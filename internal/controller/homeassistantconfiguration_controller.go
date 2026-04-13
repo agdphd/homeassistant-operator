@@ -72,6 +72,9 @@ var reloadableSections = map[string]bool{
 	"input_datetime": true,
 	"timer":          true,
 	"counter":        true,
+	"logger":         true,
+	"template":       true,
+	"zone":           true,
 }
 
 // Keys under homeassistant: that require restart
