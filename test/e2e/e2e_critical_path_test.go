@@ -18,6 +18,7 @@ package e2e
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 
@@ -26,6 +27,15 @@ import (
 
 	"github.com/przemekhys/homeassistant-operator/test/utils"
 )
+
+// haVersion returns the HA image tag to use in E2E tests.
+// Set HA_VERSION env var in CI to pin a specific version; defaults to "stable".
+func haVersion() string {
+	if v := os.Getenv("HA_VERSION"); v != "" {
+		return v
+	}
+	return "stable"
+}
 
 // Polling intervals shared across critical path tests.
 const (
@@ -74,7 +84,7 @@ metadata:
   name: %s
   namespace: %s
 spec:
-  version: "stable"
+  version: "%s"
   storage:
     size: "1Gi"
   bootstrap:
@@ -93,7 +103,7 @@ spec:
     retentionCopies: 3
     includeDatabase: true
   %s
-`, haName, namespace, haName, utils.GetEnhancedHAResourceRequests())
+`, haName, namespace, haVersion(), haName, utils.GetEnhancedHAResourceRequests())
 		Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 		By("Creating HomeAssistantConfiguration CR")
