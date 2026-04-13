@@ -887,7 +887,11 @@ func collectCriticalPathDebugInfo(namespace, haName, configName string) {
 	}
 
 	write("\n--- All CRs ---\n")
-	for _, kind := range []string{"ha", "haconfig", "hasecrets", "haauto", "hascene", "hascript", "haint", "hafloor", "halabel", "haarea"} {
+	kinds := []string{
+		"ha", "haconfig", "hasecrets", "haauto", "hascene",
+		"hascript", "haint", "hafloor", "halabel", "haarea",
+	}
+	for _, kind := range kinds {
 		write("  %s: %s\n", kind, utils.Kubectl("get", kind, "-n", namespace, "--ignore-not-found"))
 	}
 
