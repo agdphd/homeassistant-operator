@@ -198,14 +198,14 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	syncedContent := false
 	if config.Status.ConfigHash == configHash {
 		var syncErr error
-		syncedContent, syncErr = r.syncConfigMapFromCRD(ctx, config, ha, canonicalContent)
+		syncedContent, syncErr = r.syncConfigMapFromCRD(ctx, config, canonicalContent)
 		if syncErr != nil {
 			log.Error(syncErr, "Failed to sync ConfigMap from CRD")
 		}
 	}
 
 	// Create or update the ConfigMap
-	if err := r.reconcileGeneratedConfigMap(ctx, config, ha, canonicalContent); err != nil {
+	if err := r.reconcileGeneratedConfigMap(ctx, config, canonicalContent); err != nil {
 		log.Error(err, "Failed to reconcile generated ConfigMap")
 		meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
@@ -261,7 +261,6 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 	ctx context.Context,
 	config *hav1alpha1.HomeAssistantConfiguration,
-	ha *hav1alpha1.HomeAssistant,
 	canonicalContent string,
 ) error {
 	log := logf.FromContext(ctx)
@@ -841,7 +840,6 @@ func (r *HomeAssistantConfigurationReconciler) updateConfigMapHashAnnotation(
 func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 	ctx context.Context,
 	config *hav1alpha1.HomeAssistantConfiguration,
-	ha *hav1alpha1.HomeAssistant,
 	canonicalContent string,
 ) (bool, error) {
 	log := logf.FromContext(ctx)
