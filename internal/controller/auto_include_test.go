@@ -265,6 +265,15 @@ func TestInjectRecorder(t *testing.T) {
 			dbURL:     "",
 			wantNotIn: []string{"recorder:"},
 		},
+		{
+			// Regression: tagged scalar like "recorder: !include recorder.yaml" must not be
+			// overwritten. injectRecorder should return configYAML unchanged.
+			name:     "tagged recorder scalar preserved (!include recorder.yaml)",
+			input:    "recorder: !include recorder.yaml\n",
+			recorder: &hav1alpha1.RecorderConfig{},
+			dbURL:    "postgresql://user:pass@host/db",
+			wantIn:   []string{"recorder: !include recorder.yaml"},
+		},
 	}
 
 	for _, tt := range tests {

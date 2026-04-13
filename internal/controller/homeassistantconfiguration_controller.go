@@ -156,11 +156,26 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Compute the effective configuration (with auto-injected !include directives and
-	// location injection) and hash it so that changes to the transformed content — not
-	// just the raw spec — trigger a reload.
-	effectiveConfig := buildEffectiveConfig(config.Spec.Configuration, ha)
-	configHash := calculateConfigHash(effectiveConfig)
+	// Compute the canonical configuration content (auto-includes + location + recorder secret
+	// injection) once so that hash, ConfigMap data, sync detection, and needsRestart all use
+	// identical bytes. Using buildEffectiveConfig here would exclude the recorder section,
+	// causing syncConfigMapFromCRD to see a permanent mismatch and trigger spurious reloads.
+	canonicalContent, err := r.buildConfigContent(ctx, config, ha)
+	if err != nil {
+		log.Error(err, "Failed to build canonical configuration content")
+		meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
+			Type:               conditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "ReconciliationFailed",
+			Message:            fmt.Sprintf("Failed to build configuration content: %v", err),
+			ObservedGeneration: config.Generation,
+		})
+		if statusErr := r.Status().Update(ctx, config); statusErr != nil {
+			log.Error(statusErr, "Failed to update status")
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+	configHash := calculateConfigHash(canonicalContent)
 
 	// Capture old configuration BEFORE updating ConfigMap
 	// This is critical for needsRestart() to work correctly in auto mode
@@ -183,14 +198,14 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	syncedContent := false
 	if config.Status.ConfigHash == configHash {
 		var syncErr error
-		syncedContent, syncErr = r.syncConfigMapFromCRD(ctx, config, ha)
+		syncedContent, syncErr = r.syncConfigMapFromCRD(ctx, config, ha, canonicalContent)
 		if syncErr != nil {
 			log.Error(syncErr, "Failed to sync ConfigMap from CRD")
 		}
 	}
 
 	// Create or update the ConfigMap
-	if err := r.reconcileGeneratedConfigMap(ctx, config, ha); err != nil {
+	if err := r.reconcileGeneratedConfigMap(ctx, config, ha, canonicalContent); err != nil {
 		log.Error(err, "Failed to reconcile generated ConfigMap")
 		meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
@@ -207,7 +222,7 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 
 	// Perform configuration reload if hash changed or if ConfigMap was restored from external edit
 	if config.Status.ConfigHash != configHash || syncedContent {
-		if err := r.performConfigReload(ctx, config, ha, configHash, oldConfig); err != nil {
+		if err := r.performConfigReload(ctx, config, ha, configHash, oldConfig, canonicalContent); err != nil {
 			log.Error(err, "Failed to reload configuration")
 			meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
 				Type:               conditionTypeReady,
@@ -247,6 +262,7 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 	ctx context.Context,
 	config *hav1alpha1.HomeAssistantConfiguration,
 	ha *hav1alpha1.HomeAssistant,
+	canonicalContent string,
 ) error {
 	log := logf.FromContext(ctx)
 
@@ -259,10 +275,6 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 		if errors.IsNotFound(err) {
 			// Create new ConfigMap WITHOUT hash annotation
 			// The hash annotation is ONLY set by performConfigReload() when restart is needed
-			configContent, buildErr := r.buildConfigContent(ctx, config, ha)
-			if buildErr != nil {
-				return fmt.Errorf("failed to build configuration content: %w", buildErr)
-			}
 			configMap := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      configMapName,
@@ -275,7 +287,7 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 					// NO hash annotation on initial creation
 				},
 				Data: map[string]string{
-					configurationYamlKey: configContent,
+					configurationYamlKey: canonicalContent,
 				},
 			}
 
@@ -332,14 +344,10 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 		}
 	}
 
-	expectedData, err := r.buildConfigContent(ctx, config, ha)
-	if err != nil {
-		return fmt.Errorf("failed to build configuration content: %w", err)
-	}
 	existingData := existingConfigMap.Data[configurationYamlKey]
-	if existingData != expectedData {
+	if existingData != canonicalContent {
 		log.Info("Updating generated ConfigMap content (hash annotation preserved for hot-reload)", "name", configMapName)
-		existingConfigMap.Data[configurationYamlKey] = expectedData
+		existingConfigMap.Data[configurationYamlKey] = canonicalContent
 		if err := r.Update(ctx, existingConfigMap); err != nil {
 			return err
 		}
@@ -643,6 +651,7 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 	ha *hav1alpha1.HomeAssistant,
 	newHash string,
 	oldConfig string,
+	canonicalContent string,
 ) error {
 	log := logf.FromContext(ctx)
 
@@ -675,7 +684,7 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 		// that failed before saving status, oldConfig == newConfig and we cannot determine
 		// what changed. Default to restart (safe) to avoid choosing hot-reload for changes
 		// that require a full restart (e.g. adding a new integration like prometheus:).
-		transformedConfig := buildEffectiveConfig(config.Spec.Configuration, ha)
+		transformedConfig := canonicalContent
 		if oldConfig == transformedConfig {
 			log.Info("ConfigMap already synced (retry after partial failure), defaulting to restart")
 			strategy = reloadMethodRestart
@@ -833,6 +842,7 @@ func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 	ctx context.Context,
 	config *hav1alpha1.HomeAssistantConfiguration,
 	ha *hav1alpha1.HomeAssistant,
+	canonicalContent string,
 ) (bool, error) {
 	log := logf.FromContext(ctx)
 
@@ -872,9 +882,8 @@ func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 	// NOTE: We only check content, NOT hash annotation.
 	// Hash annotation is managed by performConfigReload() and should not be synced here.
 	currentContent := existingConfigMap.Data[configurationYamlKey]
-	expectedContent := buildEffectiveConfig(config.Spec.Configuration, ha)
 
-	if currentContent == expectedContent {
+	if currentContent == canonicalContent {
 		// ConfigMap content is in sync with CRD
 		return false, nil
 	}
@@ -886,9 +895,9 @@ func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 	log.Info("ConfigMap was modified externally, restoring from CRD state",
 		"configMapName", configMapName,
 		"currentContent", currentContent[:min(50, len(currentContent))],
-		"expectedContent", expectedContent[:min(50, len(expectedContent))])
+		"expectedContent", canonicalContent[:min(50, len(canonicalContent))])
 
-	existingConfigMap.Data[configurationYamlKey] = expectedContent
+	existingConfigMap.Data[configurationYamlKey] = canonicalContent
 	// DO NOT update annotation hash here - it's managed by performConfigReload() only
 
 	if err := r.Update(ctx, existingConfigMap); err != nil {
@@ -1012,12 +1021,17 @@ func (r *HomeAssistantConfigurationReconciler) buildConfigContent(
 	ha *hav1alpha1.HomeAssistant,
 ) (string, error) {
 	content := buildEffectiveConfig(config.Spec.Configuration, ha)
-	if config.Spec.Recorder == nil {
+	rec := config.Spec.Recorder
+	if rec == nil {
+		return content, nil
+	}
+	// Short-circuit before any Secret lookup when recorder is explicitly disabled
+	if rec.Enabled != nil && !*rec.Enabled {
 		return content, nil
 	}
 	dbURL, err := r.resolveRecorderDB(ctx, config)
 	if err != nil {
 		return "", err
 	}
-	return injectRecorder(content, config.Spec.Recorder, dbURL)
+	return injectRecorder(content, rec, dbURL)
 }

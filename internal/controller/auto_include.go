@@ -205,14 +205,17 @@ func injectRecorder(configYAML string, recorder *hav1alpha1.RecorderConfig, dbUR
 			&yaml.Node{Kind: yaml.ScalarNode, Value: "recorder"},
 			recSection,
 		)
-	} else if recSection.Kind == yaml.ScalarNode {
-		// bare "recorder:" with no value — upgrade to mapping
+	} else if recSection.Kind == yaml.ScalarNode &&
+		recSection.Value == "" &&
+		(recSection.Tag == "" || recSection.Tag == "!!null") {
+		// bare "recorder:" with truly empty/null value — upgrade to mapping
 		recSection.Kind = yaml.MappingNode
 		recSection.Tag = ""
 		recSection.Value = ""
 	}
 	if recSection.Kind != yaml.MappingNode {
-		return "", fmt.Errorf("recorder section is not a mapping node")
+		// Preserve tagged scalars like "recorder: !include recorder.yaml" unchanged
+		return configYAML, nil
 	}
 
 	if dbURL != "" {
