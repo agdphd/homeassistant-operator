@@ -1586,6 +1586,11 @@ func (in *RecorderConfig) DeepCopyInto(out *RecorderConfig) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.DatabaseSecretRef != nil {
+		in, out := &in.DatabaseSecretRef, &out.DatabaseSecretRef
+		*out = new(SecretKeySelector)
+		**out = **in
+	}
 	if in.PurgeKeepDays != nil {
 		in, out := &in.PurgeKeepDays, &out.PurgeKeepDays
 		*out = new(int32)

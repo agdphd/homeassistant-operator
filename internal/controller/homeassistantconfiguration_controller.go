@@ -259,6 +259,10 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 		if errors.IsNotFound(err) {
 			// Create new ConfigMap WITHOUT hash annotation
 			// The hash annotation is ONLY set by performConfigReload() when restart is needed
+			configContent, buildErr := r.buildConfigContent(ctx, config, ha)
+			if buildErr != nil {
+				return fmt.Errorf("failed to build configuration content: %w", buildErr)
+			}
 			configMap := &corev1.ConfigMap{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      configMapName,
@@ -271,7 +275,7 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 					// NO hash annotation on initial creation
 				},
 				Data: map[string]string{
-					configurationYamlKey: buildEffectiveConfig(config.Spec.Configuration, ha),
+					configurationYamlKey: configContent,
 				},
 			}
 
@@ -328,7 +332,10 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 		}
 	}
 
-	expectedData := buildEffectiveConfig(config.Spec.Configuration, ha)
+	expectedData, err := r.buildConfigContent(ctx, config, ha)
+	if err != nil {
+		return fmt.Errorf("failed to build configuration content: %w", err)
+	}
 	existingData := existingConfigMap.Data[configurationYamlKey]
 	if existingData != expectedData {
 		log.Info("Updating generated ConfigMap content (hash annotation preserved for hot-reload)", "name", configMapName)
@@ -963,4 +970,54 @@ func (r *HomeAssistantConfigurationReconciler) isHomeAssistantServiceReady(
 	ha *hav1alpha1.HomeAssistant,
 ) bool {
 	return isServiceReadyFromEndpointSlices(ctx, r.Client, ha.Name, ha.Namespace)
+}
+
+// resolveRecorderDB returns the database URL for the recorder.
+// If DatabaseSecretRef is set it reads the value from the referenced Secret
+// (takes precedence over Database). Returns an empty string when neither is set.
+func (r *HomeAssistantConfigurationReconciler) resolveRecorderDB(
+	ctx context.Context,
+	config *hav1alpha1.HomeAssistantConfiguration,
+) (string, error) {
+	rec := config.Spec.Recorder
+	if rec == nil {
+		return "", nil
+	}
+	if rec.DatabaseSecretRef != nil {
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Name:      rec.DatabaseSecretRef.Name,
+			Namespace: config.Namespace,
+		}, secret); err != nil {
+			return "", fmt.Errorf("database secret %q: %w", rec.DatabaseSecretRef.Name, err)
+		}
+		key := rec.DatabaseSecretRef.Key
+		if key == "" {
+			key = "value"
+		}
+		val, ok := secret.Data[key]
+		if !ok {
+			return "", fmt.Errorf("database secret %q missing key %q", rec.DatabaseSecretRef.Name, key)
+		}
+		return string(val), nil
+	}
+	return rec.Database, nil
+}
+
+// buildConfigContent builds the final configuration.yaml content for the ConfigMap.
+// It applies auto-includes, location injection, and recorder section injection.
+func (r *HomeAssistantConfigurationReconciler) buildConfigContent(
+	ctx context.Context,
+	config *hav1alpha1.HomeAssistantConfiguration,
+	ha *hav1alpha1.HomeAssistant,
+) (string, error) {
+	content := buildEffectiveConfig(config.Spec.Configuration, ha)
+	if config.Spec.Recorder == nil {
+		return content, nil
+	}
+	dbURL, err := r.resolveRecorderDB(ctx, config)
+	if err != nil {
+		return "", err
+	}
+	return injectRecorder(content, config.Spec.Recorder, dbURL)
 }

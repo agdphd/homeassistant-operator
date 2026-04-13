@@ -69,9 +69,18 @@ type RecorderConfig struct {
 	Enabled *bool `json:"enabled,omitempty"`
 
 	// Database URL for the recorder (e.g., "postgresql://user:pass@host/db")
-	// If not specified, uses SQLite with default path
+	// If not specified, uses SQLite with default path.
+	// Mutually exclusive with DatabaseSecretRef; DatabaseSecretRef takes precedence.
 	// +optional
 	Database string `json:"database,omitempty"`
+
+	// DatabaseSecretRef references a Secret containing the database URL.
+	// The resolved value is written as plain text into configuration.yaml,
+	// avoiding the !secret tag which is stripped by the YAML round-trip.
+	// Takes precedence over Database if both are set.
+	// The Secret must be in the same namespace as the HomeAssistant CR.
+	// +optional
+	DatabaseSecretRef *SecretKeySelector `json:"databaseSecretRef,omitempty"`
 
 	// PurgeKeepDays specifies how many days of history to keep
 	// +kubebuilder:validation:Minimum=1
