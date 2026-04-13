@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`onboardingConfirmDelay` reduced from 10 minutes to 30 seconds** — now that `CheckAPIReady` gates the bootstrap flow, a 404 from `/api/onboarding` is only seen after the API is fully loaded, making it a reliable signal. The 30-second window remains as a safety net for edge cases.
 
-- **`logger`, `template`, `zone` added to hot-reloadable config sections** — these sections were documented as hot-reloadable but missing from `reloadableSections` map, causing the controller to trigger a full pod restart instead of calling `ReloadCoreConfig` when they were added or modified.
+- **`logger` added to hot-reloadable config sections** — `logger` was documented as hot-reloadable but missing from `reloadableSections` map, causing the controller to trigger a full pod restart instead of calling `ReloadCoreConfig` when it was added or modified.
 
 ### Fixed
 
