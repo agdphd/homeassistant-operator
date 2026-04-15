@@ -208,13 +208,14 @@ func TestEnsureAutoIncludes_Idempotent(t *testing.T) {
 
 func TestInjectRecorder(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     string
-		recorder  *hav1alpha1.RecorderConfig
-		dbURL     string
-		wantIn    []string
-		wantNotIn []string
-		wantErr   bool
+		name       string
+		input      string
+		recorder   *hav1alpha1.RecorderConfig
+		dbURL      string
+		useInclude bool
+		wantIn     []string
+		wantNotIn  []string
+		wantErr    bool
 	}{
 		{
 			name:     "nil recorder — input unchanged",
@@ -274,11 +275,22 @@ func TestInjectRecorder(t *testing.T) {
 			dbURL:    "postgresql://user:pass@host/db",
 			wantIn:   []string{"recorder: !include recorder.yaml"},
 		},
+		{
+			// Security: when useInclude=true the URL must NOT appear in the output; instead
+			// db_url should reference the mounted file via HA's !include tag.
+			name:       "useInclude writes !include reference instead of URL",
+			input:      "homeassistant:\n  name: Test\n",
+			recorder:   &hav1alpha1.RecorderConfig{},
+			dbURL:      "postgresql://user:pass@host/db",
+			useInclude: true,
+			wantIn:     []string{"db_url: !include recorder_db_url.yaml"},
+			wantNotIn:  []string{"postgresql://"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := injectRecorder(tt.input, tt.recorder, tt.dbURL)
+			got, err := injectRecorder(tt.input, tt.recorder, tt.dbURL, tt.useInclude)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("injectRecorder() error = %v, wantErr %v", err, tt.wantErr)
 			}

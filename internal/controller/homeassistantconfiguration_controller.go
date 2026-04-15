@@ -43,6 +43,11 @@ import (
 const (
 	configurationYamlKey     = "configuration.yaml"
 	generatedConfigmapSuffix = "-configuration"
+	// recorderDBSecretSuffix is the suffix for the K8s Secret that holds the recorder
+	// database URL when spec.recorder.databaseSecretRef is used. The Secret is mounted
+	// into the HA pod at /config/recorder_db_url.yaml so that credentials are never
+	// placed in a ConfigMap.
+	recorderDBSecretSuffix = "-recorder-db"
 	// configHashAnnotationKey moved to constants.go (shared with homeassistant_controller.go)
 
 	// Condition reasons for HomeAssistantConfiguration
@@ -979,16 +984,18 @@ func (r *HomeAssistantConfigurationReconciler) isHomeAssistantServiceReady(
 	return isServiceReadyFromEndpointSlices(ctx, r.Client, ha.Name, ha.Namespace)
 }
 
-// resolveRecorderDB returns the database URL for the recorder.
-// If DatabaseSecretRef is set it reads the value from the referenced Secret
-// (takes precedence over Database). Returns an empty string when neither is set.
+// resolveRecorderDB returns the database URL for the recorder together with a flag
+// indicating whether the value came from a K8s Secret reference (DatabaseSecretRef).
+// When fromSecretRef is true the caller must store the URL in a separate K8s Secret
+// (see reconcileRecorderDBSecret) instead of embedding it in the ConfigMap.
+// Returns ("", false, nil) when neither Database nor DatabaseSecretRef is set.
 func (r *HomeAssistantConfigurationReconciler) resolveRecorderDB(
 	ctx context.Context,
 	config *hav1alpha1.HomeAssistantConfiguration,
-) (string, error) {
+) (url string, fromSecretRef bool, err error) {
 	rec := config.Spec.Recorder
 	if rec == nil {
-		return "", nil
+		return "", false, nil
 	}
 	if rec.DatabaseSecretRef != nil {
 		secret := &corev1.Secret{}
@@ -996,7 +1003,7 @@ func (r *HomeAssistantConfigurationReconciler) resolveRecorderDB(
 			Name:      rec.DatabaseSecretRef.Name,
 			Namespace: config.Namespace,
 		}, secret); err != nil {
-			return "", fmt.Errorf("database secret %q: %w", rec.DatabaseSecretRef.Name, err)
+			return "", false, fmt.Errorf("database secret %q: %w", rec.DatabaseSecretRef.Name, err)
 		}
 		key := rec.DatabaseSecretRef.Key
 		if key == "" {
@@ -1004,15 +1011,74 @@ func (r *HomeAssistantConfigurationReconciler) resolveRecorderDB(
 		}
 		val, ok := secret.Data[key]
 		if !ok {
-			return "", fmt.Errorf("database secret %q missing key %q", rec.DatabaseSecretRef.Name, key)
+			return "", false, fmt.Errorf("database secret %q missing key %q", rec.DatabaseSecretRef.Name, key)
 		}
-		return string(val), nil
+		return string(val), true, nil
 	}
-	return rec.Database, nil
+	return rec.Database, false, nil
+}
+
+// reconcileRecorderDBSecret creates or updates the K8s Secret that holds the recorder
+// database URL. The Secret is owned by the HAConfig CR and mounted by the HA pod at
+// /config/recorder_db_url.yaml so that the URL is never embedded in the ConfigMap.
+func (r *HomeAssistantConfigurationReconciler) reconcileRecorderDBSecret(
+	ctx context.Context,
+	config *hav1alpha1.HomeAssistantConfiguration,
+	dbURL string,
+) error {
+	secretName := config.Spec.HomeAssistantRef.Name + recorderDBSecretSuffix
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: config.Namespace,
+		},
+		Data: map[string][]byte{
+			"recorder_db_url.yaml": []byte(dbURL),
+		},
+	}
+	if err := controllerutil.SetControllerReference(config, desired, r.Scheme); err != nil {
+		return fmt.Errorf("set owner reference on recorder-db secret: %w", err)
+	}
+
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: config.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if string(existing.Data["recorder_db_url.yaml"]) == dbURL {
+		return nil
+	}
+	existing.Data = desired.Data
+	return r.Update(ctx, existing)
+}
+
+// cleanupRecorderDBSecret deletes the recorder-db Secret if it exists.
+// Called when databaseSecretRef is removed or the recorder is disabled so the
+// orphaned Secret does not linger.
+func (r *HomeAssistantConfigurationReconciler) cleanupRecorderDBSecret(
+	ctx context.Context,
+	config *hav1alpha1.HomeAssistantConfiguration,
+) error {
+	secret := &corev1.Secret{}
+	secretName := config.Spec.HomeAssistantRef.Name + recorderDBSecretSuffix
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: config.Namespace}, secret)
+	if errors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return r.Delete(ctx, secret)
 }
 
 // buildConfigContent builds the final configuration.yaml content for the ConfigMap.
 // It applies auto-includes, location injection, and recorder section injection.
+// When spec.recorder.databaseSecretRef is set, the actual URL is stored in the
+// <ha-name>-recorder-db K8s Secret (never in the ConfigMap) and the ConfigMap
+// receives "!include recorder_db_url.yaml" instead.
 func (r *HomeAssistantConfigurationReconciler) buildConfigContent(
 	ctx context.Context,
 	config *hav1alpha1.HomeAssistantConfiguration,
@@ -1020,16 +1086,30 @@ func (r *HomeAssistantConfigurationReconciler) buildConfigContent(
 ) (string, error) {
 	content := buildEffectiveConfig(config.Spec.Configuration, ha)
 	rec := config.Spec.Recorder
-	if rec == nil {
+	if rec == nil || (rec.Enabled != nil && !*rec.Enabled) {
+		// No recorder injection — clean up any leftover recorder-db Secret.
+		if err := r.cleanupRecorderDBSecret(ctx, config); err != nil {
+			logf.FromContext(ctx).Error(err, "Failed to clean up recorder-db secret (best-effort)")
+		}
 		return content, nil
 	}
-	// Short-circuit before any Secret lookup when recorder is explicitly disabled
-	if rec.Enabled != nil && !*rec.Enabled {
-		return content, nil
-	}
-	dbURL, err := r.resolveRecorderDB(ctx, config)
+
+	dbURL, fromSecretRef, err := r.resolveRecorderDB(ctx, config)
 	if err != nil {
 		return "", err
 	}
-	return injectRecorder(content, rec, dbURL)
+
+	if fromSecretRef {
+		if err := r.reconcileRecorderDBSecret(ctx, config, dbURL); err != nil {
+			return "", fmt.Errorf("reconcile recorder-db secret: %w", err)
+		}
+	} else {
+		// Plain database string or empty — remove any leftover Secret from a previous
+		// databaseSecretRef configuration.
+		if err := r.cleanupRecorderDBSecret(ctx, config); err != nil {
+			logf.FromContext(ctx).Error(err, "Failed to clean up recorder-db secret (best-effort)")
+		}
+	}
+
+	return injectRecorder(content, rec, dbURL, fromSecretRef)
 }
