@@ -43,6 +43,11 @@ import (
 const (
 	configurationYamlKey     = "configuration.yaml"
 	generatedConfigmapSuffix = "-configuration"
+	// recorderDBSecretSuffix is the suffix for the K8s Secret that holds the recorder
+	// database URL when spec.recorder.databaseSecretRef is used. The Secret is mounted
+	// into the HA pod at /config/recorder_db_url.yaml so that credentials are never
+	// placed in a ConfigMap.
+	recorderDBSecretSuffix = "-recorder-db"
 	// configHashAnnotationKey moved to constants.go (shared with homeassistant_controller.go)
 
 	// Condition reasons for HomeAssistantConfiguration
@@ -156,11 +161,26 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Compute the effective configuration (with auto-injected !include directives and
-	// location injection) and hash it so that changes to the transformed content — not
-	// just the raw spec — trigger a reload.
-	effectiveConfig := buildEffectiveConfig(config.Spec.Configuration, ha)
-	configHash := calculateConfigHash(effectiveConfig)
+	// Compute the canonical configuration content (auto-includes + location + recorder secret
+	// injection) once so that hash, ConfigMap data, sync detection, and needsRestart all use
+	// identical bytes. Using buildEffectiveConfig here would exclude the recorder section,
+	// causing syncConfigMapFromCRD to see a permanent mismatch and trigger spurious reloads.
+	canonicalContent, err := r.buildConfigContent(ctx, config, ha)
+	if err != nil {
+		log.Error(err, "Failed to build canonical configuration content")
+		meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
+			Type:               conditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "ReconciliationFailed",
+			Message:            fmt.Sprintf("Failed to build configuration content: %v", err),
+			ObservedGeneration: config.Generation,
+		})
+		if statusErr := r.Status().Update(ctx, config); statusErr != nil {
+			log.Error(statusErr, "Failed to update status")
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+	configHash := calculateConfigHash(canonicalContent)
 
 	// Capture old configuration BEFORE updating ConfigMap
 	// This is critical for needsRestart() to work correctly in auto mode
@@ -183,14 +203,14 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	syncedContent := false
 	if config.Status.ConfigHash == configHash {
 		var syncErr error
-		syncedContent, syncErr = r.syncConfigMapFromCRD(ctx, config, ha)
+		syncedContent, syncErr = r.syncConfigMapFromCRD(ctx, config, canonicalContent)
 		if syncErr != nil {
 			log.Error(syncErr, "Failed to sync ConfigMap from CRD")
 		}
 	}
 
 	// Create or update the ConfigMap
-	if err := r.reconcileGeneratedConfigMap(ctx, config, ha); err != nil {
+	if err := r.reconcileGeneratedConfigMap(ctx, config, canonicalContent); err != nil {
 		log.Error(err, "Failed to reconcile generated ConfigMap")
 		meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
@@ -207,7 +227,7 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 
 	// Perform configuration reload if hash changed or if ConfigMap was restored from external edit
 	if config.Status.ConfigHash != configHash || syncedContent {
-		if err := r.performConfigReload(ctx, config, ha, configHash, oldConfig); err != nil {
+		if err := r.performConfigReload(ctx, config, ha, configHash, oldConfig, canonicalContent); err != nil {
 			log.Error(err, "Failed to reload configuration")
 			meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
 				Type:               conditionTypeReady,
@@ -246,7 +266,7 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 	ctx context.Context,
 	config *hav1alpha1.HomeAssistantConfiguration,
-	ha *hav1alpha1.HomeAssistant,
+	canonicalContent string,
 ) error {
 	log := logf.FromContext(ctx)
 
@@ -271,7 +291,7 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 					// NO hash annotation on initial creation
 				},
 				Data: map[string]string{
-					configurationYamlKey: buildEffectiveConfig(config.Spec.Configuration, ha),
+					configurationYamlKey: canonicalContent,
 				},
 			}
 
@@ -328,11 +348,10 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 		}
 	}
 
-	expectedData := buildEffectiveConfig(config.Spec.Configuration, ha)
 	existingData := existingConfigMap.Data[configurationYamlKey]
-	if existingData != expectedData {
+	if existingData != canonicalContent {
 		log.Info("Updating generated ConfigMap content (hash annotation preserved for hot-reload)", "name", configMapName)
-		existingConfigMap.Data[configurationYamlKey] = expectedData
+		existingConfigMap.Data[configurationYamlKey] = canonicalContent
 		if err := r.Update(ctx, existingConfigMap); err != nil {
 			return err
 		}
@@ -636,6 +655,7 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 	ha *hav1alpha1.HomeAssistant,
 	newHash string,
 	oldConfig string,
+	canonicalContent string,
 ) error {
 	log := logf.FromContext(ctx)
 
@@ -668,7 +688,7 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 		// that failed before saving status, oldConfig == newConfig and we cannot determine
 		// what changed. Default to restart (safe) to avoid choosing hot-reload for changes
 		// that require a full restart (e.g. adding a new integration like prometheus:).
-		transformedConfig := buildEffectiveConfig(config.Spec.Configuration, ha)
+		transformedConfig := canonicalContent
 		if oldConfig == transformedConfig {
 			log.Info("ConfigMap already synced (retry after partial failure), defaulting to restart")
 			strategy = reloadMethodRestart
@@ -825,7 +845,7 @@ func (r *HomeAssistantConfigurationReconciler) updateConfigMapHashAnnotation(
 func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 	ctx context.Context,
 	config *hav1alpha1.HomeAssistantConfiguration,
-	ha *hav1alpha1.HomeAssistant,
+	canonicalContent string,
 ) (bool, error) {
 	log := logf.FromContext(ctx)
 
@@ -865,9 +885,8 @@ func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 	// NOTE: We only check content, NOT hash annotation.
 	// Hash annotation is managed by performConfigReload() and should not be synced here.
 	currentContent := existingConfigMap.Data[configurationYamlKey]
-	expectedContent := buildEffectiveConfig(config.Spec.Configuration, ha)
 
-	if currentContent == expectedContent {
+	if currentContent == canonicalContent {
 		// ConfigMap content is in sync with CRD
 		return false, nil
 	}
@@ -879,9 +898,9 @@ func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 	log.Info("ConfigMap was modified externally, restoring from CRD state",
 		"configMapName", configMapName,
 		"currentContent", currentContent[:min(50, len(currentContent))],
-		"expectedContent", expectedContent[:min(50, len(expectedContent))])
+		"expectedContent", canonicalContent[:min(50, len(canonicalContent))])
 
-	existingConfigMap.Data[configurationYamlKey] = expectedContent
+	existingConfigMap.Data[configurationYamlKey] = canonicalContent
 	// DO NOT update annotation hash here - it's managed by performConfigReload() only
 
 	if err := r.Update(ctx, existingConfigMap); err != nil {
@@ -963,4 +982,134 @@ func (r *HomeAssistantConfigurationReconciler) isHomeAssistantServiceReady(
 	ha *hav1alpha1.HomeAssistant,
 ) bool {
 	return isServiceReadyFromEndpointSlices(ctx, r.Client, ha.Name, ha.Namespace)
+}
+
+// resolveRecorderDB returns the database URL for the recorder together with a flag
+// indicating whether the value came from a K8s Secret reference (DatabaseSecretRef).
+// When fromSecretRef is true the caller must store the URL in a separate K8s Secret
+// (see reconcileRecorderDBSecret) instead of embedding it in the ConfigMap.
+// Returns ("", false, nil) when neither Database nor DatabaseSecretRef is set.
+func (r *HomeAssistantConfigurationReconciler) resolveRecorderDB(
+	ctx context.Context,
+	config *hav1alpha1.HomeAssistantConfiguration,
+) (url string, fromSecretRef bool, err error) {
+	rec := config.Spec.Recorder
+	if rec == nil {
+		return "", false, nil
+	}
+	if rec.DatabaseSecretRef != nil {
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Name:      rec.DatabaseSecretRef.Name,
+			Namespace: config.Namespace,
+		}, secret); err != nil {
+			return "", false, fmt.Errorf("database secret %q: %w", rec.DatabaseSecretRef.Name, err)
+		}
+		key := rec.DatabaseSecretRef.Key
+		if key == "" {
+			key = "value"
+		}
+		val, ok := secret.Data[key]
+		if !ok {
+			return "", false, fmt.Errorf("database secret %q missing key %q", rec.DatabaseSecretRef.Name, key)
+		}
+		return string(val), true, nil
+	}
+	return rec.Database, false, nil
+}
+
+// reconcileRecorderDBSecret creates or updates the K8s Secret that holds the recorder
+// database URL. The Secret is owned by the HAConfig CR and mounted by the HA pod at
+// /config/recorder_db_url.yaml so that the URL is never embedded in the ConfigMap.
+func (r *HomeAssistantConfigurationReconciler) reconcileRecorderDBSecret(
+	ctx context.Context,
+	config *hav1alpha1.HomeAssistantConfiguration,
+	dbURL string,
+) error {
+	secretName := config.Spec.HomeAssistantRef.Name + recorderDBSecretSuffix
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: config.Namespace,
+		},
+		Data: map[string][]byte{
+			"recorder_db_url.yaml": []byte(dbURL),
+		},
+	}
+	if err := controllerutil.SetControllerReference(config, desired, r.Scheme); err != nil {
+		return fmt.Errorf("set owner reference on recorder-db secret: %w", err)
+	}
+
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: config.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if string(existing.Data["recorder_db_url.yaml"]) == dbURL {
+		return nil
+	}
+	existing.Data = desired.Data
+	return r.Update(ctx, existing)
+}
+
+// cleanupRecorderDBSecret deletes the recorder-db Secret if it exists.
+// Called when databaseSecretRef is removed or the recorder is disabled so the
+// orphaned Secret does not linger.
+func (r *HomeAssistantConfigurationReconciler) cleanupRecorderDBSecret(
+	ctx context.Context,
+	config *hav1alpha1.HomeAssistantConfiguration,
+) error {
+	secret := &corev1.Secret{}
+	secretName := config.Spec.HomeAssistantRef.Name + recorderDBSecretSuffix
+	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: config.Namespace}, secret)
+	if errors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return r.Delete(ctx, secret)
+}
+
+// buildConfigContent builds the final configuration.yaml content for the ConfigMap.
+// It applies auto-includes, location injection, and recorder section injection.
+// When spec.recorder.databaseSecretRef is set, the actual URL is stored in the
+// <ha-name>-recorder-db K8s Secret (never in the ConfigMap) and the ConfigMap
+// receives "!include recorder_db_url.yaml" instead.
+func (r *HomeAssistantConfigurationReconciler) buildConfigContent(
+	ctx context.Context,
+	config *hav1alpha1.HomeAssistantConfiguration,
+	ha *hav1alpha1.HomeAssistant,
+) (string, error) {
+	content := buildEffectiveConfig(config.Spec.Configuration, ha)
+	rec := config.Spec.Recorder
+	if rec == nil || (rec.Enabled != nil && !*rec.Enabled) {
+		// No recorder injection — clean up any leftover recorder-db Secret.
+		if err := r.cleanupRecorderDBSecret(ctx, config); err != nil {
+			logf.FromContext(ctx).Error(err, "Failed to clean up recorder-db secret (best-effort)")
+		}
+		return content, nil
+	}
+
+	dbURL, fromSecretRef, err := r.resolveRecorderDB(ctx, config)
+	if err != nil {
+		return "", err
+	}
+
+	if fromSecretRef {
+		if err := r.reconcileRecorderDBSecret(ctx, config, dbURL); err != nil {
+			return "", fmt.Errorf("reconcile recorder-db secret: %w", err)
+		}
+	} else {
+		// Plain database string or empty — remove any leftover Secret from a previous
+		// databaseSecretRef configuration.
+		if err := r.cleanupRecorderDBSecret(ctx, config); err != nil {
+			logf.FromContext(ctx).Error(err, "Failed to clean up recorder-db secret (best-effort)")
+		}
+	}
+
+	return injectRecorder(content, rec, dbURL, fromSecretRef)
 }

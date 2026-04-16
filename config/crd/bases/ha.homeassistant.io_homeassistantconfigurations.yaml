@@ -151,8 +151,27 @@ spec:
                   database:
                     description: |-
                       Database URL for the recorder (e.g., "postgresql://user:pass@host/db")
-                      If not specified, uses SQLite with default path
+                      If not specified, uses SQLite with default path.
+                      Mutually exclusive with DatabaseSecretRef; DatabaseSecretRef takes precedence.
                     type: string
+                  databaseSecretRef:
+                    description: |-
+                      DatabaseSecretRef references a Secret containing the database URL.
+                      The resolved value is written as plain text into configuration.yaml,
+                      avoiding the !secret tag which is stripped by the YAML round-trip.
+                      Takes precedence over Database if both are set.
+                      The Secret must be in the same namespace as the HomeAssistant CR.
+                    properties:
+                      key:
+                        description: Key in the Secret (if not specified, defaults
+                          to "password" or "value")
+                        type: string
+                      name:
+                        description: Name of the Secret
+                        type: string
+                    required:
+                    - name
+                    type: object
                   enabled:
                     default: true
                     description: Enabled controls if the recorder is enabled

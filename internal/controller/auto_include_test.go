@@ -205,3 +205,105 @@ func TestEnsureAutoIncludes_Idempotent(t *testing.T) {
 		t.Errorf("ensureAutoIncludes is not idempotent:\nfirst:  %q\nsecond: %q", first, second)
 	}
 }
+
+func TestInjectRecorder(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		recorder   *hav1alpha1.RecorderConfig
+		dbURL      string
+		useInclude bool
+		wantIn     []string
+		wantNotIn  []string
+		wantErr    bool
+	}{
+		{
+			name:     "nil recorder — input unchanged",
+			input:    "homeassistant:\n  name: Test\n",
+			recorder: nil,
+			wantIn:   []string{"homeassistant:"},
+		},
+		{
+			name:      "disabled recorder — input unchanged",
+			input:     "homeassistant:\n  name: Test\n",
+			recorder:  &hav1alpha1.RecorderConfig{Enabled: boolPtr(false)},
+			dbURL:     "postgresql://user:pass@host/db",
+			wantNotIn: []string{"recorder:"},
+		},
+		{
+			name:     "dbURL injected into new recorder section",
+			input:    "homeassistant:\n  name: Test\n",
+			recorder: &hav1alpha1.RecorderConfig{},
+			dbURL:    "postgresql://user:pass@host/db",
+			wantIn:   []string{"recorder:", "db_url: postgresql://user:pass@host/db"},
+		},
+		{
+			name:     "purge_keep_days injected",
+			input:    "homeassistant:\n  name: Test\n",
+			recorder: &hav1alpha1.RecorderConfig{PurgeKeepDays: int32Ptr(7)},
+			dbURL:    "postgresql://user:pass@host/db",
+			wantIn:   []string{"purge_keep_days: 7"},
+		},
+		{
+			name:      "existing recorder db_url overridden",
+			input:     "recorder:\n  db_url: sqlite://old\n",
+			recorder:  &hav1alpha1.RecorderConfig{},
+			dbURL:     "postgresql://user:pass@host/db",
+			wantIn:    []string{"db_url: postgresql://user:pass@host/db"},
+			wantNotIn: []string{"sqlite://old"},
+		},
+		{
+			name:     "!include tags in other sections preserved",
+			input:    "automation: !include automations.yaml\nscript: !include scripts.yaml\n",
+			recorder: &hav1alpha1.RecorderConfig{},
+			dbURL:    "postgresql://user:pass@host/db",
+			wantIn:   []string{"!include automations.yaml", "!include scripts.yaml", "db_url:"},
+		},
+		{
+			name:      "empty dbURL and nil PurgeKeepDays — input unchanged",
+			input:     "homeassistant:\n  name: Test\n",
+			recorder:  &hav1alpha1.RecorderConfig{},
+			dbURL:     "",
+			wantNotIn: []string{"recorder:"},
+		},
+		{
+			// Regression: tagged scalar like "recorder: !include recorder.yaml" must not be
+			// overwritten. injectRecorder should return configYAML unchanged.
+			name:     "tagged recorder scalar preserved (!include recorder.yaml)",
+			input:    "recorder: !include recorder.yaml\n",
+			recorder: &hav1alpha1.RecorderConfig{},
+			dbURL:    "postgresql://user:pass@host/db",
+			wantIn:   []string{"recorder: !include recorder.yaml"},
+		},
+		{
+			// Security: when useInclude=true the URL must NOT appear in the output; instead
+			// db_url should reference the mounted file via HA's !include tag.
+			name:       "useInclude writes !include reference instead of URL",
+			input:      "homeassistant:\n  name: Test\n",
+			recorder:   &hav1alpha1.RecorderConfig{},
+			dbURL:      "postgresql://user:pass@host/db",
+			useInclude: true,
+			wantIn:     []string{"db_url: !include recorder_db_url.yaml"},
+			wantNotIn:  []string{"postgresql://"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := injectRecorder(tt.input, tt.recorder, tt.dbURL, tt.useInclude)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("injectRecorder() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			for _, want := range tt.wantIn {
+				if !strings.Contains(got, want) {
+					t.Errorf("expected %q in output:\n%s", want, got)
+				}
+			}
+			for _, notWant := range tt.wantNotIn {
+				if strings.Contains(got, notWant) {
+					t.Errorf("did not expect %q in output:\n%s", notWant, got)
+				}
+			}
+		})
+	}
+}

@@ -355,7 +355,10 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 				false, false,
 				func(s *hav1alpha1.BootstrapStatus) {
 					s.OnboardingDoneFirstSeen = &now
-					s.LoginRecoveryAttempts = 0
+					// Do NOT reset LoginRecoveryAttempts here — it may already
+					// be non-zero from a previous LoginNoUser cycle. Resetting
+					// here creates an infinite loop where the counter never
+					// advances past 1.
 				},
 			)
 		}
@@ -510,19 +513,21 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 		// not registered yet when we first saw the 404 (transient CI startup).
 		// Reset OnboardingDoneFirstSeen so the confirmation window restarts and
 		// PerformBootstrap is retried once onboarding becomes available.
-		// LoginRecoveryAttempts is intentionally kept to limit total resets.
+		// LoginRecoveryAttempts is NOT incremented here: LoginNoUser is a
+		// startup race condition, not a credential failure. Counting it would
+		// exhaust the retry limit before onboarding routes finish loading on
+		// slow CI runners (causing an infinite attempt=1 loop when combined
+		// with the OnboardingDone first-seen handler).
 		if haclient.IsLoginNoUser(err) {
-			log.Info("Login returned type=form — no user exists, "+
-				"resetting onboarding window to await registration",
-				"attempt", attempts, "maxAttempts", maxLoginRecoveryRetries)
+			log.Info("Login returned type=form — no user exists, " +
+				"resetting onboarding window to await registration")
 			return r.updateBootstrapStatus(ctx, ha, reasonBootstrapNotReady,
-				fmt.Sprintf("No user in HA yet (attempt %d/%d), "+
-					"resetting onboarding window",
-					attempts, maxLoginRecoveryRetries),
+				"No user in HA yet, resetting onboarding window",
 				false, false,
 				func(s *hav1alpha1.BootstrapStatus) {
 					s.OnboardingDoneFirstSeen = nil
-					s.LoginRecoveryAttempts = attempts
+					// Keep LoginRecoveryAttempts unchanged — this is not a
+					// credential failure, only a transient startup condition.
 				},
 			)
 		}

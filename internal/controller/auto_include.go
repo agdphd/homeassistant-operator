@@ -149,6 +149,136 @@ func setNodeField(mapping *yaml.Node, key, value, tag string) {
 	)
 }
 
+// overrideNodeField sets a key-value pair in a mapping node, replacing any existing value.
+func overrideNodeField(mapping *yaml.Node, key, value, tag string) {
+	for i := 0; i < len(mapping.Content)-1; i += 2 {
+		if mapping.Content[i].Value == key {
+			mapping.Content[i+1].Kind = yaml.ScalarNode
+			mapping.Content[i+1].Tag = tag
+			mapping.Content[i+1].Value = value
+			return
+		}
+	}
+	mapping.Content = append(mapping.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Value: key},
+		&yaml.Node{Kind: yaml.ScalarNode, Value: value, Tag: tag},
+	)
+}
+
+// shouldInjectRecorder reports whether injectRecorder has any fields to write.
+// Returns false when recorder is nil, explicitly disabled, or there is nothing to inject.
+func shouldInjectRecorder(recorder *hav1alpha1.RecorderConfig, dbURL string) bool {
+	if recorder == nil {
+		return false
+	}
+	if recorder.Enabled != nil && !*recorder.Enabled {
+		return false
+	}
+	return dbURL != "" || recorder.PurgeKeepDays != nil
+}
+
+// parseConfigYAML parses configYAML into a yaml.DocumentNode.
+// Returns an empty document node when the input is empty or null.
+func parseConfigYAML(configYAML string) (*yaml.Node, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(configYAML), &doc); err != nil {
+		return nil, fmt.Errorf("failed to parse configuration YAML for recorder injection: %w", err)
+	}
+	if doc.Kind == 0 {
+		doc = yaml.Node{
+			Kind:    yaml.DocumentNode,
+			Content: []*yaml.Node{{Kind: yaml.MappingNode}},
+		}
+	}
+	return &doc, nil
+}
+
+// getOrCreateRecorderSection finds or creates the "recorder" mapping under root.
+// Returns (section, true) when the section is a mapping node that can be mutated.
+// Returns (nil, false) when the section is a tagged scalar (e.g. "!include recorder.yaml")
+// that must be preserved unchanged — the caller should return configYAML as-is.
+func getOrCreateRecorderSection(root *yaml.Node) (*yaml.Node, bool) {
+	recSection := nodeMappingValue(root, "recorder")
+	if recSection == nil {
+		recSection = &yaml.Node{Kind: yaml.MappingNode}
+		root.Content = append(root.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "recorder"},
+			recSection,
+		)
+		return recSection, true
+	}
+	// Bare "recorder:" with truly empty/null value — upgrade to mapping in-place.
+	if recSection.Kind == yaml.ScalarNode &&
+		recSection.Value == "" &&
+		(recSection.Tag == "" || recSection.Tag == "!!null") {
+		recSection.Kind = yaml.MappingNode
+		recSection.Tag = ""
+		recSection.Value = ""
+		return recSection, true
+	}
+	if recSection.Kind != yaml.MappingNode {
+		// Tagged scalar like "recorder: !include recorder.yaml" — preserve unchanged.
+		return nil, false
+	}
+	return recSection, true
+}
+
+// applyRecorderFields writes db_url and purge_keep_days into the recorder mapping node.
+// When useInclude is true, db_url is written as "!include recorder_db_url.yaml" so that
+// credentials are not materialised into the ConfigMap; the actual URL must be stored in a
+// K8s Secret mounted at /config/recorder_db_url.yaml (see reconcileRecorderDBSecret).
+// When useInclude is false, dbURL is written verbatim as a plain string.
+func applyRecorderFields(recSection *yaml.Node, dbURL string, useInclude bool, recorder *hav1alpha1.RecorderConfig) {
+	if dbURL != "" {
+		if useInclude {
+			overrideNodeField(recSection, "db_url", "recorder_db_url.yaml", "!include")
+		} else {
+			overrideNodeField(recSection, "db_url", dbURL, "!!str")
+		}
+	}
+	if recorder.PurgeKeepDays != nil {
+		overrideNodeField(recSection, "purge_keep_days", strconv.Itoa(int(*recorder.PurgeKeepDays)), "!!int")
+	}
+}
+
+// injectRecorder merges spec.recorder fields into the recorder: section of
+// configuration.yaml. When useInclude is true, db_url is written as
+// "!include recorder_db_url.yaml" instead of the literal URL; the actual URL
+// must be stored in a K8s Secret mounted at /config/recorder_db_url.yaml so
+// that credentials are never placed in a ConfigMap. Uses yaml.Node to preserve
+// !include / !secret tags in other sections through the round-trip.
+// Returns configYAML unchanged when recorder is nil or disabled.
+func injectRecorder(
+	configYAML string, recorder *hav1alpha1.RecorderConfig, dbURL string, useInclude bool,
+) (string, error) {
+	if !shouldInjectRecorder(recorder, dbURL) {
+		return configYAML, nil
+	}
+
+	doc, err := parseConfigYAML(configYAML)
+	if err != nil {
+		return "", err
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return "", fmt.Errorf("expected mapping at root of configuration YAML")
+	}
+
+	recSection, ok := getOrCreateRecorderSection(root)
+	if !ok {
+		// Tagged scalar preserved — return input unchanged.
+		return configYAML, nil
+	}
+
+	applyRecorderFields(recSection, dbURL, useInclude, recorder)
+
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal configuration YAML after recorder injection: %w", err)
+	}
+	return string(out), nil
+}
+
 // buildEffectiveConfig applies injectLocation and ensureAutoIncludes transformations
 // to produce the final configuration.yaml content written to the ConfigMap.
 // ha may be nil (no location injection) if the HomeAssistant CR is unavailable.
