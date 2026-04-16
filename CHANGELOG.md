@@ -8,9 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.9.0] - 2026-04-16
+
 ### Added
 
-- **`spec.recorder.databaseSecretRef` for HomeAssistantConfiguration** — resolves the `!secret` tag stripping problem: when `configuration.yaml` is round-tripped through YAML, custom tags (`!secret`, `!include`) are lost. `DatabaseSecretRef` reads the database URL from a K8s Secret and writes it as plain text into the generated ConfigMap, bypassing the `!secret` mechanism entirely. Takes precedence over `spec.recorder.database` when both are set. `spec.recorder.enabled: false` skips injection. `purgeKeepDays` is also injected when set. The injection uses `yaml.Node` so `!include`/`!secret` tags in other sections are preserved.
+- **`spec.recorder.databaseSecretRef` for HomeAssistantConfiguration** — database URL is read from a K8s Secret and mounted into the HA pod as a file; `configuration.yaml` references it via `db_url: !include recorder_db_url.yaml` so credentials are never written to a ConfigMap. Takes precedence over `spec.recorder.database` when both are set. `spec.recorder.enabled: false` skips injection and cleans up the mounted Secret. `purgeKeepDays` is also injected when set. The injection uses `yaml.Node` so `!include`/`!secret` tags in other sections are preserved.
 
 - **API readiness gate in bootstrap** — `CheckAPIReady` (GET `/api/config` without auth) is now called between health check and onboarding status check. Returns 401 when HA routes are fully loaded, 404 during startup (same as `/api/onboarding`). This eliminates the ambiguity that required the 10-minute confirmation window.
 
@@ -21,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`logger` added to hot-reloadable config sections** — `logger` was documented as hot-reloadable but missing from `reloadableSections` map, causing the controller to trigger a full pod restart instead of calling `ReloadCoreConfig` when it was added or modified.
 
 ### Fixed
+
+- **Bootstrap infinite loop on slow CI runners** — two interacting bugs caused `LoginRecoveryAttempts` to never advance past 1, trapping bootstrap in an infinite `LoginNoUser` cycle. (1) The "first seen OnboardingDone" handler reset `LoginRecoveryAttempts = 0` on every cycle, undoing any progress. (2) `LoginNoUser` (`type=form`) is a transient startup race where onboarding routes have not yet registered — it is not a credential failure and should not count toward the retry limit. Fixed: the counter is no longer reset in the first-seen handler, and `LoginNoUser` does not increment it. The loop now continues until onboarding routes load and `CheckOnboardingStatus` returns nil.
 
 - **E2E critical path: wrong Service name** — test looked up `<ha-name>-homeassistant` but the controller creates the service as `<ha-name>`. Fixed to use the correct name.
 
