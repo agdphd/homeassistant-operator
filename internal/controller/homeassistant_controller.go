@@ -1104,10 +1104,6 @@ func (r *HomeAssistantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&corev1.ConfigMap{},
 			handler.EnqueueRequestsFromMapFunc(r.findHomeAssistantForConfigMap),
 		).
-		Watches(
-			&corev1.Secret{},
-			handler.EnqueueRequestsFromMapFunc(r.findHomeAssistantForRecorderDBSecret),
-		).
 		Named("homeassistant").
 		Complete(r)
 }
@@ -1171,29 +1167,6 @@ func (r *HomeAssistantReconciler) findHomeAssistantForConfigMap(
 			NamespacedName: types.NamespacedName{
 				Name:      haName,
 				Namespace: configMap.Namespace,
-			},
-		},
-	}
-}
-
-// findHomeAssistantForRecorderDBSecret triggers reconciliation when the recorder-db
-// Secret (created by HomeAssistantConfiguration controller for databaseSecretRef) is
-// created, updated, or deleted. This ensures the StatefulSet volume mount is added
-// or removed as the Secret lifecycle changes.
-func (r *HomeAssistantReconciler) findHomeAssistantForRecorderDBSecret(
-	ctx context.Context,
-	obj client.Object,
-) []reconcile.Request {
-	secret := obj.(*corev1.Secret)
-	if !strings.HasSuffix(secret.Name, recorderDBSecretSuffix) {
-		return nil
-	}
-	haName := strings.TrimSuffix(secret.Name, recorderDBSecretSuffix)
-	return []reconcile.Request{
-		{
-			NamespacedName: types.NamespacedName{
-				Name:      haName,
-				Namespace: secret.Namespace,
 			},
 		},
 	}
