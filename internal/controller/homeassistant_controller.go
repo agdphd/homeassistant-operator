@@ -95,6 +95,10 @@ type HomeAssistantReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=core,resources=pods/exec,verbs=create
+// NOTE: pods/exec is granted cluster-wide because Kubebuilder generates a
+// single ClusterRole. Users with strict security requirements should manually
+// replace the generated ClusterRoleBinding with a RoleBinding scoped to the
+// Home Assistant namespace so exec is only permitted on HA pods.
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 

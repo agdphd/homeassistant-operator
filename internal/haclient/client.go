@@ -68,15 +68,25 @@ func (c *Client) CheckHealth(ctx context.Context) error {
 	}
 
 	// 403 Forbidden = operator IP has been banned by HA's ip_bans.yaml.
-	// 429 Too Many Requests = HA is about to ban (login threshold exceeded).
-	// Both are detected here so the caller can exec-unban and restart HA.
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+	// Trigger self-unban so the operator can recover automatically.
+	if resp.StatusCode == http.StatusForbidden {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		msg := fmt.Sprintf("operator IP banned by HA (HTTP %d): %s",
-			resp.StatusCode, strings.TrimSpace(string(body)))
+		msg := fmt.Sprintf("operator IP banned by HA (HTTP 403): %s",
+			strings.TrimSpace(string(body)))
 		return &Error{
 			Type:       ErrorTypeBanned,
 			Message:    msg,
+			StatusCode: resp.StatusCode,
+		}
+	}
+
+	// 429 Too Many Requests = HA rate-limiting, not a ban.
+	// Treat as transient not-ready so the caller backs off without
+	// consuming the selfUnbanMaxCount budget.
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return &Error{
+			Type:       ErrorTypeNotReady,
+			Message:    "Home Assistant rate-limiting requests (HTTP 429)",
 			StatusCode: resp.StatusCode,
 		}
 	}

@@ -8,8 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [Unreleased]
-
 ### Added
 
 - **Auto-unban operator IP from HA `ip_bans.yaml`** — when HA returns 403/429 (operator IP banned after too many failed login attempts), the operator automatically execs into the HA pod, removes its IP from `/config/ip_bans.yaml`, and deletes the pod so StatefulSet recreates it (clears in-memory bans). Limits: at most 5 unbans total, 5-minute cooldown between each. Once the limit is reached a `SelfUnbanLimitReached` warning event is emitted and manual intervention is required. New status fields: `selfUnbanCount`, `lastSelfUnban`. New event reasons: `SelfUnbanned`, `SelfUnbanFailed`, `SelfUnbanLimitReached`. Requires `POD_IP` env var (injected via downward API) and new RBAC `pods/exec create`.
@@ -260,7 +258,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Primary: k3s on Raspberry Pi 4/5 (ARM64)
 - Also supported: Any Kubernetes cluster (AMD64/ARM64)
 
-[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v0.9.0...HEAD
+[v0.9.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.8.0...v0.9.0
 [v0.8.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.7.1...v0.8.0
 [v0.7.1]: https://github.com/przemekhys/homeassistant-operator/compare/v0.7.0...v0.7.1
 [v0.7.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.6.0...v0.7.0

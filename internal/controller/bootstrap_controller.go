@@ -793,9 +793,13 @@ func (r *HomeAssistantReconciler) handleSelfBan(
 	if podIP == "" {
 		log.Error(nil, "POD_IP env var not set — cannot determine IP to unban; "+
 			"add downward API env POD_IP=status.podIP to the operator Deployment")
-		r.Recorder.Eventf(ha, nil, corev1.EventTypeWarning, "SelfUnbanFailed",
-			"SelfUnbanFailed",
-			"POD_IP env var not set; add downward API to operator Deployment")
+		// Emit the misconfiguration event only once (SelfUnbanCount == 0) to avoid
+		// flooding the event stream on every reconcile while the operator is banned.
+		if ha.Status.SelfUnbanCount == 0 {
+			r.Recorder.Eventf(ha, nil, corev1.EventTypeWarning, "SelfUnbanFailed",
+				"SelfUnbanFailed",
+				"POD_IP env var not set; add downward API to operator Deployment")
+		}
 		return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
 	}
 
@@ -804,6 +808,10 @@ func (r *HomeAssistantReconciler) handleSelfBan(
 
 	if r.RestConfig == nil {
 		log.Error(nil, "RestConfig not set on reconciler — cannot exec into HA pod")
+		if ha.Status.SelfUnbanCount == 0 {
+			r.Recorder.Eventf(ha, nil, corev1.EventTypeWarning, "SelfUnbanFailed",
+				"SelfUnbanFailed", "RestConfig not configured on reconciler")
+		}
 		return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
 	}
 
@@ -818,21 +826,28 @@ func (r *HomeAssistantReconciler) handleSelfBan(
 	// Delete the HA pod so StatefulSet recreates it — clears in-memory bans.
 	haPod := &corev1.Pod{}
 	podKey := types.NamespacedName{Name: ha.Name + "-0", Namespace: ha.Namespace}
-	if err := r.Get(ctx, podKey, haPod); err == nil {
-		if delErr := r.Delete(ctx, haPod); delErr != nil {
-			log.Error(delErr, "Failed to delete HA pod after ip_bans removal")
-		} else {
-			log.Info("Deleted HA pod to clear in-memory bans", "pod", ha.Name+"-0")
+	if err := r.Get(ctx, podKey, haPod); err != nil {
+		if !errors.IsNotFound(err) {
+			log.Error(err, "Failed to get HA pod for deletion after ip_bans removal")
+			return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
 		}
+		// Pod already gone — StatefulSet will recreate it; proceed to update status.
+	} else {
+		if err := r.Delete(ctx, haPod); err != nil {
+			log.Error(err, "Failed to delete HA pod after ip_bans removal")
+			return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
+		}
+		log.Info("Deleted HA pod to clear in-memory bans", "pod", ha.Name+"-0")
 	}
 
-	// Update status
+	// Update status only after the pod delete succeeded (or pod was already gone).
 	now := metav1.Now()
 	patch := client.MergeFrom(ha.DeepCopy())
 	ha.Status.SelfUnbanCount++
 	ha.Status.LastSelfUnban = &now
 	if err := r.Status().Patch(ctx, ha, patch); err != nil {
 		log.Error(err, "Failed to update SelfUnban status")
+		return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
 	}
 
 	r.Recorder.Eventf(ha, nil, corev1.EventTypeNormal, "SelfUnbanned",

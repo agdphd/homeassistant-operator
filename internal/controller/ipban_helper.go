@@ -26,6 +26,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // unbanSelfFromHA removes podIP from /config/ip_bans.yaml inside the HA pod
@@ -87,6 +88,11 @@ print('removed')
 		Stderr: &stderr,
 	}); err != nil {
 		return fmt.Errorf("exec failed (stderr: %s): %w", stderr.String(), err)
+	}
+
+	if out := stdout.String(); out != "" {
+		logf.FromContext(ctx).V(1).Info("ip_bans.yaml unban script output",
+			"pod", haName+"-0", "output", out)
 	}
 
 	return nil
