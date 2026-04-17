@@ -12,6 +12,7 @@ const (
 	ErrorTypeInvalidResponse ErrorType = "InvalidResponse" // Parse error
 	ErrorTypeAuth            ErrorType = "Auth"            // Authentication error
 	ErrorTypeLoginNoUser     ErrorType = "LoginNoUser"     // Login flow returned type=form (no user exists yet)
+	ErrorTypeBanned          ErrorType = "Banned"          // Operator IP banned by HA ip_bans.yaml
 )
 
 // Error represents a Home Assistant API error
@@ -45,6 +46,14 @@ func IsNotReady(err error) bool {
 func IsOnboardingDone(err error) bool {
 	if haErr, ok := err.(*Error); ok {
 		return haErr.Type == ErrorTypeOnboardingDone
+	}
+	return false
+}
+
+// IsBanned returns true if the operator's IP has been banned by HA
+func IsBanned(err error) bool {
+	if haErr, ok := err.(*Error); ok {
+		return haErr.Type == ErrorTypeBanned
 	}
 	return false
 }

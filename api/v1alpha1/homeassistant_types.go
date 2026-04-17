@@ -357,6 +357,15 @@ type HomeAssistantStatus struct {
 	// BootstrapStatus contains the status of the automatic bootstrap process
 	// +optional
 	Bootstrap *BootstrapStatus `json:"bootstrap,omitempty"`
+
+	// SelfUnbanCount is the number of times the operator has removed its own IP
+	// from HA's ip_bans.yaml and restarted the pod to clear in-memory bans.
+	// +optional
+	SelfUnbanCount int32 `json:"selfUnbanCount,omitempty"`
+
+	// LastSelfUnban is the timestamp of the most recent self-unban operation.
+	// +optional
+	LastSelfUnban *metav1.Time `json:"lastSelfUnban,omitempty"`
 }
 
 // BootstrapStatus contains the status of the automatic bootstrap process

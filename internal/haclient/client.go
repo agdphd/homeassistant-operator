@@ -47,7 +47,7 @@ func (c *Client) WithTimeout(timeout time.Duration) *Client {
 }
 
 // CheckHealth checks if Home Assistant is responding
-// Returns nil if healthy, ErrorTypeNotReady if not ready
+// Returns nil if healthy, ErrorTypeNotReady if not ready, ErrorTypeBanned if IP is banned.
 // Note: 401 Unauthorized is considered healthy (HA is running but needs onboarding)
 func (c *Client) CheckHealth(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/", nil)
@@ -65,6 +65,30 @@ func (c *Client) CheckHealth(ctx context.Context) error {
 	// 200 OK = healthy with auth, 401 Unauthorized = healthy but needs onboarding
 	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusUnauthorized {
 		return nil
+	}
+
+	// 403 Forbidden = operator IP has been banned by HA's ip_bans.yaml.
+	// Trigger self-unban so the operator can recover automatically.
+	if resp.StatusCode == http.StatusForbidden {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		msg := fmt.Sprintf("operator IP banned by HA (HTTP 403): %s",
+			strings.TrimSpace(string(body)))
+		return &Error{
+			Type:       ErrorTypeBanned,
+			Message:    msg,
+			StatusCode: resp.StatusCode,
+		}
+	}
+
+	// 429 Too Many Requests = HA rate-limiting, not a ban.
+	// Treat as transient not-ready so the caller backs off without
+	// consuming the selfUnbanMaxCount budget.
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return &Error{
+			Type:       ErrorTypeNotReady,
+			Message:    "Home Assistant rate-limiting requests (HTTP 429)",
+			StatusCode: resp.StatusCode,
+		}
 	}
 
 	return &Error{
