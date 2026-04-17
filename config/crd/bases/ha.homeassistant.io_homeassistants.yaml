@@ -504,6 +504,11 @@ spec:
                   - type
                   type: object
                 type: array
+              lastSelfUnban:
+                description: LastSelfUnban is the timestamp of the most recent self-unban
+                  operation.
+                format: date-time
+                type: string
               phase:
                 description: Phase represents the current lifecycle phase of the HomeAssistant
                   instance
@@ -517,6 +522,12 @@ spec:
                 description: Ready indicates if the Home Assistant instance is ready
                   to serve traffic
                 type: boolean
+              selfUnbanCount:
+                description: |-
+                  SelfUnbanCount is the number of times the operator has removed its own IP
+                  from HA's ip_bans.yaml and restarted the pod to clear in-memory bans.
+                format: int32
+                type: integer
               url:
                 description: URL is the access URL for Home Assistant (if Ingress
                   is enabled)

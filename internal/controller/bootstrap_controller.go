@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -100,11 +102,11 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(
 	haURL := r.buildHomeAssistantURL(ha)
 
 	// Create HA client
-	client := haclient.NewClient(haURL).WithTimeout(30 * time.Second)
+	haClient := haclient.NewClient(haURL).WithTimeout(30 * time.Second)
 
 	// Health check - ensure HA is responding before attempting bootstrap
 	log.Info("Performing health check before bootstrap", "url", haURL)
-	if err := client.CheckHealth(ctx); err != nil {
+	if err := haClient.CheckHealth(ctx); err != nil {
 		if haclient.IsNotReady(err) {
 			log.Info("Home Assistant not ready for bootstrap",
 				"error", err.Error())
@@ -113,6 +115,10 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(
 				"Health check failed - not ready yet",
 				false, false,
 			)
+		}
+		if haclient.IsBanned(err) {
+			log.Error(err, "Operator IP banned by Home Assistant, attempting self-unban")
+			return r.handleSelfBan(ctx, ha, err)
 		}
 		log.Error(err, "Bootstrap health check failed")
 		return r.updateBootstrapStatus(
@@ -124,7 +130,7 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(
 	// Full API readiness check: ensure all API routes are registered before
 	// checking onboarding. This eliminates the ambiguous 404 from /api/onboarding
 	// during the startup window where HTTP is up but routes aren't loaded.
-	if err := client.CheckAPIReady(ctx); err != nil {
+	if err := haClient.CheckAPIReady(ctx); err != nil {
 		log.Info("Home Assistant API not fully loaded yet", "error", err.Error())
 		return ctrl.Result{RequeueAfter: bootstrapAPIReadyRetry}, nil
 	}
@@ -147,7 +153,7 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(
 
 	// Perform bootstrap
 	log.Info("Performing Home Assistant bootstrap", "url", haURL)
-	token, err := client.PerformBootstrap(ctx, username, password, ownerName, language, opts)
+	token, err := haClient.PerformBootstrap(ctx, username, password, ownerName, language, opts)
 
 	if err != nil {
 		return r.handleBootstrapError(ctx, ha, err)
@@ -318,8 +324,8 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 		cond := meta.FindStatusCondition(ha.Status.Conditions, "BootstrapReady")
 		if cond != nil && cond.Reason == reasonBootstrapLoginFailed {
 			haURL := r.buildHomeAssistantURL(ha)
-			client := haclient.NewClient(haURL).WithTimeout(30 * time.Second)
-			if checkErr := client.CheckOnboardingStatus(ctx); checkErr == nil {
+			haClient := haclient.NewClient(haURL).WithTimeout(30 * time.Second)
+			if checkErr := haClient.CheckOnboardingStatus(ctx); checkErr == nil {
 				log.Info("Onboarding endpoint available after LoginRecoveryFailed — " +
 					"earlier 404s were transient, resetting bootstrap")
 				return r.updateBootstrapStatus(
@@ -442,14 +448,14 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 	}
 
 	haURL := r.buildHomeAssistantURL(ha)
-	client := haclient.NewClient(haURL).WithTimeout(30 * time.Second)
+	haClient := haclient.NewClient(haURL).WithTimeout(30 * time.Second)
 
 	// Re-check /api/onboarding before attempting login recovery.
 	// Three cases:
 	//   nil          — onboarding is pending (transient 404 resolved) → reset
 	//   IsOnboardingDone — onboarding genuinely done → fall through to login
 	//   other error  — transient probe failure (timeout/network) → requeue
-	checkErr := client.CheckOnboardingStatus(ctx)
+	checkErr := haClient.CheckOnboardingStatus(ctx)
 	if checkErr == nil {
 		log.Info("Onboarding endpoint is now available — " +
 			"earlier 404 was transient, resetting bootstrap")
@@ -483,7 +489,7 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 	}
 
 	log.Info("Onboarding already completed, logging in to create API token")
-	tokenResp, err := client.LoginWithCredentials(ctx, username, password)
+	tokenResp, err := haClient.LoginWithCredentials(ctx, username, password)
 	if err != nil {
 		attempts := 1
 		if ha.Status.Bootstrap != nil {
@@ -543,7 +549,7 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 	}
 
 	// Create long-lived token
-	longLivedResp, err := client.CreateLongLivedToken(
+	longLivedResp, err := haClient.CreateLongLivedToken(
 		ctx, tokenResp.AccessToken,
 		&haclient.LongLivedTokenRequest{
 			ClientName: "kubernetes-operator",
@@ -744,4 +750,100 @@ func getOrDefault(value, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+// handleSelfBan is called when HA returns 403/429 indicating the operator's IP
+// is banned. It removes the IP from ip_bans.yaml via exec, deletes the HA pod
+// (forcing HA to restart and clear in-memory bans), and requeues after
+// selfUnbanRequeueWait to give HA time to come back up.
+//
+// Limits: at most selfUnbanMaxCount unbans total; at most one per selfUnbanCooldown.
+// Once limits are exceeded the operator stops retrying and requires manual intervention.
+func (r *HomeAssistantReconciler) handleSelfBan(
+	ctx context.Context,
+	ha *hav1alpha1.HomeAssistant,
+	banErr error,
+) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	// Enforce total unban limit
+	if ha.Status.SelfUnbanCount >= selfUnbanMaxCount {
+		log.Error(banErr, "Self-unban limit reached — manual intervention required",
+			"count", ha.Status.SelfUnbanCount, "max", selfUnbanMaxCount)
+		r.Recorder.Eventf(ha, nil, corev1.EventTypeWarning, "SelfUnbanLimitReached",
+			"SelfUnbanLimitReached",
+			"Operator IP banned and self-unban limit (%d) reached; "+
+				"manually remove the operator IP from /config/ip_bans.yaml and restart HA",
+			selfUnbanMaxCount)
+		return ctrl.Result{RequeueAfter: selfUnbanRequeueWait}, nil
+	}
+
+	// Enforce cooldown
+	if ha.Status.LastSelfUnban != nil {
+		elapsed := time.Since(ha.Status.LastSelfUnban.Time)
+		if elapsed < selfUnbanCooldown {
+			log.Info("Self-unban cooldown active, waiting",
+				"elapsed", elapsed.Round(time.Second),
+				"cooldown", selfUnbanCooldown)
+			return ctrl.Result{RequeueAfter: selfUnbanCooldown - elapsed}, nil
+		}
+	}
+
+	podIP := os.Getenv("POD_IP")
+	if podIP == "" {
+		log.Error(nil, "POD_IP env var not set — cannot determine IP to unban; "+
+			"add downward API env POD_IP=status.podIP to the operator Deployment")
+		r.Recorder.Eventf(ha, nil, corev1.EventTypeWarning, "SelfUnbanFailed",
+			"SelfUnbanFailed",
+			"POD_IP env var not set; add downward API to operator Deployment")
+		return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
+	}
+
+	log.Info("Removing operator IP from HA ip_bans.yaml via exec",
+		"podIP", podIP, "haPod", ha.Name+"-0")
+
+	if r.RestConfig == nil {
+		log.Error(nil, "RestConfig not set on reconciler — cannot exec into HA pod")
+		return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
+	}
+
+	if err := unbanSelfFromHA(ctx, r.RestConfig, ha.Namespace, ha.Name, podIP); err != nil {
+		log.Error(err, "Failed to remove IP from ip_bans.yaml")
+		r.Recorder.Eventf(ha, nil, corev1.EventTypeWarning, "SelfUnbanFailed",
+			"SelfUnbanFailed",
+			"Failed to remove %s from ip_bans.yaml: %v", podIP, err)
+		return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
+	}
+
+	// Delete the HA pod so StatefulSet recreates it — clears in-memory bans.
+	haPod := &corev1.Pod{}
+	podKey := types.NamespacedName{Name: ha.Name + "-0", Namespace: ha.Namespace}
+	if err := r.Get(ctx, podKey, haPod); err == nil {
+		if delErr := r.Delete(ctx, haPod); delErr != nil {
+			log.Error(delErr, "Failed to delete HA pod after ip_bans removal")
+		} else {
+			log.Info("Deleted HA pod to clear in-memory bans", "pod", ha.Name+"-0")
+		}
+	}
+
+	// Update status
+	now := metav1.Now()
+	patch := client.MergeFrom(ha.DeepCopy())
+	ha.Status.SelfUnbanCount++
+	ha.Status.LastSelfUnban = &now
+	if err := r.Status().Patch(ctx, ha, patch); err != nil {
+		log.Error(err, "Failed to update SelfUnban status")
+	}
+
+	r.Recorder.Eventf(ha, nil, corev1.EventTypeNormal, "SelfUnbanned",
+		"SelfUnbanned",
+		"Removed operator IP %s from ip_bans.yaml and restarted HA pod (unban %d/%d)",
+		podIP, ha.Status.SelfUnbanCount, selfUnbanMaxCount)
+
+	log.Info("Self-unban complete, requeuing after restart wait",
+		"podIP", podIP,
+		"unbanCount", ha.Status.SelfUnbanCount,
+		"requeueAfter", selfUnbanRequeueWait)
+
+	return ctrl.Result{RequeueAfter: selfUnbanRequeueWait}, nil
 }
