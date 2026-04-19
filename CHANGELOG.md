@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **CVE-2026-33186** — upgraded `google.golang.org/grpc` v1.78.0 → v1.80.0 (fixes gRPC-Go authorization bypass via malformed HTTP/2 `:path` pseudo-header; operator does not expose a gRPC server so not directly exploitable, but upgraded as a precaution).
+- **CVE-2026-39883** — upgraded `go.opentelemetry.io/otel` v1.40.0 → v1.43.0 (fixes OpenTelemetry-Go path traversal via untrusted `kenv` search path on BSD/Solaris; not exploitable on Linux, upgraded as a precaution).
+
 ### Added
 
 - **Documentation site** — MkDocs Material documentation deployed to GitHub Pages (`https://przemekhys.github.io/homeassistant-operator/`). Includes getting started guides, CRD API reference auto-generated from Go type comments (`make docs-api`), and changelog auto-included from `CHANGELOG.md`. New Makefile targets: `make docs-serve`, `make docs-build`, `make docs-api`.
