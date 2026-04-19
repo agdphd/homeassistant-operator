@@ -203,7 +203,7 @@ docs-serve: ## Serve documentation locally (http://127.0.0.1:8000)
 	$(DOCS_VENV)/bin/mkdocs serve
 
 .PHONY: docs-build
-docs-build: ## Build documentation to site/
+docs-build: docs-api ## Build documentation to site/ (regenerates API reference first)
 	@test -f $(DOCS_VENV)/bin/mkdocs || $(MAKE) docs-setup
 	$(DOCS_VENV)/bin/mkdocs build
 
@@ -313,7 +313,7 @@ CRD_REF_DOCS ?= $(LOCALBIN)/crd-ref-docs
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.6.0
 CONTROLLER_TOOLS_VERSION ?= v0.18.0
-CRD_REF_DOCS_VERSION ?= v0.1.0
+CRD_REF_DOCS_VERSION ?= v0.3.0
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
 ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)

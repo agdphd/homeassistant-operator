@@ -71,7 +71,7 @@ Bootstrap takes 2-3 minutes. When `READY` shows `True` the operator has:
 1. Waited for HA to start
 2. Created the admin user
 3. Completed onboarding (location, timezone, analytics)
-4. Generated a long-lived API token (stored in `home-api-token` Secret)
+4. Generated a long-lived API token (stored in `home-homeassistant-api-token` Secret — pattern: `{homeassistant-name}-homeassistant-api-token`)
 
 ## 5. Access Home Assistant
 

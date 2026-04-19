@@ -8,7 +8,7 @@
 ## Install via manifest
 
 ```sh
-kubectl apply -f https://raw.githubusercontent.com/przemekhys/homeassistant-operator/main/dist/install.yaml
+kubectl apply -f https://raw.githubusercontent.com/przemekhys/homeassistant-operator/v0.9.0/dist/install.yaml
 ```
 
 This installs:
@@ -30,7 +30,7 @@ kubectl get pods -n homeassistant-operator-system
 kubectl delete homeassistants --all -A
 
 # Remove the operator and CRDs
-kubectl delete -f https://raw.githubusercontent.com/przemekhys/homeassistant-operator/main/dist/install.yaml
+kubectl delete -f https://raw.githubusercontent.com/przemekhys/homeassistant-operator/v0.9.0/dist/install.yaml
 ```
 
 !!! warning

@@ -12,6 +12,10 @@ on:
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
+concurrency:
+  group: "deploy-pages-${{ github.ref }}"
+  cancel-in-progress: true
+
 permissions:
   contents: write
 

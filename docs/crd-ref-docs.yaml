@@ -2,10 +2,6 @@ processor:
   ignoreFields:
     - "TypeMeta"
     - "ObjectMeta"
-    - "Status.Conditions"  # shown as standard Kubernetes conditions
-
-render:
-  schemaRoot: "ha.homeassistant.io/v1alpha1"
-  groupVersionExcludes:
-    - group: ""
-      version: v1
+    - "Status.Conditions"
+  ignoreGroupVersions:
+    - "v1"
