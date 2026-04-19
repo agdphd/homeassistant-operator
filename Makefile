@@ -194,17 +194,20 @@ DOCS_VENV ?= .venv
 
 .PHONY: docs-setup
 docs-setup: ## Create Python venv and install MkDocs dependencies
-	python3 -m venv $(DOCS_VENV)
-	$(DOCS_VENV)/bin/pip install -r docs/requirements.txt -q
+	@if [ ! -f $(DOCS_VENV)/.installed ]; then \
+		python3 -m venv $(DOCS_VENV); \
+		$(DOCS_VENV)/bin/pip install -r docs/requirements.txt -q; \
+		touch $(DOCS_VENV)/.installed; \
+	fi
 
 .PHONY: docs-serve
-docs-serve: ## Serve documentation locally (http://127.0.0.1:8000)
-	@test -f $(DOCS_VENV)/bin/mkdocs || $(MAKE) docs-setup
+docs-serve: docs-api ## Serve documentation locally (http://127.0.0.1:8000)
+	@$(MAKE) docs-setup
 	$(DOCS_VENV)/bin/mkdocs serve
 
 .PHONY: docs-build
 docs-build: docs-api ## Build documentation to site/ (regenerates API reference first)
-	@test -f $(DOCS_VENV)/bin/mkdocs || $(MAKE) docs-setup
+	@$(MAKE) docs-setup
 	$(DOCS_VENV)/bin/mkdocs build
 
 .PHONY: docs-api

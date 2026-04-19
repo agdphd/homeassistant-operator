@@ -25,13 +25,22 @@ kubectl get pods -n homeassistant-operator-system
 
 ## Uninstall
 
-```sh
-# Remove all Home Assistant instances first
-kubectl delete homeassistants --all -A
+!!! warning
+    Delete all custom resources **before** removing the operator. The operator must be running to process finalizers (automation/scene/script/integration/floor/label/area cleanup). Deleting the operator first causes CRs with finalizers to hang indefinitely.
 
-# Remove the operator and CRDs
+```sh
+# 1. Delete all custom resources (keep operator running to process finalizers)
+kubectl delete homeassistants --all -A
+kubectl delete homeassistantconfigurations --all -A
+kubectl delete homeassistantsecrets --all -A
+kubectl delete homeassistantautomations --all -A
+kubectl delete homeassistantscenes --all -A
+kubectl delete homeassistantscripts --all -A
+kubectl delete homeassistantintegrations --all -A
+kubectl delete homeassistantfloors --all -A
+kubectl delete homeassistantlabels --all -A
+kubectl delete homeassistantareas --all -A
+
+# 2. Remove the operator and CRDs
 kubectl delete -f https://raw.githubusercontent.com/przemekhys/homeassistant-operator/v0.9.0/dist/install.yaml
 ```
-
-!!! warning
-    Deleting CRDs removes all custom resources of that type. Back up any important CRs before uninstalling.
