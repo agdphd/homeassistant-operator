@@ -188,6 +188,33 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes (clears ca
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	$(GOLANGCI_LINT) config verify
 
+##@ Documentation
+
+DOCS_VENV ?= .venv
+
+.PHONY: docs-setup
+docs-setup: ## Create Python venv and install MkDocs dependencies
+	python3 -m venv $(DOCS_VENV)
+	$(DOCS_VENV)/bin/pip install -r docs/requirements.txt -q
+
+.PHONY: docs-serve
+docs-serve: ## Serve documentation locally (http://127.0.0.1:8000)
+	@test -f $(DOCS_VENV)/bin/mkdocs || $(MAKE) docs-setup
+	$(DOCS_VENV)/bin/mkdocs serve
+
+.PHONY: docs-build
+docs-build: ## Build documentation to site/
+	@test -f $(DOCS_VENV)/bin/mkdocs || $(MAKE) docs-setup
+	$(DOCS_VENV)/bin/mkdocs build
+
+.PHONY: docs-api
+docs-api: crd-ref-docs ## Regenerate docs/reference/api.md from Go types
+	$(CRD_REF_DOCS) \
+		--source-path=./api/v1alpha1 \
+		--config=./docs/crd-ref-docs.yaml \
+		--renderer=markdown \
+		--output-path=./docs/reference/api.md
+
 ##@ Security
 
 .PHONY: security-check
@@ -281,10 +308,12 @@ CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 GINKGO ?= $(LOCALBIN)/ginkgo
+CRD_REF_DOCS ?= $(LOCALBIN)/crd-ref-docs
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.6.0
 CONTROLLER_TOOLS_VERSION ?= v0.18.0
+CRD_REF_DOCS_VERSION ?= v0.1.0
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
 ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
 #ENVTEST_K8S_VERSION is the version of Kubernetes to use for setting up ENVTEST binaries (i.e. 1.31)
@@ -324,6 +353,11 @@ $(GOLANGCI_LINT): $(LOCALBIN)
 ginkgo: $(GINKGO) ## Download ginkgo CLI locally if necessary.
 $(GINKGO): $(LOCALBIN)
 	$(call go-install-tool,$(GINKGO),github.com/onsi/ginkgo/v2/ginkgo,$(GINKGO_VERSION))
+
+.PHONY: crd-ref-docs
+crd-ref-docs: $(CRD_REF_DOCS) ## Download crd-ref-docs locally if necessary.
+$(CRD_REF_DOCS): $(LOCALBIN)
+	$(call go-install-tool,$(CRD_REF_DOCS),github.com/elastic/crd-ref-docs,$(CRD_REF_DOCS_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary
