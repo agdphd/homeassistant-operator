@@ -33,3 +33,7 @@ go.work
 
 # Project notes (personal)
 temp/
+
+# MkDocs
+site/
+.venv/

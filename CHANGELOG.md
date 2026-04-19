@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Documentation site** — MkDocs Material documentation deployed to GitHub Pages (`https://przemekhys.github.io/homeassistant-operator/`). Includes getting started guides, CRD API reference auto-generated from Go type comments (`make docs-api`), and changelog auto-included from `CHANGELOG.md`. New Makefile targets: `make docs-serve`, `make docs-build`, `make docs-api`.
+
 - **Auto-unban operator IP from HA `ip_bans.yaml`** — when HA returns 403/429 (operator IP banned after too many failed login attempts), the operator automatically execs into the HA pod, removes its IP from `/config/ip_bans.yaml`, and deletes the pod so StatefulSet recreates it (clears in-memory bans). Limits: at most 5 unbans total, 5-minute cooldown between each. Once the limit is reached a `SelfUnbanLimitReached` warning event is emitted and manual intervention is required. New status fields: `selfUnbanCount`, `lastSelfUnban`. New event reasons: `SelfUnbanned`, `SelfUnbanFailed`, `SelfUnbanLimitReached`. Requires `POD_IP` env var (injected via downward API) and new RBAC `pods/exec create`.
 
 ## [v0.9.0] - 2026-04-17
