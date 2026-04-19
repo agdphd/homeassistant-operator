@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **CVE-2026-33186** — upgraded `google.golang.org/grpc` v1.78.0 → v1.80.0 (fixes gRPC-Go authorization bypass via malformed HTTP/2 `:path` pseudo-header; operator does not expose a gRPC server so not directly exploitable, but upgraded as a precaution).
+- **CVE-2026-39883** — upgraded `go.opentelemetry.io/otel` v1.40.0 → v1.43.0 (fixes OpenTelemetry-Go path traversal via untrusted `kenv` search path on BSD/Solaris; not exploitable on Linux, upgraded as a precaution).
+
 ### Added
 
 - **Auto-unban operator IP from HA `ip_bans.yaml`** — when HA returns 403/429 (operator IP banned after too many failed login attempts), the operator automatically execs into the HA pod, removes its IP from `/config/ip_bans.yaml`, and deletes the pod so StatefulSet recreates it (clears in-memory bans). Limits: at most 5 unbans total, 5-minute cooldown between each. Once the limit is reached a `SelfUnbanLimitReached` warning event is emitted and manual intervention is required. New status fields: `selfUnbanCount`, `lastSelfUnban`. New event reasons: `SelfUnbanned`, `SelfUnbanFailed`, `SelfUnbanLimitReached`. Requires `POD_IP` env var (injected via downward API) and new RBAC `pods/exec create`.
