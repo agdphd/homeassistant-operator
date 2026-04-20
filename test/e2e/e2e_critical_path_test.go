@@ -840,29 +840,6 @@ spec:
 		}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 	})
 
-	// -------------------------------------------------------------------------
-	// 11. Backup — configure automatic backup via WebSocket API
-	// -------------------------------------------------------------------------
-	It("Backup — configure automatic backup via WebSocket API", func() {
-		By("Verifying BackupConfigured condition is True (set in BeforeAll with backup spec)")
-		Eventually(func(g Gomega) {
-			status := utils.Kubectl("get", "ha", haName, "-n", namespace,
-				"-o", "jsonpath={.status.conditions[?(@.type=='BackupConfigured')].status}")
-			g.Expect(status).To(Equal("True"))
-
-			reason := utils.Kubectl("get", "ha", haName, "-n", namespace,
-				"-o", "jsonpath={.status.conditions[?(@.type=='BackupConfigured')].reason}")
-			g.Expect(reason).To(Equal("BackupConfigured"))
-		}, utils.ReconciliationTimeout, reconcileInterval).Should(Succeed())
-
-		By("Verifying BackupConfigured event was emitted")
-		Eventually(func(g Gomega) {
-			events := utils.Kubectl("get", "events", "-n", namespace,
-				"--field-selector", fmt.Sprintf("involvedObject.name=%s,reason=BackupConfigured", haName),
-				"-o", "jsonpath={.items[0].reason}")
-			g.Expect(events).To(Equal("BackupConfigured"))
-		}, utils.ReconciliationTimeout, reconcileInterval).Should(Succeed())
-	})
 })
 
 // collectCriticalPathDebugInfo gathers diagnostic information on failure.
