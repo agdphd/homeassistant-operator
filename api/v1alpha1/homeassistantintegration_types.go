@@ -36,13 +36,20 @@ type HomeAssistantIntegrationSpec struct {
 	Configuration map[string]IntegrationValue `json:"configuration,omitempty"`
 }
 
-// IntegrationValue holds either a plain text value or a reference to a Kubernetes Secret key.
-// Exactly one of Value or SecretKeyRef must be set.
-// +kubebuilder:validation:XValidation:rule="(has(self.value) && !has(self.secretKeyRef)) || (!has(self.value) && has(self.secretKeyRef))",message="exactly one of value or secretKeyRef must be set"
+// IntegrationValue holds a plain text value, a JSON value, or a reference to a Kubernetes Secret key.
+// Exactly one of Value, JSONValue, or SecretKeyRef must be set.
+// +kubebuilder:validation:XValidation:rule="has(self.value) || has(self.jsonValue) || has(self.secretKeyRef)",message="at least one of value, jsonValue, or secretKeyRef must be set"
+// +kubebuilder:validation:XValidation:rule="!(has(self.value) && has(self.jsonValue)) && !(has(self.value) && has(self.secretKeyRef)) && !(has(self.jsonValue) && has(self.secretKeyRef))",message="only one of value, jsonValue, or secretKeyRef may be set"
 type IntegrationValue struct {
-	// Value is a plain text configuration value
+	// Value is a plain text configuration value sent as a string to the Config Flow API.
 	// +optional
 	Value *string `json:"value,omitempty"`
+
+	// JSONValue is a JSON-encoded value that will be parsed and sent as a native JSON
+	// object to the Config Flow API. Use this for fields that expect a dictionary or
+	// array (e.g. location: '{"latitude": 54.17, "longitude": 18.55}').
+	// +optional
+	JSONValue *string `json:"jsonValue,omitempty"`
 
 	// SecretKeyRef references a key in a Kubernetes Secret
 	// +optional
