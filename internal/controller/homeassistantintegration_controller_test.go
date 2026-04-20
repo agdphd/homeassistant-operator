@@ -486,7 +486,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 					Domain:           "openweathermap",
 					Configuration: map[string]hav1alpha1.IntegrationValue{
 						"api_key":  {Value: ptr.To("test-api-key")},
-						"location": {JsonValue: ptr.To(`{"latitude": 54.17708, "longitude": 18.557}`)},
+						"location": {JSONValue: ptr.To(`{"latitude": 54.17708, "longitude": 18.557}`)},
 						"mode":     {Value: ptr.To("forecast")},
 					},
 				},
@@ -525,7 +525,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Eventually(submitted, timeout, interval).Should(Receive(And(
 				HaveKeyWithValue("api_key", "test-api-key"),
 				HaveKeyWithValue("mode", "forecast"),
-				HaveKey("location"),
+				HaveKeyWithValue("location", BeAssignableToTypeOf(map[string]interface{}{})),
 			)))
 		})
 
@@ -539,7 +539,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
 					Domain:           "openweathermap",
 					Configuration: map[string]hav1alpha1.IntegrationValue{
-						"location": {JsonValue: ptr.To(`not valid json`)},
+						"location": {JSONValue: ptr.To(`not valid json`)},
 					},
 				},
 			}

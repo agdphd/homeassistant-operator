@@ -65,11 +65,11 @@ spec:
                 additionalProperties:
                   description: |-
                     IntegrationValue holds a plain text value, a JSON value, or a reference to a Kubernetes Secret key.
-                    Exactly one of Value, JsonValue, or SecretKeyRef must be set.
+                    Exactly one of Value, JSONValue, or SecretKeyRef must be set.
                   properties:
                     jsonValue:
                       description: |-
-                        JsonValue is a JSON-encoded value that will be parsed and sent as a native JSON
+                        JSONValue is a JSON-encoded value that will be parsed and sent as a native JSON
                         object to the Config Flow API. Use this for fields that expect a dictionary or
                         array (e.g. location: '{"latitude": 54.17, "longitude": 18.55}').
                       type: string

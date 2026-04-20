@@ -1498,8 +1498,8 @@ func (in *IntegrationValue) DeepCopyInto(out *IntegrationValue) {
 		*out = new(string)
 		**out = **in
 	}
-	if in.JsonValue != nil {
-		in, out := &in.JsonValue, &out.JsonValue
+	if in.JSONValue != nil {
+		in, out := &in.JSONValue, &out.JSONValue
 		*out = new(string)
 		**out = **in
 	}
