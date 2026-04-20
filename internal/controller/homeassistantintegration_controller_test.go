@@ -475,6 +475,85 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Eventually(submitted, timeout, interval).Should(Receive(HaveKeyWithValue("broker", "mosquitto.default.svc")))
 		})
 
+		It("should submit jsonValue fields as native JSON objects", func() {
+			integration := &hav1alpha1.HomeAssistantIntegration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "int-json-config",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+					Domain:           "openweathermap",
+					Configuration: map[string]hav1alpha1.IntegrationValue{
+						"api_key":  {Value: ptr.To("test-api-key")},
+						"location": {JsonValue: ptr.To(`{"latitude": 54.17708, "longitude": 18.557}`)},
+						"mode":     {Value: ptr.To("forecast")},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, integration)).To(Succeed())
+
+			mockServer.Close()
+			submitted := make(chan map[string]interface{}, 1)
+			mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/config/config_entries/entry":
+					_ = json.NewEncoder(w).Encode([]haclient.ConfigEntry{})
+				case r.Method == http.MethodPost && r.URL.Path == "/api/config/config_entries/flow":
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
+						"flow_id": "flow-json-001", "type": "form", "data_schema": []interface{}{},
+					})
+				case r.Method == http.MethodPost:
+					var body map[string]interface{}
+					_ = json.NewDecoder(r.Body).Decode(&body)
+					submitted <- body
+					result, _ := json.Marshal(map[string]interface{}{
+						"entry_id": "json-entry-001", "domain": "openweathermap", "title": "OpenWeatherMap",
+					})
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
+						"flow_id": "flow-json-001", "type": "create_entry", "result": json.RawMessage(result),
+					})
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			reconciler.NewHAClient = func(_ string) *haclient.Client { return haclient.NewClient(mockServer.URL) }
+
+			Expect(reconcileIntegrationTwice("int-json-config")).To(Succeed())
+
+			Eventually(submitted, timeout, interval).Should(Receive(And(
+				HaveKeyWithValue("api_key", "test-api-key"),
+				HaveKeyWithValue("mode", "forecast"),
+				HaveKey("location"),
+			)))
+		})
+
+		It("should fail resolution when jsonValue is invalid JSON", func() {
+			integration := &hav1alpha1.HomeAssistantIntegration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "int-bad-json",
+					Namespace: namespace,
+				},
+				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+					Domain:           "openweathermap",
+					Configuration: map[string]hav1alpha1.IntegrationValue{
+						"location": {JsonValue: ptr.To(`not valid json`)},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, integration)).To(Succeed())
+			Expect(reconcileIntegrationTwice("int-bad-json")).To(Succeed())
+
+			updated := &hav1alpha1.HomeAssistantIntegration{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "int-bad-json", Namespace: namespace}, updated)).To(Succeed())
+			cond := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeIntegrationReady)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(reasonSecretResolutionFailed))
+		})
+
 		It("should resolve configuration from Kubernetes Secret", func() {
 			// Create a secret with the broker value
 			secret := &corev1.Secret{

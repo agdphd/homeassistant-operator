@@ -1498,6 +1498,11 @@ func (in *IntegrationValue) DeepCopyInto(out *IntegrationValue) {
 		*out = new(string)
 		**out = **in
 	}
+	if in.JsonValue != nil {
+		in, out := &in.JsonValue, &out.JsonValue
+		*out = new(string)
+		**out = **in
+	}
 	if in.SecretKeyRef != nil {
 		in, out := &in.SecretKeyRef, &out.SecretKeyRef
 		*out = new(IntegrationSecretKeyRef)

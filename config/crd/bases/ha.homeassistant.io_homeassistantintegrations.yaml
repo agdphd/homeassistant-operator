@@ -64,9 +64,15 @@ spec:
               configuration:
                 additionalProperties:
                   description: |-
-                    IntegrationValue holds either a plain text value or a reference to a Kubernetes Secret key.
-                    Exactly one of Value or SecretKeyRef must be set.
+                    IntegrationValue holds a plain text value, a JSON value, or a reference to a Kubernetes Secret key.
+                    Exactly one of Value, JsonValue, or SecretKeyRef must be set.
                   properties:
+                    jsonValue:
+                      description: |-
+                        JsonValue is a JSON-encoded value that will be parsed and sent as a native JSON
+                        object to the Config Flow API. Use this for fields that expect a dictionary or
+                        array (e.g. location: '{"latitude": 54.17, "longitude": 18.55}').
+                      type: string
                     secretKeyRef:
                       description: SecretKeyRef references a key in a Kubernetes Secret
                       properties:
@@ -83,13 +89,18 @@ spec:
                       - name
                       type: object
                     value:
-                      description: Value is a plain text configuration value
+                      description: Value is a plain text configuration value sent
+                        as a string to the Config Flow API.
                       type: string
                   type: object
                   x-kubernetes-validations:
-                  - message: exactly one of value or secretKeyRef must be set
-                    rule: (has(self.value) && !has(self.secretKeyRef)) || (!has(self.value)
-                      && has(self.secretKeyRef))
+                  - message: at least one of value, jsonValue, or secretKeyRef must
+                      be set
+                    rule: has(self.value) || has(self.jsonValue) || has(self.secretKeyRef)
+                  - message: only one of value, jsonValue, or secretKeyRef may be
+                      set
+                    rule: '!(has(self.value) && has(self.jsonValue)) && !(has(self.value)
+                      && has(self.secretKeyRef)) && !(has(self.jsonValue) && has(self.secretKeyRef))'
                 description: |-
                   Configuration contains fields submitted to the Config Flow (single-step flows only).
                   Keys are field names from the data_schema; values are plain text or Secret references.

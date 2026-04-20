@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -359,6 +360,16 @@ func (r *HomeAssistantIntegrationReconciler) resolveConfiguration(
 		if val.Value != nil {
 			resolved[key] = *val.Value
 			fp.plainValues[key] = *val.Value
+			continue
+		}
+		if val.JsonValue != nil {
+			var parsed interface{}
+			if err := json.Unmarshal([]byte(*val.JsonValue), &parsed); err != nil {
+				return nil, configFingerprint{}, fmt.Errorf(
+					"field %q: jsonValue is not valid JSON: %w", key, err)
+			}
+			resolved[key] = parsed
+			fp.plainValues[key] = *val.JsonValue
 			continue
 		}
 		if val.SecretKeyRef != nil {
