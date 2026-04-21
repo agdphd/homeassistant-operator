@@ -110,8 +110,12 @@ jobs:
           sed -i "s/^version:.*/version: ${{ steps.version.outputs.VERSION }}/" charts/homeassistant-operator/Chart.yaml
           sed -i "s/^appVersion:.*/appVersion: \"${{ steps.version.outputs.VERSION }}\"/" charts/homeassistant-operator/Chart.yaml
 
+      - name: Lint Helm chart
+        run: helm lint charts/homeassistant-operator
+
       - name: Package and push Helm chart
         run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           mkdir -p dist
           helm package charts/homeassistant-operator --destination dist/
-          helm push dist/homeassistant-operator-${{ steps.version.outputs.VERSION }}.tgz oci://${{ env.REGISTRY }}/${{ github.repository_owner }}
+          helm push dist/homeassistant-operator-${{ steps.version.outputs.VERSION }}.tgz oci://${{ env.REGISTRY }}/${OWNER}

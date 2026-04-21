@@ -1,5 +1,11 @@
 .DS_Store
 .git
 .gitignore
+.idea/
+.vscode/
 *.swp
 *.bak
+*.orig
+*.tmproj
+OWNERS
+OWNERS_ALIASES

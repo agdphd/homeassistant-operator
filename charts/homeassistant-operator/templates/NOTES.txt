@@ -22,7 +22,7 @@ Quick start — deploy Home Assistant:
   metadata:
     name: home
   spec:
-    version: "2025.4"
+    version: "2025.latest"  # set to your desired HA version
     bootstrap:
       enabled: true
       credentials:
