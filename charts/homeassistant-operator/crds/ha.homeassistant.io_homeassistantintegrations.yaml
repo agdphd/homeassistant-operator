@@ -1,0 +1,215 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.18.0
+  name: homeassistantintegrations.ha.homeassistant.io
+spec:
+  group: ha.homeassistant.io
+  names:
+    categories:
+    - homeassistant
+    kind: HomeAssistantIntegration
+    listKind: HomeAssistantIntegrationList
+    plural: homeassistantintegrations
+    shortNames:
+    - haint
+    - haintegration
+    singular: homeassistantintegration
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.homeAssistantRef.name
+      name: HomeAssistant
+      type: string
+    - jsonPath: .spec.domain
+      name: Domain
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="IntegrationReady")].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          HomeAssistantIntegration manages a Home Assistant integration (config entry) via the Config Flow API.
+          It supports create, adopt, reconfigure (delete+re-create on spec change), and cleanup via finalizer.
+          Only single-step Config Flows are supported (e.g. mqtt, recorder, esphome).
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: HomeAssistantIntegrationSpec defines the desired state of
+              HomeAssistantIntegration
+            properties:
+              configuration:
+                additionalProperties:
+                  description: |-
+                    IntegrationValue holds a plain text value, a JSON value, or a reference to a Kubernetes Secret key.
+                    Exactly one of Value, JSONValue, or SecretKeyRef must be set.
+                  properties:
+                    jsonValue:
+                      description: |-
+                        JSONValue is a JSON-encoded value that will be parsed and sent as a native JSON
+                        object to the Config Flow API. Use this for fields that expect a dictionary or
+                        array (e.g. location: '{"latitude": 54.17, "longitude": 18.55}').
+                      type: string
+                    secretKeyRef:
+                      description: SecretKeyRef references a key in a Kubernetes Secret
+                      properties:
+                        key:
+                          description: Key within the Secret
+                          minLength: 1
+                          type: string
+                        name:
+                          description: Name of the Secret
+                          minLength: 1
+                          type: string
+                      required:
+                      - key
+                      - name
+                      type: object
+                    value:
+                      description: Value is a plain text configuration value sent
+                        as a string to the Config Flow API.
+                      type: string
+                  type: object
+                  x-kubernetes-validations:
+                  - message: at least one of value, jsonValue, or secretKeyRef must
+                      be set
+                    rule: has(self.value) || has(self.jsonValue) || has(self.secretKeyRef)
+                  - message: only one of value, jsonValue, or secretKeyRef may be
+                      set
+                    rule: '!(has(self.value) && has(self.jsonValue)) && !(has(self.value)
+                      && has(self.secretKeyRef)) && !(has(self.jsonValue) && has(self.secretKeyRef))'
+                description: |-
+                  Configuration contains fields submitted to the Config Flow (single-step flows only).
+                  Keys are field names from the data_schema; values are plain text or Secret references.
+                type: object
+              domain:
+                description: Domain is the integration name in Home Assistant (e.g.
+                  "mqtt", "esphome", "recorder")
+                minLength: 1
+                type: string
+              homeAssistantRef:
+                description: HomeAssistantRef references the HomeAssistant instance
+                  to configure
+                properties:
+                  name:
+                    description: Name of the HomeAssistant resource
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+            required:
+            - domain
+            - homeAssistantRef
+            type: object
+          status:
+            description: HomeAssistantIntegrationStatus defines the observed state
+              of HomeAssistantIntegration
+            properties:
+              conditions:
+                description: Conditions represent the latest available observations
+                  of the integration state
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              configHash:
+                description: |-
+                  ConfigHash is the SHA256 hash of the resolved configuration values.
+                  Used to detect spec changes and trigger reconfiguration (delete + re-create).
+                type: string
+              entryID:
+                description: EntryID is the Home Assistant config entry ID created
+                  or adopted by the Config Flow
+                type: string
+              observedGeneration:
+                description: ObservedGeneration reflects the generation of the most
+                  recently observed CR
+                format: int64
+                type: integer
+            type: object
+        type: object
+        x-kubernetes-validations:
+        - message: spec.homeAssistantRef is immutable after creation
+          rule: '!has(oldSelf.spec) || self.spec.homeAssistantRef == oldSelf.spec.homeAssistantRef'
+    served: true
+    storage: true
+    subresources:
+      status: {}

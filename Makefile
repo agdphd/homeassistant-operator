@@ -274,6 +274,21 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 	$(KUSTOMIZE) build config/default > dist/install.yaml
 
+HELM_CHART_DIR ?= charts/homeassistant-operator
+
+.PHONY: helm-lint
+helm-lint: ## Lint the Helm chart.
+	helm lint $(HELM_CHART_DIR)
+
+.PHONY: helm-package
+helm-package: ## Package the Helm chart into a .tgz archive.
+	mkdir -p dist
+	helm package $(HELM_CHART_DIR) --destination dist/
+
+.PHONY: helm-push
+helm-push: helm-package ## Push Helm chart to OCI registry (requires HELM_REGISTRY, default: ghcr.io/przemekhys).
+	helm push dist/homeassistant-operator-$(VERSION).tgz oci://${HELM_REGISTRY:-ghcr.io/przemekhys}
+
 ##@ Deployment
 
 ifndef ignore-not-found
