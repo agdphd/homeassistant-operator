@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.10.0] - 2026-04-22
+
 ### Security
 
 - **CVE-2026-33186** — upgraded `google.golang.org/grpc` v1.78.0 → v1.80.0 (fixes gRPC-Go authorization bypass via malformed HTTP/2 `:path` pseudo-header; operator does not expose a gRPC server so not directly exploitable, but upgraded as a precaution).
@@ -269,7 +271,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Primary: k3s on Raspberry Pi 4/5 (ARM64)
 - Also supported: Any Kubernetes cluster (AMD64/ARM64)
 
-[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v0.10.0...HEAD
+[v0.10.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.9.0...v0.10.0
 [v0.9.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.8.0...v0.9.0
 [v0.8.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.7.1...v0.8.0
 [v0.7.1]: https://github.com/przemekhys/homeassistant-operator/compare/v0.7.0...v0.7.1
