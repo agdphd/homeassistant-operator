@@ -1,0 +1,33 @@
+Home Assistant Operator {{ .Chart.AppVersion }} installed successfully.
+
+The operator is running in namespace {{ .Release.Namespace }}:
+
+  kubectl get pods -n {{ .Release.Namespace }} -l control-plane=controller-manager
+
+Quick start — deploy Home Assistant:
+
+  kubectl apply -f - <<EOF
+  apiVersion: ha.homeassistant.io/v1alpha1
+  kind: HomeAssistantConfiguration
+  metadata:
+    name: home
+  spec:
+    homeAssistantRef:
+      name: home
+    configuration: |
+      default_config:
+  ---
+  apiVersion: ha.homeassistant.io/v1alpha1
+  kind: HomeAssistant
+  metadata:
+    name: home
+  spec:
+    version: "2025.latest"  # set to your desired HA version
+    bootstrap:
+      enabled: true
+      credentials:
+        secretRef:
+          name: ha-admin
+  EOF
+
+Full documentation: https://przemekhys.github.io/homeassistant-operator/

@@ -1,0 +1,124 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "homeassistant-operator.fullname" . }}-manager-role
+  labels:
+    {{- include "homeassistant-operator.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - persistentvolumeclaims
+  - secrets
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/exec
+  verbs:
+  - create
+- apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ha.homeassistant.io
+  resources:
+  - homeassistantareas
+  - homeassistantautomations
+  - homeassistantconfigurations
+  - homeassistantfloors
+  - homeassistantintegrations
+  - homeassistantlabels
+  - homeassistants
+  - homeassistantscenes
+  - homeassistantscripts
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ha.homeassistant.io
+  resources:
+  - homeassistantareas/finalizers
+  - homeassistantautomations/finalizers
+  - homeassistantconfigurations/finalizers
+  - homeassistantfloors/finalizers
+  - homeassistantintegrations/finalizers
+  - homeassistantlabels/finalizers
+  - homeassistants/finalizers
+  - homeassistantscenes/finalizers
+  - homeassistantscripts/finalizers
+  - homeassistantsecrets/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ha.homeassistant.io
+  resources:
+  - homeassistantareas/status
+  - homeassistantautomations/status
+  - homeassistantconfigurations/status
+  - homeassistantfloors/status
+  - homeassistantintegrations/status
+  - homeassistantlabels/status
+  - homeassistants/status
+  - homeassistantscenes/status
+  - homeassistantscripts/status
+  - homeassistantsecrets/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - ha.homeassistant.io
+  resources:
+  - homeassistantsecrets
+  verbs:
+  - get
+  - list
+  - watch
