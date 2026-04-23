@@ -1153,8 +1153,8 @@ _Appears in:_
 
 
 
-IntegrationValue holds either a plain text value or a reference to a Kubernetes Secret key.
-Exactly one of Value or SecretKeyRef must be set.
+IntegrationValue holds a plain text value, a JSON value, or a reference to a Kubernetes Secret key.
+Exactly one of Value, JSONValue, or SecretKeyRef must be set.
 
 
 
@@ -1163,7 +1163,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `value` _string_ | Value is a plain text configuration value |  | Optional: \{\} <br /> |
+| `value` _string_ | Value is a plain text configuration value sent as a string to the Config Flow API. |  | Optional: \{\} <br /> |
+| `jsonValue` _string_ | JSONValue is a JSON-encoded value that will be parsed and sent as a native JSON<br />object to the Config Flow API. Use this for fields that expect a dictionary or<br />array (e.g. location: '\{"latitude": 54.17, "longitude": 18.55\}'). |  | Optional: \{\} <br /> |
 | `secretKeyRef` _[IntegrationSecretKeyRef](#integrationsecretkeyref)_ | SecretKeyRef references a key in a Kubernetes Secret |  | Optional: \{\} <br /> |
 
 
@@ -1181,8 +1182,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `name` _string_ | Name is the location name (e.g., "Home", "Warsaw") |  | Optional: \{\} <br /> |
-| `latitude` _string_ | Latitude in decimal degrees (e.g., "52.2297") |  | Pattern: `^-?([0-8]?[0-9](\.[0-9]+)?\|90(\.0+)?)$` <br />Optional: \{\} <br /> |
-| `longitude` _string_ | Longitude in decimal degrees (e.g., "21.0122") |  | Pattern: `^-?(1[0-7][0-9](\.[0-9]+)?\|[0-9]\{1,2\}(\.[0-9]+)?\|180(\.0+)?)$` <br />Optional: \{\} <br /> |
+| `latitude` _string_ | Latitude in decimal degrees (e.g., "52.237703") |  | Pattern: `^-?([0-8]?[0-9](\.[0-9]+)?\|90(\.0+)?)$` <br />Optional: \{\} <br /> |
+| `longitude` _string_ | Longitude in decimal degrees (e.g., "20.989075") |  | Pattern: `^-?(1[0-7][0-9](\.[0-9]+)?\|[0-9]\{1,2\}(\.[0-9]+)?\|180(\.0+)?)$` <br />Optional: \{\} <br /> |
 | `elevation` _integer_ | Elevation in meters |  | Optional: \{\} <br /> |
 | `unitSystem` _string_ | UnitSystem defines the unit system ("metric" or "us_customary") | metric | Enum: [metric us_customary] <br />Optional: \{\} <br /> |
 | `currency` _string_ | Currency is the ISO 4217 currency code (e.g., "USD", "EUR", "PLN") |  | Optional: \{\} <br /> |

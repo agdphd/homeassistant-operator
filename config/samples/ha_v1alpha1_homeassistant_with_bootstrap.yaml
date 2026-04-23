@@ -77,8 +77,8 @@ spec:
     # If specified, will configure location settings during onboarding
     location:
       name: "Home"
-      latitude: "52.2297"   # Warsaw, Poland
-      longitude: "21.0122"
+      latitude: "52.237703"   # Warsaw, Poland
+      longitude: "20.989075"
       elevation: 100      # meters
       unitSystem: "metric"  # "metric" or "us_customary"
       currency: "PLN"

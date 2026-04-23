@@ -26,8 +26,8 @@ spec:
   configuration: |
     homeassistant:
       name: Home
-      latitude: 52.2297
-      longitude: 21.0122
+      latitude: 52.237703
+      longitude: 20.989075
       unit_system: metric
       time_zone: Europe/Warsaw
 ```
