@@ -60,17 +60,17 @@ bootstrap:
 
 ### `spec.bootstrap.createApiToken`
 
-When `true`, the operator creates a long-lived API token after onboarding and stores it in a Secret named `<ha-name>-api-token` (or the value of `apiTokenSecretName`).
+When `true`, the operator creates a long-lived API token after onboarding and stores it in a Secret named `<ha-name>-homeassistant-api-token` (or the value of `apiTokenSecretName`).
 
 ```yaml
 bootstrap:
   createApiToken: true
-  apiTokenSecretName: home-api-token   # optional, default: <ha-name>-api-token
+  apiTokenSecretName: home-homeassistant-api-token   # optional, default: <ha-name>-homeassistant-api-token
 ```
 
 ### `spec.bootstrap.ownerName`
 
-Display name for the admin user account. Default: `"Home Admin"`.
+Display name for the admin user account. Default: `"Admin"`.
 
 ### `spec.bootstrap.language`
 
@@ -115,15 +115,15 @@ kubectl get ha home -o jsonpath='{.status.bootstrap}'
 
 ```sh
 # Retrieve the API token
-kubectl get secret home-api-token -o jsonpath='{.data.token}' | base64 -d
+kubectl get secret home-homeassistant-api-token -o jsonpath='{.data.token}' | base64 -d
 ```
 
 ## API token Secret
 
-The token Secret is named `<ha-name>-api-token` by default:
+The token Secret is named `<ha-name>-homeassistant-api-token` by default:
 
 ```sh
-kubectl get secret home-api-token -o yaml
+kubectl get secret home-homeassistant-api-token -o yaml
 ```
 ```yaml
 data:

@@ -4,7 +4,7 @@
 
 ## How it works
 
-- **Create/Update**: `PUT /api/config/automation/config/{id}` — idempotent
+- **Create/Update**: `POST /api/config/automation/config/{id}` — idempotent (HA uses POST, not PUT, for this endpoint)
 - **Delete**: finalizer calls `DELETE /api/config/automation/config/{id}`
 - **Hot-reload**: `POST /api/services/automation/reload` after each write
 

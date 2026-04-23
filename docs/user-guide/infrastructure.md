@@ -12,7 +12,7 @@ HomeAssistantFloor  ──┐
 HomeAssistantLabel  ──┘
 ```
 
-Area resolves floor and label references by name at reconcile time. If a Floor or Label is not yet ready, Area requeues every 30 seconds — no explicit watch relationship is needed.
+Area resolves floor and label references by name at reconcile time. The two behave differently when a reference is missing: if the referenced Floor is not found, the Area sets condition `FloorNotFound` and requeues after 30 seconds. If a referenced Label is not found, that label is silently skipped and the area is still created/updated without it — no requeue is triggered.
 
 ## Floors
 

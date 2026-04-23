@@ -4,9 +4,8 @@
 
 ## How it works
 
-- **Create/Update**: `PUT /api/config/script/config/{id}` — idempotent
+- **Create/Update**: `POST /api/config/script/config/{id}` — HA applies the script immediately; no separate reload call is made. The controller records `LastReloadMethod: api` on success.
 - **Delete**: finalizer calls `DELETE /api/config/script/config/{id}`
-- **Hot-reload**: `POST /api/services/script/reload` after each write
 
 Requires a bootstrap API token.
 
