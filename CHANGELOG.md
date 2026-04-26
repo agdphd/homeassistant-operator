@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Helm chart OCI path collision** — `helm push` was publishing the chart to `oci://ghcr.io/przemekhys/homeassistant-operator`, overwriting the Docker image tag. Chart is now published to `oci://ghcr.io/przemekhys/charts/homeassistant-operator`. Install command updated accordingly.
+
+- **`runAsNonRoot` admission failure** — container `securityContext` now explicitly sets `runAsUser: 65532` and `runAsGroup: 65532`, eliminating reliance on image manifest UID resolution which failed on some k3s versions.
+
+### Added
+
+- **Helm chart: `priorityClassName`** — new `values.yaml` field (default `""`) sets `priorityClassName` on the operator Deployment. Previously required a `postRenderers` JSON patch workaround in Flux HelmRelease.
+
+- **Helm chart: `topologySpreadConstraints`** — new `values.yaml` field (default `[]`) for spreading operator pods across failure domains. Includes commented example for zone-based spreading.
+
+- **Helm chart: `nodeSelector` and `affinity` examples** — `values.yaml` now includes commented examples for ARM64 node pinning (`kubernetes.io/arch: arm64`) and pod anti-affinity across nodes.
+
+### Dependencies
+
+- `actions/checkout` v4 → v6
+- `actions/setup-go` v5 → v6
+- `actions/setup-python` v5 → v6
+
 ## [v0.10.0] - 2026-04-22
 
 ### Security
