@@ -92,7 +92,7 @@ spec:
     credentials:
       secretRef:
         name: ha-bootstrap-creds
-    createAPIToken: true
+    createApiToken: true
     apiTokenSecretName: %s-homeassistant-api-token
     ownerName: "E2E Critical Path"
     language: "en"
