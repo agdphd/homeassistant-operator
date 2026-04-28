@@ -667,10 +667,10 @@ spec:
 `, intName, namespace, haName)
 		Expect(utils.ApplyYAML(intYAML, namespace)).To(Succeed())
 
-		By("Verifying IntegrationReady=True")
+		By("Verifying HA integration Ready=True")
 		Eventually(func(g Gomega) {
 			status := utils.Kubectl("get", "haint", intName, "-n", namespace,
-				"-o", "jsonpath={.status.conditions[?(@.type=='IntegrationReady')].status}")
+				"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
 			g.Expect(status).To(Equal("True"))
 		}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
 

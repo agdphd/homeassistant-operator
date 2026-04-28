@@ -116,27 +116,23 @@ func buildHomeAssistantURL(ha *hav1alpha1.HomeAssistant) string {
 	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", serviceName, ha.Namespace, port)
 }
 
-// getApiToken retrieves the Home Assistant API token from Secret
-// Used by automation and scene controllers for hot-reload
-func getApiToken(
+// getAPIToken retrieves the Home Assistant API token from Secret.
+// Used by multiple controllers (backup, area, automation, configuration, floor,
+// integration, label, scene, script) to retrieve the Home Assistant API token.
+func getAPIToken(
 	ctx context.Context,
 	c client.Client,
 	ha *hav1alpha1.HomeAssistant,
 ) (string, error) {
 	log := logf.FromContext(ctx)
 
-	// Get token secret name from HA status (set by bootstrap controller)
-	// Check if Bootstrap status is initialized
-	if ha.Status.Bootstrap == nil {
-		log.V(1).Info("Bootstrap status not initialized, API token not available")
-		return "", fmt.Errorf("bootstrap not configured")
-	}
-
-	tokenSecretName := ha.Status.Bootstrap.ApiTokenSecretName
-	if tokenSecretName == "" {
-		// Fallback: bootstrap may not be configured yet
-		log.V(1).Info("API token secret name not in status, bootstrap may not be complete")
-		return "", fmt.Errorf("API token secret name not available in HomeAssistant status")
+	// Derive token secret name: prefer status field set by bootstrap controller,
+	// fall back to the conventional default so callers work before bootstrap completes.
+	tokenSecretName := ha.Name + "-homeassistant-api-token"
+	if ha.Status.Bootstrap != nil && ha.Status.Bootstrap.APITokenSecretName != "" {
+		tokenSecretName = ha.Status.Bootstrap.APITokenSecretName
+	} else {
+		log.V(1).Info("Bootstrap API token secret name not set, using default token secret name", "secret", tokenSecretName)
 	}
 
 	tokenSecret := &corev1.Secret{}

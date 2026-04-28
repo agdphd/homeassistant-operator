@@ -33,8 +33,8 @@ const (
 	ConfigurationReloadStrategyRestart ConfigurationReloadStrategy = "restart"
 )
 
-// HttpConfig defines HTTP component configuration
-type HttpConfig struct {
+// HTTPConfig defines HTTP component configuration
+type HTTPConfig struct {
 	// CorsDomains is a list of allowed CORS origins
 	// +optional
 	CORSDomains []string `json:"corsDomains,omitempty"`
@@ -89,8 +89,8 @@ type RecorderConfig struct {
 	PurgeKeepDays *int32 `json:"purgeKeepDays,omitempty"`
 }
 
-// MqttConfig defines MQTT component configuration
-type MqttConfig struct {
+// MQTTConfig defines MQTT component configuration
+type MQTTConfig struct {
 	// Broker is the MQTT broker address (e.g., "mqtt://localhost:1883")
 	// +kubebuilder:validation:Required
 	Broker string `json:"broker"`
@@ -146,9 +146,9 @@ type HomeAssistantConfigurationSpec struct {
 	// +optional
 	AutoReload *bool `json:"autoReload,omitempty"`
 
-	// Http component configuration (optional typed section)
+	// HTTP component configuration (optional typed section)
 	// +optional
-	Http *HttpConfig `json:"http,omitempty"`
+	HTTP *HTTPConfig `json:"http,omitempty"`
 
 	// Logger component configuration (optional typed section)
 	// +optional
@@ -158,9 +158,9 @@ type HomeAssistantConfigurationSpec struct {
 	// +optional
 	Recorder *RecorderConfig `json:"recorder,omitempty"`
 
-	// Mqtt component configuration (optional typed section)
+	// MQTT component configuration (optional typed section)
 	// +optional
-	Mqtt *MqttConfig `json:"mqtt,omitempty"`
+	MQTT *MQTTConfig `json:"mqtt,omitempty"`
 }
 
 // HomeAssistantConfigurationStatus defines the observed state of HomeAssistantConfiguration
