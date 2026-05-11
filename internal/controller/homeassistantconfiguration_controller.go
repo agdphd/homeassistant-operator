@@ -36,7 +36,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -141,7 +141,7 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	log := logf.FromContext(ctx)
 
 	// Fetch the HomeAssistantConfiguration instance
-	config := &hav1alpha1.HomeAssistantConfiguration{}
+	config := &hav1.HomeAssistantConfiguration{}
 	if err := r.Get(ctx, req.NamespacedName, config); err != nil {
 		if errors.IsNotFound(err) {
 			log.Info("HomeAssistantConfiguration resource not found. Ignoring since object must be deleted")
@@ -265,7 +265,7 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 // configuration.yaml
 func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 	ctx context.Context,
-	config *hav1alpha1.HomeAssistantConfiguration,
+	config *hav1.HomeAssistantConfiguration,
 	canonicalContent string,
 ) error {
 	log := logf.FromContext(ctx)
@@ -363,7 +363,7 @@ func (r *HomeAssistantConfigurationReconciler) reconcileGeneratedConfigMap(
 // SetupWithManager sets up the controller with the Manager.
 func (r *HomeAssistantConfigurationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&hav1alpha1.HomeAssistantConfiguration{}).
+		For(&hav1.HomeAssistantConfiguration{}).
 		Owns(&corev1.ConfigMap{}).
 		Watches(
 			&corev1.ConfigMap{},
@@ -537,7 +537,7 @@ func httpSectionChanged(old, new interface{}) (changed bool, critical bool) {
 }
 
 // buildHomeAssistantURL constructs the URL for Home Assistant service
-func (r *HomeAssistantConfigurationReconciler) buildHomeAssistantURL(ha *hav1alpha1.HomeAssistant) string {
+func (r *HomeAssistantConfigurationReconciler) buildHomeAssistantURL(ha *hav1.HomeAssistant) string {
 	// Service name matches the HomeAssistant CR name (not ha.Name + "-homeassistant")
 	// See homeassistant_controller.go:578 for Service creation
 	serviceName := ha.Name
@@ -615,8 +615,8 @@ func (r *HomeAssistantConfigurationReconciler) performHotReload(ctx context.Cont
 // oldConfig parameter contains configuration content captured BEFORE ConfigMap update
 func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 	ctx context.Context,
-	config *hav1alpha1.HomeAssistantConfiguration,
-	ha *hav1alpha1.HomeAssistant,
+	config *hav1.HomeAssistantConfiguration,
+	ha *hav1.HomeAssistant,
 	newHash string,
 	oldConfig string,
 	canonicalContent string,
@@ -643,7 +643,7 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 
 	// Determine effective strategy
 	strategy := string(config.Spec.ReloadStrategy)
-	if strategy == "" || strategy == string(hav1alpha1.ConfigurationReloadStrategyAuto) {
+	if strategy == "" || strategy == string(hav1.ConfigurationReloadStrategyAuto) {
 		// Auto: decide based on config changes
 		// Use oldConfig passed from Reconcile (captured before ConfigMap update)
 		// This ensures needsRestart compares actual old vs new, not new vs new
@@ -675,7 +675,7 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 	now := metav1.Now()
 	config.Status.LastReloadTime = &now
 
-	if strategy == string(hav1alpha1.ConfigurationReloadStrategyRestart) || strategy == reloadMethodRestart {
+	if strategy == string(hav1.ConfigurationReloadStrategyRestart) || strategy == reloadMethodRestart {
 		// Update ConfigMap annotation hash to trigger pod restart via HomeAssistant Controller
 		if err := r.updateConfigMapHashAnnotation(ctx, config, newHash); err != nil {
 			return fmt.Errorf("failed to update ConfigMap hash for restart: %w", err)
@@ -693,7 +693,7 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 	// Try hot-reload (strategy is hot-reload or auto decided to try it)
 	if tokenErr != nil {
 		// If user explicitly requested hot-reload strategy, fail instead of falling back
-		if strategy == string(hav1alpha1.ConfigurationReloadStrategyHotReload) {
+		if strategy == string(hav1.ConfigurationReloadStrategyHotReload) {
 			config.Status.LastError = fmt.Sprintf("Hot-reload strategy requested but no API token available: %v", tokenErr)
 			return fmt.Errorf("hot-reload strategy requires API token but none available: %w", tokenErr)
 		}
@@ -717,7 +717,7 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 		log.Info("Home Assistant Service not ready yet, cannot perform hot-reload")
 
 		// If user explicitly requested hot-reload strategy, fail instead of falling back
-		if strategy == string(hav1alpha1.ConfigurationReloadStrategyHotReload) {
+		if strategy == string(hav1.ConfigurationReloadStrategyHotReload) {
 			config.Status.LastError = "Hot-reload strategy requested but Service not ready (pod not ready)"
 			return fmt.Errorf("hot-reload strategy requires ready Service but pod is not ready yet")
 		}
@@ -739,7 +739,7 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 	// Attempt hot-reload
 	if err := r.performHotReload(ctx, haURL, token); err != nil {
 		// If user explicitly requested hot-reload strategy, fail instead of falling back
-		if strategy == string(hav1alpha1.ConfigurationReloadStrategyHotReload) {
+		if strategy == string(hav1.ConfigurationReloadStrategyHotReload) {
 			config.Status.LastError = fmt.Sprintf("Hot-reload failed: %v", err)
 			return fmt.Errorf("hot-reload strategy failed: %w", err)
 		}
@@ -770,7 +770,7 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 // This should ONLY be called when restart strategy is used, not during hot-reload
 func (r *HomeAssistantConfigurationReconciler) updateConfigMapHashAnnotation(
 	ctx context.Context,
-	config *hav1alpha1.HomeAssistantConfiguration,
+	config *hav1.HomeAssistantConfiguration,
 	newHash string,
 ) error {
 	log := logf.FromContext(ctx)
@@ -808,7 +808,7 @@ func (r *HomeAssistantConfigurationReconciler) updateConfigMapHashAnnotation(
 // trigger a reload even when the spec hash has not changed).
 func (r *HomeAssistantConfigurationReconciler) syncConfigMapFromCRD(
 	ctx context.Context,
-	config *hav1alpha1.HomeAssistantConfiguration,
+	config *hav1.HomeAssistantConfiguration,
 	canonicalContent string,
 ) (bool, error) {
 	log := logf.FromContext(ctx)
@@ -907,8 +907,8 @@ func (r *HomeAssistantConfigurationReconciler) findHomeAssistantConfigurationFor
 func (r *HomeAssistantConfigurationReconciler) validateHomeAssistantRef(
 	ctx context.Context,
 	haRef types.NamespacedName,
-	config *hav1alpha1.HomeAssistantConfiguration,
-) (*hav1alpha1.HomeAssistant, error) {
+	config *hav1.HomeAssistantConfiguration,
+) (*hav1.HomeAssistant, error) {
 	log := logf.FromContext(ctx)
 
 	ha, err := getHomeAssistant(ctx, r.Client, haRef)
@@ -943,7 +943,7 @@ func (r *HomeAssistantConfigurationReconciler) validateHomeAssistantRef(
 // Uses the shared EndpointSlice-based helper to avoid deprecated Endpoints API
 func (r *HomeAssistantConfigurationReconciler) isHomeAssistantServiceReady(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 ) bool {
 	return isServiceReadyFromEndpointSlices(ctx, r.Client, ha.Name, ha.Namespace)
 }
@@ -955,7 +955,7 @@ func (r *HomeAssistantConfigurationReconciler) isHomeAssistantServiceReady(
 // Returns ("", false, nil) when neither Database nor DatabaseSecretRef is set.
 func (r *HomeAssistantConfigurationReconciler) resolveRecorderDB(
 	ctx context.Context,
-	config *hav1alpha1.HomeAssistantConfiguration,
+	config *hav1.HomeAssistantConfiguration,
 ) (url string, fromSecretRef bool, err error) {
 	rec := config.Spec.Recorder
 	if rec == nil {
@@ -987,7 +987,7 @@ func (r *HomeAssistantConfigurationReconciler) resolveRecorderDB(
 // /config/recorder_db_url.yaml so that the URL is never embedded in the ConfigMap.
 func (r *HomeAssistantConfigurationReconciler) reconcileRecorderDBSecret(
 	ctx context.Context,
-	config *hav1alpha1.HomeAssistantConfiguration,
+	config *hav1.HomeAssistantConfiguration,
 	dbURL string,
 ) error {
 	secretName := config.Spec.HomeAssistantRef.Name + recorderDBSecretSuffix
@@ -1024,7 +1024,7 @@ func (r *HomeAssistantConfigurationReconciler) reconcileRecorderDBSecret(
 // orphaned Secret does not linger.
 func (r *HomeAssistantConfigurationReconciler) cleanupRecorderDBSecret(
 	ctx context.Context,
-	config *hav1alpha1.HomeAssistantConfiguration,
+	config *hav1.HomeAssistantConfiguration,
 ) error {
 	secret := &corev1.Secret{}
 	secretName := config.Spec.HomeAssistantRef.Name + recorderDBSecretSuffix
@@ -1045,8 +1045,8 @@ func (r *HomeAssistantConfigurationReconciler) cleanupRecorderDBSecret(
 // receives "!include recorder_db_url.yaml" instead.
 func (r *HomeAssistantConfigurationReconciler) buildConfigContent(
 	ctx context.Context,
-	config *hav1alpha1.HomeAssistantConfiguration,
-	ha *hav1alpha1.HomeAssistant,
+	config *hav1.HomeAssistantConfiguration,
+	ha *hav1.HomeAssistant,
 ) (string, error) {
 	content := buildEffectiveConfig(config.Spec.Configuration, ha)
 	rec := config.Spec.Recorder

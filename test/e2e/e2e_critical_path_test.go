@@ -78,7 +78,7 @@ stringData:
 		Expect(utils.ApplyYAML(credsYAML, namespace)).To(Succeed())
 
 		By("Creating HomeAssistant CR with bootstrap and backup enabled")
-		haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		haYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistant
 metadata:
   name: %s
@@ -107,7 +107,7 @@ spec:
 		Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
 		By("Creating HomeAssistantConfiguration CR")
-		configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		configYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantConfiguration
 metadata:
   name: %s
@@ -234,7 +234,7 @@ spec:
 		}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 
 		By("Updating HAConfig with reloadable change (logger section)")
-		updateYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		updateYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantConfiguration
 metadata:
   name: %s
@@ -292,7 +292,7 @@ stringData:
 		Expect(utils.ApplyYAML(sourceYAML, namespace)).To(Succeed())
 
 		By("Creating HomeAssistantSecrets CR")
-		haSecretsYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		haSecretsYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantSecrets
 metadata:
   name: %s
@@ -359,7 +359,7 @@ stringData:
 		autoName := "cp-automation"
 
 		By("Creating HomeAssistantAutomation CR")
-		autoYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		autoYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantAutomation
 metadata:
   name: %s
@@ -409,7 +409,7 @@ spec:
 		}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
 
 		By("Updating automation alias to trigger rehash and reload")
-		updatedAutoYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		updatedAutoYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantAutomation
 metadata:
   name: %s
@@ -457,7 +457,7 @@ spec:
 		sceneName := "cp-scene"
 
 		By("Creating HomeAssistantScene CR")
-		sceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		sceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantScene
 metadata:
   name: %s
@@ -505,7 +505,7 @@ spec:
 		}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
 
 		By("Updating scene to add another entity")
-		updatedSceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		updatedSceneYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantScene
 metadata:
   name: %s
@@ -553,7 +553,7 @@ spec:
 		scriptName := "cp-script"
 
 		By("Creating HomeAssistantScript CR")
-		scriptYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		scriptYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantScript
 metadata:
   name: %s
@@ -601,7 +601,7 @@ spec:
 		}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
 
 		By("Updating script sequence to trigger rehash and reload")
-		updatedScriptYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		updatedScriptYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantScript
 metadata:
   name: %s
@@ -652,7 +652,7 @@ spec:
 		intName := "cp-integration"
 
 		By("Creating HomeAssistantIntegration CR for moon (zero-config, single-step)")
-		intYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		intYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantIntegration
 metadata:
   name: %s
@@ -707,7 +707,7 @@ spec:
 		floorName := "cp-floor"
 
 		By("Creating HomeAssistantFloor CR")
-		floorYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		floorYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantFloor
 metadata:
   name: %s
@@ -754,7 +754,7 @@ spec:
 		labelName := "cp-label"
 
 		By("Creating HomeAssistantLabel CR")
-		labelYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		labelYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantLabel
 metadata:
   name: %s
@@ -801,7 +801,7 @@ spec:
 		areaName := "cp-area"
 
 		By("Creating HomeAssistantArea CR")
-		areaYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
+		areaYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantArea
 metadata:
   name: %s

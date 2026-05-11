@@ -27,7 +27,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -42,7 +42,7 @@ const (
 // Called after bootstrap — requires a valid API token.
 func (r *HomeAssistantReconciler) reconcileBackupConfig(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -161,7 +161,7 @@ func (r *HomeAssistantReconciler) reconcileBackupConfig(
 }
 
 // buildBackupConfigRequest converts BackupSpec to haclient.BackupConfigRequest
-func (r *HomeAssistantReconciler) buildBackupConfigRequest(spec *hav1alpha1.BackupSpec) *haclient.BackupConfigRequest {
+func (r *HomeAssistantReconciler) buildBackupConfigRequest(spec *hav1.BackupSpec) *haclient.BackupConfigRequest {
 	req := &haclient.BackupConfigRequest{
 		Schedule: &haclient.BackupSchedule{
 			Recurrence: spec.Recurrence,
@@ -283,7 +283,7 @@ func stringSliceEqual(a, b []string) bool {
 
 // emitBackupEvent emits a Kubernetes event for backup operations.
 func (r *HomeAssistantReconciler) emitBackupEvent(
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 	eventType, reason, message string,
 ) {
 	if r.Recorder != nil {

@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 )
 
 var _ = Describe("HomeAssistant Controller", func() {
@@ -46,14 +46,14 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		AfterEach(func() {
 			// Cleanup HomeAssistantConfiguration resources
-			configList := &hav1alpha1.HomeAssistantConfigurationList{}
+			configList := &hav1.HomeAssistantConfigurationList{}
 			_ = k8sClient.List(ctx, configList, &client.ListOptions{Namespace: namespace})
 			for _, config := range configList.Items {
 				_ = k8sClient.Delete(ctx, &config)
 			}
 
 			// Cleanup all HomeAssistant resources
-			haList := &hav1alpha1.HomeAssistantList{}
+			haList := &hav1.HomeAssistantList{}
 			_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
 			for _, ha := range haList.Items {
 				_ = k8sClient.Delete(ctx, &ha)
@@ -68,7 +68,7 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 			// Wait for resources to be deleted
 			Eventually(func() int {
-				haList := &hav1alpha1.HomeAssistantList{}
+				haList := &hav1.HomeAssistantList{}
 				_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
 				return len(haList.Items)
 			}, timeout, interval).Should(Equal(0))
@@ -76,25 +76,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should create StatefulSet when HomeAssistant is created", func() {
 			By("Creating a new HomeAssistant")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1",
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -129,25 +129,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should create Service when HomeAssistant is created", func() {
 			By("Creating a new HomeAssistant")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -183,25 +183,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should create PVC when HomeAssistant is created", func() {
 			By("Creating a new HomeAssistant")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -236,25 +236,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should update StatefulSet image when version is updated", func() {
 			By("Creating a new HomeAssistant")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1",
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -320,12 +320,12 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should update StatefulSet resources when resources are updated", func() {
 			By("Creating a new HomeAssistant with initial resources")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
 					Resources: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
@@ -342,13 +342,13 @@ var _ = Describe("HomeAssistant Controller", func() {
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -420,12 +420,12 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should require HomeAssistantConfiguration to be created", func() {
 			By("Creating a HomeAssistant without HomeAssistantConfiguration")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
 				},
 			}
@@ -446,13 +446,13 @@ var _ = Describe("HomeAssistant Controller", func() {
 			Expect(result.RequeueAfter).To(BeNumerically(">", 0), "Should requeue to wait for HomeAssistantConfiguration")
 
 			By("Creating HomeAssistantConfiguration")
-			config := &hav1alpha1.HomeAssistantConfiguration{
+			config := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -496,14 +496,14 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}()
 
 			By("Creating a HomeAssistant with secretsFrom")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
-					SecretsFrom: &hav1alpha1.SecretReference{
+					SecretsFrom: &hav1.SecretReference{
 						Name: "test-secret",
 					},
 				},
@@ -511,13 +511,13 @@ var _ = Describe("HomeAssistant Controller", func() {
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -570,25 +570,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should not update StatefulSet when no changes are made (idempotency)", func() {
 			By("Creating a new HomeAssistant")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -643,25 +643,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should set owner references on all child resources", func() {
 			By("Creating a new HomeAssistant")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -719,25 +719,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should update status conditions correctly", func() {
 			By("Creating a new HomeAssistant")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -760,7 +760,7 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 			By("Verifying status condition is set")
 			Eventually(func(g Gomega) {
-				updatedHA := &hav1alpha1.HomeAssistant{}
+				updatedHA := &hav1.HomeAssistant{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
 					Name:      resourceName,
 					Namespace: namespace,
@@ -776,12 +776,12 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should set custom timezone as TZ environment variable", func() {
 			By("Creating a HomeAssistant with custom timezone")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version:  "stable",
 					Timezone: "Europe/Warsaw",
 				},
@@ -789,13 +789,13 @@ var _ = Describe("HomeAssistant Controller", func() {
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -837,25 +837,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should use default timezone UTC when not specified", func() {
 			By("Creating a HomeAssistant without timezone")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -897,14 +897,14 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should use custom port when specified in Service", func() {
 			By("Creating a HomeAssistant with custom port")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
-					Service: &hav1alpha1.ServiceSpec{
+					Service: &hav1.ServiceSpec{
 						Port: 9000,
 					},
 				},
@@ -912,13 +912,13 @@ var _ = Describe("HomeAssistant Controller", func() {
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -953,14 +953,14 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should create NodePort service when service type is NodePort", func() {
 			By("Creating a HomeAssistant with NodePort service")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
-					Service: &hav1alpha1.ServiceSpec{
+					Service: &hav1.ServiceSpec{
 						Type:     corev1.ServiceTypeNodePort,
 						NodePort: 30123,
 					},
@@ -969,13 +969,13 @@ var _ = Describe("HomeAssistant Controller", func() {
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -1011,25 +1011,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should use StatefulSets with proper replicas", func() {
 			By("Creating a new HomeAssistant")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -1063,25 +1063,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should automatically mount generated ConfigMap from HomeAssistantConfiguration", func() {
 			By("Creating HomeAssistant resource")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration that references the HomeAssistant")
-			config := &hav1alpha1.HomeAssistantConfiguration{
+			config := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "config-auto",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -1136,25 +1136,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 
 		It("should mount generated ConfigMap when HomeAssistantConfiguration exists", func() {
 			By("Creating HomeAssistant")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration that references the HomeAssistant")
-			config := &hav1alpha1.HomeAssistantConfiguration{
+			config := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "config-mount-test",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: resourceName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -1200,25 +1200,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 			testName := resourceName + "-preserve"
 
 			By("Creating a new HomeAssistant")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      testName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1",
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      testName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: testName,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -1291,24 +1291,24 @@ var _ = Describe("HomeAssistant Controller", func() {
 			testName := resourceName + "-nochange"
 
 			By("Creating HomeAssistant and HomeAssistantConfiguration")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      testName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1",
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      testName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: testName,
 					},
 					Configuration: "automation: []\nscript: []\n",
@@ -1391,12 +1391,12 @@ var _ = Describe("HomeAssistant Controller", func() {
 		)
 
 		AfterEach(func() {
-			configList := &hav1alpha1.HomeAssistantConfigurationList{}
+			configList := &hav1.HomeAssistantConfigurationList{}
 			_ = k8sClient.List(ctx, configList, &client.ListOptions{Namespace: namespace})
 			for _, config := range configList.Items {
 				_ = k8sClient.Delete(ctx, &config)
 			}
-			haList := &hav1alpha1.HomeAssistantList{}
+			haList := &hav1.HomeAssistantList{}
 			_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
 			for _, ha := range haList.Items {
 				_ = k8sClient.Delete(ctx, &ha)
@@ -1407,12 +1407,12 @@ var _ = Describe("HomeAssistant Controller", func() {
 				_ = k8sClient.Delete(ctx, &cm)
 			}
 			Eventually(func() int {
-				haList := &hav1alpha1.HomeAssistantList{}
+				haList := &hav1.HomeAssistantList{}
 				_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
 				return len(haList.Items)
 			}, timeout, interval).Should(Equal(0))
 			Eventually(func() int {
-				configList := &hav1alpha1.HomeAssistantConfigurationList{}
+				configList := &hav1.HomeAssistantConfigurationList{}
 				_ = k8sClient.List(ctx, configList, &client.ListOptions{Namespace: namespace})
 				return len(configList.Items)
 			}, timeout, interval).Should(Equal(0))
@@ -1424,25 +1424,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 		})
 
 		It("should set HostNetwork and DNSPolicy when hostNetwork is true", func() {
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      testName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version:     "2024.1",
 					HostNetwork: ptr.To(true),
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      testName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: testName},
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: testName},
 					Configuration:    "homeassistant:\n  name: Test\n",
 				},
 			}
@@ -1467,25 +1467,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 		})
 
 		It("should not set HostNetwork when hostNetwork is false", func() {
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      testName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version:     "2024.1",
 					HostNetwork: ptr.To(false),
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      testName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: testName},
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: testName},
 					Configuration:    "homeassistant:\n  name: Test\n",
 				},
 			}
@@ -1510,24 +1510,24 @@ var _ = Describe("HomeAssistant Controller", func() {
 		})
 
 		It("should not set HostNetwork when hostNetwork is nil", func() {
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      testName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1",
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      testName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: testName},
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: testName},
 					Configuration:    "homeassistant:\n  name: Test\n",
 				},
 			}
@@ -1552,25 +1552,25 @@ var _ = Describe("HomeAssistant Controller", func() {
 		})
 
 		It("should clear hostNetwork and reset DNSPolicy when toggled from true to false", func() {
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      testName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version:     "2024.1",
 					HostNetwork: ptr.To(true),
 				},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      testName + "-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: testName},
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: testName},
 					Configuration:    "homeassistant:\n  name: Test\n",
 				},
 			}

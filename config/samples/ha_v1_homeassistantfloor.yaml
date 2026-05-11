@@ -1,4 +1,4 @@
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantFloor
 metadata:
   labels:
@@ -12,7 +12,7 @@ spec:
   level: 0
   icon: "mdi:home-floor-0"
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantFloor
 metadata:
   labels:
@@ -26,7 +26,7 @@ spec:
   level: 1
   icon: "mdi:home-floor-1"
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantFloor
 metadata:
   labels:

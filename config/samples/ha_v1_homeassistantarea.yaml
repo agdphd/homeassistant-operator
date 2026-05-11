@@ -1,4 +1,4 @@
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantArea
 metadata:
   labels:
@@ -14,7 +14,7 @@ spec:
   labels:
     - "Indoor"
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantArea
 metadata:
   labels:
@@ -31,7 +31,7 @@ spec:
     - "Indoor"
     - "Critical"
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantArea
 metadata:
   labels:

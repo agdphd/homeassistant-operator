@@ -9,7 +9,7 @@
 # - You want to ensure all components are reinitialized
 # - You don't have bootstrap enabled (no API token)
 
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistant
 metadata:
   name: my-home-restart
@@ -33,7 +33,7 @@ spec:
       cpu: "1000m"
       memory: "1Gi"
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantConfiguration
 metadata:
   name: my-home-restart-configuration

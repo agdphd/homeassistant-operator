@@ -18,7 +18,7 @@
 #   --from-literal=mqtt_user=homeassistant \
 #   --from-literal=mqtt_password=supersecret
 
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantSecrets
 metadata:
   name: home-secrets

@@ -12,7 +12,7 @@ Requires a bootstrap API token.
 ## Basic example
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantScript
 metadata:
   name: notify-mobile
@@ -54,7 +54,7 @@ spec:
 ## Advanced example — conditional sequence
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantScript
 metadata:
   name: arrive-home

@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.0-rc.0] - 2026-05-11
+
+### Breaking Changes
+
+- **API promoted from `v1alpha1` to `v1`** — all CRDs now use `apiVersion: ha.homeassistant.io/v1`. Existing resources must be migrated:
+  ```bash
+  kubectl get <resource> -o yaml | sed 's|ha.homeassistant.io/v1alpha1|ha.homeassistant.io/v1|' | kubectl apply -f -
+  ```
+  Affected kinds: `HomeAssistant`, `HomeAssistantSecrets`, `HomeAssistantConfiguration`, `HomeAssistantAutomation`, `HomeAssistantScene`, `HomeAssistantScript`, `HomeAssistantIntegration`, `HomeAssistantFloor`, `HomeAssistantLabel`, `HomeAssistantArea`.
+
+- **`api/v1alpha1` package removed** — Go import path changed from `github.com/przemekhys/homeassistant-operator/api/v1alpha1` to `github.com/przemekhys/homeassistant-operator/api/v1`.
+
+### Changed
+
+- **API naming consistency** — Go field names now follow acronym conventions (`CreateAPIToken`, `APITokenSecretName`, `HTTPConfig`, `MQTTConfig`). JSON/YAML wire format is unchanged (`createApiToken`, `http`, `mqtt`).
+
+- **`ObservedGeneration` added to all status structs** — all CRDs now surface `status.observedGeneration` with the last reconciled generation number.
+
+- **`LastError` added to all status structs** — all CRDs now surface `status.lastError` with a human-readable error description, eliminating the need for `kubectl describe`.
+
+- **Condition type standardized to `Ready`** — `HomeAssistantIntegration` previously used condition type `IntegrationReady`; now uses `Ready` consistent with all other CRDs. Existing conditions are migrated automatically on first reconcile.
+
 ## [v0.10.1] - 2026-04-26
 
 ### Fixed
@@ -154,7 +176,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **BREAKING CHANGE: HomeAssistantAddon CRD removed** — `HomeAssistantAddon` (`haad`) has been completely removed. Use Helm charts or standard Kubernetes resources (Deployment, Service, PVC) to deploy companion services like Mosquitto, MariaDB, or Node-RED. Use the new `HomeAssistantIntegration` CRD (`haint`) to register integrations declaratively.
 
-## [0.6.0] - 2026-03-09
+## [v0.6.0] - 2026-03-09
 
 ### Added
 
@@ -167,7 +189,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > **Note for existing deployments**: when upgrading from v0.5.x to v0.6.0, the operator will automatically remove the old aggregation ConfigMaps (`<ha-name>-automations`, `<ha-name>-scenes`, `<ha-name>-scripts`) and their volume mounts from the Home Assistant StatefulSet. **The HA pod will be restarted once** during this migration. After restart, existing automations/scenes/scripts CRs will be re-synced to HA via the REST API.
 
-## [0.5.1] - 2026-03-07
+## [v0.5.1] - 2026-03-07
 
 ### Fixed
 
@@ -176,7 +198,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **HomeAssistantAddon mosquitto profile: conflict with Flux GitOps and HA 2025.x incompatibility** — the mosquitto profile was writing `mqtt: broker: ...` to `HomeAssistantConfiguration` CR on every reconcile. HA 2025.x dropped support for the `broker` key in `configuration.yaml` (returns `'broker' is an invalid option`), and Flux GitOps would immediately revert the change, causing an infinite reconcile loop. The `HAIntegration` has been removed from the mosquitto profile. Configure the MQTT broker via the Home Assistant UI: **Settings → Integrations → MQTT**. Automatic setup via Config Flow API is planned in Phase 6.
 
 
-## [0.5.0] - 2026-03-01
+## [v0.5.0] - 2026-03-01
 
 ### Added
 
@@ -191,7 +213,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Short names: `haaddon`, `haad`
 
 
-## [0.4.0] - 2026-02-21
+## [v0.4.0] - 2026-02-21
 
 ### Added
 
@@ -228,7 +250,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Auto-reload control via `spec.autoReload` (default: true)
 
 
-## [0.3.0] - 2026-01-27
+## [v0.3.0] - 2026-01-27
 
 ### Added
 
@@ -250,7 +272,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The PersistentVolumeClaim for Home Assistant data storage now uses the suffix `-data` instead of `-config`
 
 
-## [0.2.0] - 2026-01-11
+## [v0.2.0] - 2026-01-11
 
 ### Added
 
@@ -271,7 +293,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Service naming simplified: now uses `<name>` instead of `<name>-homeassistant`
 
 
-## [0.1.0] - 2026-01-06
+## [v0.1.0] - 2026-01-06
 
 ### Added
 
@@ -301,17 +323,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Primary: k3s on Raspberry Pi 4/5 (ARM64)
 - Also supported: Any Kubernetes cluster (AMD64/ARM64)
 
-[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v1.0.0-rc.0...HEAD
+[v1.0.0-rc.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.10.1...v1.0.0-rc.0
 [v0.10.1]: https://github.com/przemekhys/homeassistant-operator/compare/v0.10.0...v0.10.1
 [v0.10.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.9.0...v0.10.0
 [v0.9.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.8.0...v0.9.0
 [v0.8.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.7.1...v0.8.0
 [v0.7.1]: https://github.com/przemekhys/homeassistant-operator/compare/v0.7.0...v0.7.1
 [v0.7.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.6.0
-[0.5.1]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.5.1
-[0.5.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.5.0
-[0.4.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.4.0
-[0.3.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.3.0
-[0.2.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.2.0
-[0.1.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.1.0
+[v0.6.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.6.0
+[v0.5.1]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.5.1
+[v0.5.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.5.0
+[v0.4.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.4.0
+[v0.3.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.3.0
+[v0.2.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.2.0
+[v0.1.0]: https://github.com/przemekhys/homeassistant-operator/releases/tag/v0.1.0

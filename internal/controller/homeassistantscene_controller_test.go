@@ -25,7 +25,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -52,23 +52,23 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 
 	createTestScene := func(
 		name, namespace, haRef, sceneName string,
-		entities []hav1alpha1.SceneEntity,
-	) *hav1alpha1.HomeAssistantScene {
-		return &hav1alpha1.HomeAssistantScene{
+		entities []hav1.SceneEntity,
+	) *hav1.HomeAssistantScene {
+		return &hav1.HomeAssistantScene{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: namespace,
 			},
-			Spec: hav1alpha1.HomeAssistantSceneSpec{
-				HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haRef},
+			Spec: hav1.HomeAssistantSceneSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: haRef},
 				Name:             sceneName,
 				Entities:         entities,
 			},
 		}
 	}
 
-	createTestEntity := func(entityID, state string, attrs map[string]interface{}) hav1alpha1.SceneEntity {
-		entity := hav1alpha1.SceneEntity{
+	createTestEntity := func(entityID, state string, attrs map[string]interface{}) hav1.SceneEntity {
+		entity := hav1.SceneEntity{
 			EntityID: entityID,
 			State:    state,
 		}
@@ -95,9 +95,9 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 		}
 		Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
-		ha := &hav1alpha1.HomeAssistant{}
+		ha := &hav1.HomeAssistant{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, ha)).To(Succeed())
-		ha.Status.Bootstrap = &hav1alpha1.BootstrapStatus{
+		ha.Status.Bootstrap = &hav1.BootstrapStatus{
 			APITokenSecretName: haName + "-api-token",
 		}
 		Expect(k8sClient.Status().Update(ctx, ha)).To(Succeed())
@@ -141,7 +141,7 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 
 	AfterEach(func() {
 		// Cleanup scenes
-		sceneList := &hav1alpha1.HomeAssistantSceneList{}
+		sceneList := &hav1.HomeAssistantSceneList{}
 		_ = k8sClient.List(ctx, sceneList)
 		for i := range sceneList.Items {
 			ns := sceneList.Items[i].Namespace
@@ -158,7 +158,7 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 		}
 
 		// Cleanup HAs
-		haList := &hav1alpha1.HomeAssistantList{}
+		haList := &hav1.HomeAssistantList{}
 		_ = k8sClient.List(ctx, haList)
 		for i := range haList.Items {
 			_ = k8sClient.Delete(ctx, &haList.Items[i])
@@ -169,13 +169,13 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 
 	Context("YAML Conversion (direct unit tests)", func() {
 		It("should convert scene to YAML with all fields", func() {
-			scene := &hav1alpha1.HomeAssistantScene{
+			scene := &hav1.HomeAssistantScene{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-scene"},
-				Spec: hav1alpha1.HomeAssistantSceneSpec{
+				Spec: hav1.HomeAssistantSceneSpec{
 					ID:   "custom_id",
 					Name: "Test Scene",
 					Icon: "mdi:test",
-					Entities: []hav1alpha1.SceneEntity{
+					Entities: []hav1.SceneEntity{
 						createTestEntity("light.test", "on", map[string]interface{}{
 							"brightness": 100,
 							"color_temp": 400,
@@ -199,10 +199,10 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 		})
 
 		It("should omit optional fields when not set", func() {
-			scene := &hav1alpha1.HomeAssistantScene{
+			scene := &hav1.HomeAssistantScene{
 				ObjectMeta: metav1.ObjectMeta{Name: "minimal-scene"},
-				Spec: hav1alpha1.HomeAssistantSceneSpec{
-					Entities: []hav1alpha1.SceneEntity{
+				Spec: hav1.HomeAssistantSceneSpec{
+					Entities: []hav1.SceneEntity{
 						createTestEntity("light.test", "on", nil),
 					},
 				},
@@ -216,10 +216,10 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 		})
 
 		It("should auto-generate ID from CR name", func() {
-			scene := &hav1alpha1.HomeAssistantScene{
+			scene := &hav1.HomeAssistantScene{
 				ObjectMeta: metav1.ObjectMeta{Name: "auto-id-scene"},
-				Spec: hav1alpha1.HomeAssistantSceneSpec{
-					Entities: []hav1alpha1.SceneEntity{
+				Spec: hav1.HomeAssistantSceneSpec{
+					Entities: []hav1.SceneEntity{
 						createTestEntity("light.test", "on", nil),
 					},
 				},
@@ -231,10 +231,10 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 		})
 
 		It("should handle entities with state only (no attributes)", func() {
-			scene := &hav1alpha1.HomeAssistantScene{
+			scene := &hav1.HomeAssistantScene{
 				ObjectMeta: metav1.ObjectMeta{Name: "state-only-scene"},
-				Spec: hav1alpha1.HomeAssistantSceneSpec{
-					Entities: []hav1alpha1.SceneEntity{
+				Spec: hav1.HomeAssistantSceneSpec{
+					Entities: []hav1.SceneEntity{
 						{EntityID: "light.simple", State: "off"},
 					},
 				},
@@ -252,10 +252,10 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 
 	Context("Hash Tracking (direct unit tests)", func() {
 		It("should calculate stable hash (idempotent)", func() {
-			scene := &hav1alpha1.HomeAssistantScene{
+			scene := &hav1.HomeAssistantScene{
 				ObjectMeta: metav1.ObjectMeta{Name: "hash-test"},
-				Spec: hav1alpha1.HomeAssistantSceneSpec{
-					Entities: []hav1alpha1.SceneEntity{
+				Spec: hav1.HomeAssistantSceneSpec{
+					Entities: []hav1.SceneEntity{
 						createTestEntity("light.test", "on", map[string]interface{}{"brightness": 50}),
 					},
 				},
@@ -269,17 +269,17 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 		})
 
 		It("should change hash when entities change", func() {
-			scene := &hav1alpha1.HomeAssistantScene{
+			scene := &hav1.HomeAssistantScene{
 				ObjectMeta: metav1.ObjectMeta{Name: "hash-change-test"},
-				Spec: hav1alpha1.HomeAssistantSceneSpec{
-					Entities: []hav1alpha1.SceneEntity{createTestEntity("light.test", "on", nil)},
+				Spec: hav1.HomeAssistantSceneSpec{
+					Entities: []hav1.SceneEntity{createTestEntity("light.test", "on", nil)},
 				},
 			}
 
 			hash1, err := reconciler.calculateSceneHash(scene)
 			Expect(err).NotTo(HaveOccurred())
 
-			scene.Spec.Entities = []hav1alpha1.SceneEntity{createTestEntity("light.test", "off", nil)}
+			scene.Spec.Entities = []hav1.SceneEntity{createTestEntity("light.test", "off", nil)}
 
 			hash2, err := reconciler.calculateSceneHash(scene)
 			Expect(err).NotTo(HaveOccurred())
@@ -287,10 +287,10 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 		})
 
 		It("should change hash when entity attributes change", func() {
-			scene := &hav1alpha1.HomeAssistantScene{
+			scene := &hav1.HomeAssistantScene{
 				ObjectMeta: metav1.ObjectMeta{Name: "hash-attr-test"},
-				Spec: hav1alpha1.HomeAssistantSceneSpec{
-					Entities: []hav1alpha1.SceneEntity{
+				Spec: hav1.HomeAssistantSceneSpec{
+					Entities: []hav1.SceneEntity{
 						createTestEntity("light.test", "on", map[string]interface{}{"brightness": 30}),
 					},
 				},
@@ -299,7 +299,7 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 			hash1, err := reconciler.calculateSceneHash(scene)
 			Expect(err).NotTo(HaveOccurred())
 
-			scene.Spec.Entities = []hav1alpha1.SceneEntity{
+			scene.Spec.Entities = []hav1.SceneEntity{
 				createTestEntity("light.test", "on", map[string]interface{}{"brightness": 50}),
 			}
 
@@ -312,11 +312,11 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 	Context("Validation", func() {
 		It("should set Ready=False when HomeAssistant not found", func() {
 			ns := "default"
-			scene := &hav1alpha1.HomeAssistantScene{
+			scene := &hav1.HomeAssistantScene{
 				ObjectMeta: metav1.ObjectMeta{Name: "scene-no-ha", Namespace: ns},
-				Spec: hav1alpha1.HomeAssistantSceneSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: "non-existent"},
-					Entities:         []hav1alpha1.SceneEntity{createTestEntity("light.test", "on", nil)},
+				Spec: hav1.HomeAssistantSceneSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: "non-existent"},
+					Entities:         []hav1.SceneEntity{createTestEntity("light.test", "on", nil)},
 				},
 			}
 
@@ -343,17 +343,17 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 
 		It("should requeue 30s when API token missing", func() {
 			ns := "default"
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-ha-scene-notoken", Namespace: ns},
-				Spec:       hav1alpha1.HomeAssistantSpec{Version: "stable"},
+				Spec:       hav1.HomeAssistantSpec{Version: "stable"},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
-			scene := &hav1alpha1.HomeAssistantScene{
+			scene := &hav1.HomeAssistantScene{
 				ObjectMeta: metav1.ObjectMeta{Name: "scene-no-token", Namespace: ns},
-				Spec: hav1alpha1.HomeAssistantSceneSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: ha.Name},
-					Entities:         []hav1alpha1.SceneEntity{createTestEntity("light.test", "on", nil)},
+				Spec: hav1.HomeAssistantSceneSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: ha.Name},
+					Entities:         []hav1.SceneEntity{createTestEntity("light.test", "on", nil)},
 				},
 			}
 			Expect(k8sClient.Create(ctx, scene)).To(Succeed())
@@ -373,9 +373,9 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 		const ns = "default"
 
 		BeforeEach(func() {
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{Name: haStatusName, Namespace: ns},
-				Spec:       hav1alpha1.HomeAssistantSpec{Version: "2024.1.0"},
+				Spec:       hav1.HomeAssistantSpec{Version: "2024.1.0"},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 			setupSceneToken(haStatusName, ns)
@@ -383,7 +383,7 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 
 		It("should set Ready=True after successful PUT", func() {
 			scene := createTestScene("scene-ready", ns, haStatusName, "Movie Night",
-				[]hav1alpha1.SceneEntity{createTestEntity("light.test", "on", nil)})
+				[]hav1.SceneEntity{createTestEntity("light.test", "on", nil)})
 			Expect(k8sClient.Create(ctx, scene)).To(Succeed())
 
 			_, err := reconcileScene(scene.Name, ns)
@@ -404,7 +404,7 @@ var _ = Describe("HomeAssistantScene Controller", func() {
 
 		It("should update ObservedGeneration", func() {
 			scene := createTestScene("scene-obsgen", ns, haStatusName, "Gen Test",
-				[]hav1alpha1.SceneEntity{createTestEntity("light.test", "on", nil)})
+				[]hav1.SceneEntity{createTestEntity("light.test", "on", nil)})
 			Expect(k8sClient.Create(ctx, scene)).To(Succeed())
 
 			_, err := reconcileScene(scene.Name, ns)

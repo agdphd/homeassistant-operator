@@ -42,7 +42,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -108,7 +108,7 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	log := logf.FromContext(ctx)
 
 	// Fetch the HomeAssistant instance
-	ha := &hav1alpha1.HomeAssistant{}
+	ha := &hav1.HomeAssistant{}
 	if err := r.Get(ctx, req.NamespacedName, ha); err != nil {
 		if errors.IsNotFound(err) {
 			log.Info("HomeAssistant resource not found. Ignoring since object must be deleted")
@@ -120,7 +120,7 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Set initial status if not set
 	if ha.Status.Phase == "" {
-		ha.Status.Phase = hav1alpha1.PhasePending
+		ha.Status.Phase = hav1.PhasePending
 		if err := r.Status().Update(ctx, ha); err != nil {
 			log.Error(err, "Failed to update HomeAssistant status")
 			return ctrl.Result{}, err
@@ -140,7 +140,7 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"homeassistant", ha.Name,
 			"namespace", ha.Namespace,
 			"expected-haconfig", ha.Name+"-config")
-		ha.Status.Phase = hav1alpha1.PhasePending
+		ha.Status.Phase = hav1.PhasePending
 		ha.Status.Ready = false
 		// Update status to indicate we're waiting
 		condition := metav1.Condition{
@@ -203,7 +203,7 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 }
 
 // reconcilePVC ensures the PVC exists for Home Assistant data
-func (r *HomeAssistantReconciler) reconcilePVC(ctx context.Context, ha *hav1alpha1.HomeAssistant) error {
+func (r *HomeAssistantReconciler) reconcilePVC(ctx context.Context, ha *hav1.HomeAssistant) error {
 	log := logf.FromContext(ctx)
 	pvcName := fmt.Sprintf("%s-data", ha.Name)
 
@@ -260,7 +260,7 @@ func (r *HomeAssistantReconciler) reconcilePVC(ctx context.Context, ha *hav1alph
 }
 
 // buildPVC creates a PVC spec for Home Assistant
-func (r *HomeAssistantReconciler) buildPVC(ha *hav1alpha1.HomeAssistant, name string) *corev1.PersistentVolumeClaim {
+func (r *HomeAssistantReconciler) buildPVC(ha *hav1.HomeAssistant, name string) *corev1.PersistentVolumeClaim {
 	labels := r.labelsForHomeAssistant(ha)
 
 	storageSize := resource.MustParse(defaultStorageSize)
@@ -297,7 +297,7 @@ func (r *HomeAssistantReconciler) buildPVC(ha *hav1alpha1.HomeAssistant, name st
 }
 
 // reconcileStatefulSet ensures the StatefulSet exists and is up to date
-func (r *HomeAssistantReconciler) reconcileStatefulSet(ctx context.Context, ha *hav1alpha1.HomeAssistant) error {
+func (r *HomeAssistantReconciler) reconcileStatefulSet(ctx context.Context, ha *hav1.HomeAssistant) error {
 	log := logf.FromContext(ctx)
 
 	sts := &appsv1.StatefulSet{}
@@ -382,12 +382,12 @@ func (r *HomeAssistantReconciler) reconcileStatefulSet(ctx context.Context, ha *
 // HomeAssistantConfiguration exists
 func (r *HomeAssistantReconciler) getGeneratedConfigMapName(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 ) (string, error) {
 	log := logf.FromContext(ctx)
 
 	// List all HomeAssistantConfigurations in the same namespace
-	haConfigList := &hav1alpha1.HomeAssistantConfigurationList{}
+	haConfigList := &hav1.HomeAssistantConfigurationList{}
 	if err := r.List(ctx, haConfigList, client.InNamespace(ha.Namespace)); err != nil {
 		return "", err
 	}
@@ -413,7 +413,7 @@ func (r *HomeAssistantReconciler) getGeneratedConfigMapName(
 // Includes debouncing to prevent rapid updates during concurrent reconciliation
 func (r *HomeAssistantReconciler) syncConfigHashFromConfigMap(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 	sts *appsv1.StatefulSet,
 ) error {
 	log := logf.FromContext(ctx)
@@ -486,12 +486,12 @@ func (r *HomeAssistantReconciler) syncConfigHashFromConfigMap(
 // HomeAssistantSecrets exists
 func (r *HomeAssistantReconciler) getGeneratedSecretsName(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 ) (string, error) {
 	log := logf.FromContext(ctx)
 
 	// List all HomeAssistantSecrets in the same namespace
-	haSecretsList := &hav1alpha1.HomeAssistantSecretsList{}
+	haSecretsList := &hav1.HomeAssistantSecretsList{}
 	if err := r.List(ctx, haSecretsList, client.InNamespace(ha.Namespace)); err != nil {
 		return "", err
 	}
@@ -512,7 +512,7 @@ func (r *HomeAssistantReconciler) getGeneratedSecretsName(
 // buildStatefulSet creates a StatefulSet spec for Home Assistant
 func (r *HomeAssistantReconciler) buildStatefulSet(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 ) *appsv1.StatefulSet {
 	labels := r.labelsForHomeAssistant(ha)
 	replicas := int32(1)
@@ -745,7 +745,7 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 }
 
 // reconcileService ensures the Service exists and is up to date
-func (r *HomeAssistantReconciler) reconcileService(ctx context.Context, ha *hav1alpha1.HomeAssistant) error {
+func (r *HomeAssistantReconciler) reconcileService(ctx context.Context, ha *hav1.HomeAssistant) error {
 	log := logf.FromContext(ctx)
 
 	svc := &corev1.Service{}
@@ -779,7 +779,7 @@ func (r *HomeAssistantReconciler) reconcileService(ctx context.Context, ha *hav1
 }
 
 // buildService creates a Service spec for Home Assistant
-func (r *HomeAssistantReconciler) buildService(ha *hav1alpha1.HomeAssistant) *corev1.Service {
+func (r *HomeAssistantReconciler) buildService(ha *hav1.HomeAssistant) *corev1.Service {
 	labels := r.labelsForHomeAssistant(ha)
 
 	serviceType := corev1.ServiceTypeClusterIP
@@ -821,7 +821,7 @@ func (r *HomeAssistantReconciler) buildService(ha *hav1alpha1.HomeAssistant) *co
 }
 
 // labelsForHomeAssistant returns the labels for selecting resources belonging to the given HomeAssistant CR
-func (r *HomeAssistantReconciler) labelsForHomeAssistant(ha *hav1alpha1.HomeAssistant) map[string]string {
+func (r *HomeAssistantReconciler) labelsForHomeAssistant(ha *hav1.HomeAssistant) map[string]string {
 	return map[string]string{
 		labelAppName:      "homeassistant",
 		labelAppInstance:  ha.Name,
@@ -832,12 +832,12 @@ func (r *HomeAssistantReconciler) labelsForHomeAssistant(ha *hav1alpha1.HomeAssi
 // updateStatusFailed updates the status when reconciliation fails
 func (r *HomeAssistantReconciler) updateStatusFailed(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 	reconcileErr error,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	ha.Status.Phase = hav1alpha1.PhaseFailed
+	ha.Status.Phase = hav1.PhaseFailed
 	ha.Status.Ready = false
 	ha.Status.ObservedGeneration = ha.Generation
 
@@ -860,7 +860,7 @@ func (r *HomeAssistantReconciler) updateStatusFailed(
 // updateStatusFromStatefulSet updates the status based on StatefulSet state
 func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -879,7 +879,7 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 
 	// Check if StatefulSet is ready
 	if sts.Status.ReadyReplicas > 0 && sts.Status.ReadyReplicas == sts.Status.Replicas {
-		ha.Status.Phase = hav1alpha1.PhaseRunning
+		ha.Status.Phase = hav1.PhaseRunning
 		ha.Status.Ready = true
 
 		meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
@@ -890,7 +890,7 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 			ObservedGeneration: ha.Generation,
 		})
 	} else {
-		ha.Status.Phase = hav1alpha1.PhasePending
+		ha.Status.Phase = hav1.PhasePending
 		ha.Status.Ready = false
 
 		meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
@@ -1108,16 +1108,16 @@ func probesEqual(current, desired *corev1.Probe) bool {
 // SetupWithManager sets up the controller with the Manager.
 func (r *HomeAssistantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&hav1alpha1.HomeAssistant{}).
+		For(&hav1.HomeAssistant{}).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Watches(
-			&hav1alpha1.HomeAssistantConfiguration{},
+			&hav1.HomeAssistantConfiguration{},
 			handler.EnqueueRequestsFromMapFunc(r.findHomeAssistantForConfiguration),
 		).
 		Watches(
-			&hav1alpha1.HomeAssistantSecrets{},
+			&hav1.HomeAssistantSecrets{},
 			handler.EnqueueRequestsFromMapFunc(r.findHomeAssistantForSecrets),
 		).
 		Watches(
@@ -1134,7 +1134,7 @@ func (r *HomeAssistantReconciler) findHomeAssistantForConfiguration(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
-	haConfig := obj.(*hav1alpha1.HomeAssistantConfiguration)
+	haConfig := obj.(*hav1.HomeAssistantConfiguration)
 
 	// Return reconcile request for the referenced HomeAssistant
 	return []reconcile.Request{
@@ -1153,7 +1153,7 @@ func (r *HomeAssistantReconciler) findHomeAssistantForSecrets(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
-	haSecrets := obj.(*hav1alpha1.HomeAssistantSecrets)
+	haSecrets := obj.(*hav1.HomeAssistantSecrets)
 
 	// Return reconcile request for the referenced HomeAssistant
 	return []reconcile.Request{
@@ -1195,7 +1195,7 @@ func (r *HomeAssistantReconciler) findHomeAssistantForConfigMap(
 // buildInitContainers returns the init containers for the Home Assistant pod.
 // The config-init container pre-creates required YAML files on the PVC so that
 // HA does not enter recovery mode on first start due to missing !include targets.
-func (r *HomeAssistantReconciler) buildInitContainers(ha *hav1alpha1.HomeAssistant) []corev1.Container {
+func (r *HomeAssistantReconciler) buildInitContainers(ha *hav1.HomeAssistant) []corev1.Container {
 	repo := defaultInitRepository
 	img := defaultInitImage
 	tag := defaultInitTag

@@ -24,7 +24,7 @@ import (
 	"gopkg.in/yaml.v3"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 )
 
 // autoIncludeEntries defines the keys and their corresponding !include directives.
@@ -44,7 +44,7 @@ var autoIncludeEntries = []struct {
 // Uses yaml.Node to preserve custom YAML tags (e.g. !secret, !include) through
 // the unmarshal/marshal round-trip.
 // Returns an error if the YAML cannot be parsed or marshalled.
-func injectLocation(configYAML string, loc *hav1alpha1.LocationConfig) (string, error) {
+func injectLocation(configYAML string, loc *hav1.LocationConfig) (string, error) {
 	if loc == nil {
 		return configYAML, nil
 	}
@@ -167,7 +167,7 @@ func overrideNodeField(mapping *yaml.Node, key, value, tag string) {
 
 // shouldInjectRecorder reports whether injectRecorder has any fields to write.
 // Returns false when recorder is nil, explicitly disabled, or there is nothing to inject.
-func shouldInjectRecorder(recorder *hav1alpha1.RecorderConfig, dbURL string) bool {
+func shouldInjectRecorder(recorder *hav1.RecorderConfig, dbURL string) bool {
 	if recorder == nil {
 		return false
 	}
@@ -228,7 +228,7 @@ func getOrCreateRecorderSection(root *yaml.Node) (*yaml.Node, bool) {
 // credentials are not materialised into the ConfigMap; the actual URL must be stored in a
 // K8s Secret mounted at /config/recorder_db_url.yaml (see reconcileRecorderDBSecret).
 // When useInclude is false, dbURL is written verbatim as a plain string.
-func applyRecorderFields(recSection *yaml.Node, dbURL string, useInclude bool, recorder *hav1alpha1.RecorderConfig) {
+func applyRecorderFields(recSection *yaml.Node, dbURL string, useInclude bool, recorder *hav1.RecorderConfig) {
 	if dbURL != "" {
 		if useInclude {
 			overrideNodeField(recSection, "db_url", "recorder_db_url.yaml", "!include")
@@ -249,7 +249,7 @@ func applyRecorderFields(recSection *yaml.Node, dbURL string, useInclude bool, r
 // !include / !secret tags in other sections through the round-trip.
 // Returns configYAML unchanged when recorder is nil or disabled.
 func injectRecorder(
-	configYAML string, recorder *hav1alpha1.RecorderConfig, dbURL string, useInclude bool,
+	configYAML string, recorder *hav1.RecorderConfig, dbURL string, useInclude bool,
 ) (string, error) {
 	if !shouldInjectRecorder(recorder, dbURL) {
 		return configYAML, nil
@@ -284,8 +284,8 @@ func injectRecorder(
 // ha may be nil (no location injection) if the HomeAssistant CR is unavailable.
 // If location injection fails (unexpected YAML parse error), the error is logged and
 // the function falls back to rawConfig before appending auto-include directives.
-func buildEffectiveConfig(rawConfig string, ha *hav1alpha1.HomeAssistant) string {
-	var loc *hav1alpha1.LocationConfig
+func buildEffectiveConfig(rawConfig string, ha *hav1.HomeAssistant) string {
+	var loc *hav1.LocationConfig
 	if ha != nil && ha.Spec.Bootstrap != nil {
 		loc = ha.Spec.Bootstrap.Location
 	}

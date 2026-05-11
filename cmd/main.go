@@ -37,7 +37,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/controller"
 	"github.com/przemekhys/homeassistant-operator/internal/version"
 	// +kubebuilder:scaffold:imports
@@ -51,7 +51,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(hav1alpha1.AddToScheme(scheme))
+	utilruntime.Must(hav1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 

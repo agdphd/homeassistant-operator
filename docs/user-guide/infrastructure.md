@@ -19,7 +19,7 @@ Area resolves floor and label references by name at reconcile time. The two beha
 A floor represents a physical level of your building.
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantFloor
 metadata:
   name: ground-floor
@@ -30,7 +30,7 @@ spec:
   level: 0
   icon: "mdi:home-floor-0"
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantFloor
 metadata:
   name: first-floor
@@ -41,7 +41,7 @@ spec:
   level: 1
   icon: "mdi:home-floor-1"
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantFloor
 metadata:
   name: basement
@@ -67,7 +67,7 @@ spec:
 Labels are tags you can attach to areas for filtering and grouping.
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantLabel
 metadata:
   name: outdoor
@@ -78,7 +78,7 @@ spec:
   icon: "mdi:tree"
   color: "green"
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantLabel
 metadata:
   name: critical
@@ -104,7 +104,7 @@ spec:
 Areas represent rooms or zones. They can optionally belong to a floor and carry labels.
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantArea
 metadata:
   name: living-room
@@ -117,7 +117,7 @@ spec:
   labels:
     - "Indoor"
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantArea
 metadata:
   name: garden

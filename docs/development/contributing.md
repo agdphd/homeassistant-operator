@@ -49,7 +49,7 @@ make setup-envtest
 ### Common Workflows
 
 ```bash
-# After modifying types in api/v1alpha1/*.go — always run this first
+# After modifying types in api/v1/*.go — always run this first
 make manifests generate && make fmt vet
 
 # Run unit tests
@@ -111,7 +111,7 @@ pre-commit autoupdate
 ## Adding a New CRD
 
 1. `kubebuilder create api --group ha --version v1alpha1 --kind YourResource`
-2. Define types in `api/v1alpha1/yourresource_types.go`
+2. Define types in `api/v1/yourresource_types.go`
 3. `make manifests generate && make fmt vet`
 4. Write unit tests in `internal/controller/yourresource_controller_test.go`
 5. Implement `internal/controller/yourresource_controller.go`

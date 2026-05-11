@@ -17,7 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -58,7 +58,7 @@ const (
 // implementation.
 func (r *HomeAssistantReconciler) reconcileBootstrap(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -75,7 +75,7 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(
 
 	// Initialize bootstrap status if needed
 	if ha.Status.Bootstrap == nil {
-		ha.Status.Bootstrap = &hav1alpha1.BootstrapStatus{}
+		ha.Status.Bootstrap = &hav1.BootstrapStatus{}
 	}
 
 	// Validate bootstrap configuration
@@ -186,7 +186,7 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(
 
 // buildCoreConfigRequest builds CoreConfigRequest from HomeAssistant spec
 func (r *HomeAssistantReconciler) buildCoreConfigRequest(
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 ) *haclient.CoreConfigRequest {
 	if ha.Spec.Bootstrap == nil || ha.Spec.Bootstrap.Location == nil {
 		return nil
@@ -227,7 +227,7 @@ func (r *HomeAssistantReconciler) buildCoreConfigRequest(
 
 // validateBootstrapConfig validates bootstrap configuration
 func (r *HomeAssistantReconciler) validateBootstrapConfig(
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 ) error {
 	if ha.Spec.Bootstrap.Credentials == nil ||
 		ha.Spec.Bootstrap.Credentials.SecretRef == nil {
@@ -247,7 +247,7 @@ func (r *HomeAssistantReconciler) validateBootstrapConfig(
 // the credentials Secret
 func (r *HomeAssistantReconciler) getBootstrapCredentials(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 ) (string, string, error) {
 	secretRef := ha.Spec.Bootstrap.Credentials.SecretRef
 
@@ -283,7 +283,7 @@ func (r *HomeAssistantReconciler) getBootstrapCredentials(
 }
 
 // buildHomeAssistantURL builds the internal service URL for Home Assistant
-func (r *HomeAssistantReconciler) buildHomeAssistantURL(ha *hav1alpha1.HomeAssistant) string {
+func (r *HomeAssistantReconciler) buildHomeAssistantURL(ha *hav1.HomeAssistant) string {
 	// Use internal service name
 	// Format: http://<name>.<namespace>.svc.cluster.local:<port>
 	serviceName := ha.Name
@@ -301,7 +301,7 @@ func (r *HomeAssistantReconciler) buildHomeAssistantURL(ha *hav1alpha1.HomeAssis
 // handleBootstrapError handles errors from bootstrap process
 func (r *HomeAssistantReconciler) handleBootstrapError(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 	err error,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -332,7 +332,7 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 					ctx, ha, reasonBootstrapNotReady,
 					"Onboarding endpoint recovered, retrying bootstrap",
 					false, false,
-					func(s *hav1alpha1.BootstrapStatus) {
+					func(s *hav1.BootstrapStatus) {
 						s.OnboardingDoneFirstSeen = nil
 						s.LoginRecoveryAttempts = 0
 					},
@@ -359,7 +359,7 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 				ctx, ha, reasonBootstrapAlreadyDone,
 				"Onboarding appears done, confirming...",
 				false, false,
-				func(s *hav1alpha1.BootstrapStatus) {
+				func(s *hav1.BootstrapStatus) {
 					s.OnboardingDoneFirstSeen = &now
 					// Do NOT reset LoginRecoveryAttempts here — it may already
 					// be non-zero from a previous LoginNoUser cycle. Resetting
@@ -401,7 +401,7 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 // and creates a long-lived API token if requested.
 func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -411,7 +411,7 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 		return r.updateBootstrapStatus(
 			ctx, ha, reasonBootstrapAlreadyDone,
 			"Onboarding already completed", true, false,
-			func(s *hav1alpha1.BootstrapStatus) {
+			func(s *hav1.BootstrapStatus) {
 				s.OnboardingDoneFirstSeen = nil
 				s.LoginRecoveryAttempts = 0
 			},
@@ -432,7 +432,7 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 			ctx, ha, reasonBootstrapAlreadyDone,
 			"Onboarding completed, token exists",
 			true, true,
-			func(s *hav1alpha1.BootstrapStatus) {
+			func(s *hav1.BootstrapStatus) {
 				s.OnboardingDoneFirstSeen = nil
 				s.LoginRecoveryAttempts = 0
 			},
@@ -463,7 +463,7 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 			ctx, ha, reasonBootstrapNotReady,
 			"Onboarding endpoint recovered, retrying bootstrap",
 			false, false,
-			func(s *hav1alpha1.BootstrapStatus) {
+			func(s *hav1.BootstrapStatus) {
 				s.OnboardingDoneFirstSeen = nil
 				s.LoginRecoveryAttempts = 0
 			},
@@ -509,7 +509,7 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 					attempts, err,
 				),
 				false, false,
-				func(s *hav1alpha1.BootstrapStatus) {
+				func(s *hav1.BootstrapStatus) {
 					s.LoginRecoveryAttempts = attempts
 				},
 			)
@@ -530,7 +530,7 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 			return r.updateBootstrapStatus(ctx, ha, reasonBootstrapNotReady,
 				"No user in HA yet, resetting onboarding window",
 				false, false,
-				func(s *hav1alpha1.BootstrapStatus) {
+				func(s *hav1.BootstrapStatus) {
 					s.OnboardingDoneFirstSeen = nil
 					// Keep LoginRecoveryAttempts unchanged — this is not a
 					// credential failure, only a transient startup condition.
@@ -542,7 +542,7 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 			fmt.Sprintf("Login failed (attempt %d/%d): %v",
 				attempts, maxLoginRecoveryRetries, err),
 			false, false,
-			func(s *hav1alpha1.BootstrapStatus) {
+			func(s *hav1.BootstrapStatus) {
 				s.LoginRecoveryAttempts = attempts
 			},
 		)
@@ -576,7 +576,7 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 		ctx, ha, reasonBootstrapCompleted,
 		"Bootstrap completed (token created via login recovery)",
 		true, true,
-		func(s *hav1alpha1.BootstrapStatus) {
+		func(s *hav1.BootstrapStatus) {
 			s.OnboardingDoneFirstSeen = nil
 			s.LoginRecoveryAttempts = 0
 		},
@@ -585,7 +585,7 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 
 // bootstrapStatusModifier is an optional function applied to BootstrapStatus
 // before saving, allowing callers to update fields beyond the standard ones.
-type bootstrapStatusModifier func(*hav1alpha1.BootstrapStatus)
+type bootstrapStatusModifier func(*hav1.BootstrapStatus)
 
 // updateBootstrapStatus updates the bootstrap status and returns appropriate
 // Result. tokenCreated indicates whether an API token was actually created
@@ -593,7 +593,7 @@ type bootstrapStatusModifier func(*hav1alpha1.BootstrapStatus)
 // status fields (e.g. OnboardingDoneFirstSeen, LoginRecoveryAttempts).
 func (r *HomeAssistantReconciler) updateBootstrapStatus(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 	reason, message string,
 	completed, tokenCreated bool,
 	mods ...bootstrapStatusModifier,
@@ -607,14 +607,14 @@ func (r *HomeAssistantReconciler) updateBootstrapStatus(
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		// Refresh HomeAssistant from API server to get latest resourceVersion
-		freshHA := &hav1alpha1.HomeAssistant{}
+		freshHA := &hav1.HomeAssistant{}
 		if err := r.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, freshHA); err != nil {
 			return ctrl.Result{}, err
 		}
 
 		// Initialize bootstrap status if needed
 		if freshHA.Status.Bootstrap == nil {
-			freshHA.Status.Bootstrap = &hav1alpha1.BootstrapStatus{}
+			freshHA.Status.Bootstrap = &hav1.BootstrapStatus{}
 		}
 
 		// Apply desired status updates to fresh object
@@ -694,7 +694,7 @@ func (r *HomeAssistantReconciler) updateBootstrapStatus(
 // API token
 func (r *HomeAssistantReconciler) createAPITokenSecret(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 	token string,
 ) error {
 	log := logf.FromContext(ctx)
@@ -737,7 +737,7 @@ func (r *HomeAssistantReconciler) createAPITokenSecret(
 }
 
 // getAPITokenSecretName returns the name of the Secret for the API token
-func (r *HomeAssistantReconciler) getAPITokenSecretName(ha *hav1alpha1.HomeAssistant) string {
+func (r *HomeAssistantReconciler) getAPITokenSecretName(ha *hav1.HomeAssistant) string {
 	if ha.Spec.Bootstrap != nil && ha.Spec.Bootstrap.APITokenSecretName != "" {
 		return ha.Spec.Bootstrap.APITokenSecretName
 	}
@@ -761,7 +761,7 @@ func getOrDefault(value, defaultValue string) string {
 // Once limits are exceeded the operator stops retrying and requires manual intervention.
 func (r *HomeAssistantReconciler) handleSelfBan(
 	ctx context.Context,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 	banErr error,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)

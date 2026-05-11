@@ -13,7 +13,7 @@ A Kubernetes operator that simplifies deploying and managing [Home Assistant](ht
 The Home Assistant Operator automates the full lifecycle of Home Assistant on Kubernetes. Instead of managing Deployments, Services, PVCs and config files by hand, you declare the desired state in custom resources and the operator handles the rest — including zero-touch bootstrap, hot-reload of configuration changes, and declarative management of automations, scenes, scripts and integrations.
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistant
 metadata:
   name: home

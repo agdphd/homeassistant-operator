@@ -37,7 +37,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -60,7 +60,7 @@ type HomeAssistantScriptReconciler struct {
 }
 
 // haClientFor returns a HA API client for the given HomeAssistant instance.
-func (r *HomeAssistantScriptReconciler) haClientFor(ha *hav1alpha1.HomeAssistant) *haclient.Client {
+func (r *HomeAssistantScriptReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
 	haURL := buildHomeAssistantURL(ha)
 	if r.NewHAClient != nil {
 		return r.NewHAClient(haURL)
@@ -83,7 +83,7 @@ func (r *HomeAssistantScriptReconciler) Reconcile(ctx context.Context, req ctrl.
 	log := logf.FromContext(ctx)
 
 	// Fetch the HomeAssistantScript instance
-	script := &hav1alpha1.HomeAssistantScript{}
+	script := &hav1.HomeAssistantScript{}
 	if err := r.Get(ctx, req.NamespacedName, script); err != nil {
 		if errors.IsNotFound(err) {
 			log.Info("HomeAssistantScript resource not found. Ignoring since object must be deleted")
@@ -247,7 +247,7 @@ func (r *HomeAssistantScriptReconciler) Reconcile(ctx context.Context, req ctrl.
 
 // scriptToYaml converts HomeAssistantScript CR to YAML-compatible map
 func (r *HomeAssistantScriptReconciler) scriptToYaml(
-	script *hav1alpha1.HomeAssistantScript,
+	script *hav1.HomeAssistantScript,
 ) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
 
@@ -270,7 +270,7 @@ func (r *HomeAssistantScriptReconciler) scriptToYaml(
 	}
 
 	// Max and MaxExceeded (only relevant for queued/parallel modes)
-	if script.Spec.Mode == hav1alpha1.ScriptModeQueued || script.Spec.Mode == hav1alpha1.ScriptModeParallel {
+	if script.Spec.Mode == hav1.ScriptModeQueued || script.Spec.Mode == hav1.ScriptModeParallel {
 		if script.Spec.Max != nil {
 			result["max"] = *script.Spec.Max
 		}
@@ -313,8 +313,8 @@ func (r *HomeAssistantScriptReconciler) scriptToYaml(
 // HA writes the result to scripts.yaml on the PVC (writable).
 func (r *HomeAssistantScriptReconciler) reconcileScriptViaAPI(
 	ctx context.Context,
-	script *hav1alpha1.HomeAssistantScript,
-	ha *hav1alpha1.HomeAssistant,
+	script *hav1.HomeAssistantScript,
+	ha *hav1.HomeAssistant,
 	token string,
 ) error {
 	scriptData, err := r.scriptToYaml(script)
@@ -359,7 +359,7 @@ func (r *HomeAssistantScriptReconciler) reconcileScriptViaAPI(
 // Includes the effective script ID (spec.id or CR name) so that ID-only
 // changes also update the hash and trigger a reload.
 func (r *HomeAssistantScriptReconciler) calculateScriptHash(
-	script *hav1alpha1.HomeAssistantScript,
+	script *hav1.HomeAssistantScript,
 ) (string, error) {
 	// Effective ID matches the key used in the scripts ConfigMap
 	scriptID := script.Spec.ID
@@ -387,9 +387,9 @@ func (r *HomeAssistantScriptReconciler) calculateScriptHash(
 // SetupWithManager sets up the controller with the Manager.
 func (r *HomeAssistantScriptReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&hav1alpha1.HomeAssistantScript{}).
+		For(&hav1.HomeAssistantScript{}).
 		Watches(
-			&hav1alpha1.HomeAssistant{},
+			&hav1.HomeAssistant{},
 			handler.EnqueueRequestsFromMapFunc(r.findScriptsForHomeAssistant),
 		).
 		Named("homeassistantscript").
@@ -402,9 +402,9 @@ func (r *HomeAssistantScriptReconciler) findScriptsForHomeAssistant(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
-	ha := obj.(*hav1alpha1.HomeAssistant)
+	ha := obj.(*hav1.HomeAssistant)
 
-	scriptList := &hav1alpha1.HomeAssistantScriptList{}
+	scriptList := &hav1.HomeAssistantScriptList{}
 	if err := r.List(ctx, scriptList, client.InNamespace(ha.Namespace)); err != nil {
 		return []reconcile.Request{}
 	}
@@ -429,8 +429,8 @@ func (r *HomeAssistantScriptReconciler) findScriptsForHomeAssistant(
 func (r *HomeAssistantScriptReconciler) validateHomeAssistantRef(
 	ctx context.Context,
 	haRef types.NamespacedName,
-	script *hav1alpha1.HomeAssistantScript,
-) (*hav1alpha1.HomeAssistant, error) {
+	script *hav1.HomeAssistantScript,
+) (*hav1.HomeAssistant, error) {
 	log := logf.FromContext(ctx)
 
 	ha, err := getHomeAssistant(ctx, r.Client, haRef)

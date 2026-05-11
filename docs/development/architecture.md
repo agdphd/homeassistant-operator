@@ -219,7 +219,7 @@ Tests wire in an `httptest.Server` instead of a real HA instance, keeping unit t
 ## Package structure
 
 ```
-api/v1alpha1/          CRD type definitions (edit here, then make manifests generate)
+api/v1/          CRD type definitions (edit here, then make manifests generate)
 cmd/main.go            Entry point — registers all controllers
 internal/
   controller/          One reconciler per CRD

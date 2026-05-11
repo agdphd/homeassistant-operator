@@ -13,7 +13,7 @@ Requires a bootstrap API token (`<ha-name>-api-token` Secret). If the token is m
 ## Basic example
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantAutomation
 metadata:
   name: lights-at-sunset
@@ -45,7 +45,7 @@ spec:
 ## Advanced example — multiple triggers and actions
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantAutomation
 metadata:
   name: security-alert

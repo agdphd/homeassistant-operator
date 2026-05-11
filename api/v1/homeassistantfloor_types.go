@@ -14,41 +14,37 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// HomeAssistantAreaSpec defines the desired state of HomeAssistantArea
-type HomeAssistantAreaSpec struct {
-	// homeAssistantRef is a reference to the HomeAssistant CR this area belongs to
+// HomeAssistantFloorSpec defines the desired state of HomeAssistantFloor
+type HomeAssistantFloorSpec struct {
+	// homeAssistantRef is a reference to the HomeAssistant CR this floor belongs to
 	// +required
 	HomeAssistantRef HomeAssistantReference `json:"homeAssistantRef"`
 
-	// name is the display name of the area in Home Assistant
+	// name is the display name of the floor in Home Assistant
 	// +kubebuilder:validation:MinLength=1
 	// +required
 	Name string `json:"name"`
 
-	// floorName is the name of the HomeAssistantFloor CR to assign this area to (resolved at reconcile time)
+	// level is the floor level (e.g. 0 for ground, 1 for first, -1 for basement)
 	// +optional
-	FloorName string `json:"floorName,omitempty"`
+	Level *int `json:"level,omitempty"`
 
-	// icon is the Material Design Icon for the area (e.g. "mdi:sofa")
+	// icon is the Material Design Icon for the floor (e.g. "mdi:home-floor-1")
 	// +optional
 	Icon string `json:"icon,omitempty"`
-
-	// labels is a list of HomeAssistantLabel CR names to assign to this area (resolved at reconcile time)
-	// +optional
-	Labels []string `json:"labels,omitempty"`
 }
 
-// HomeAssistantAreaStatus defines the observed state of HomeAssistantArea
-type HomeAssistantAreaStatus struct {
-	// areaID is the ID assigned by Home Assistant after creation
+// HomeAssistantFloorStatus defines the observed state of HomeAssistantFloor
+type HomeAssistantFloorStatus struct {
+	// floorID is the ID assigned by Home Assistant after creation
 	// +optional
-	AreaID string `json:"areaID,omitempty"`
+	FloorID string `json:"floorID,omitempty"`
 
 	// observedGeneration is the most recent generation observed
 	// +optional
@@ -59,46 +55,46 @@ type HomeAssistantAreaStatus struct {
 	// +optional
 	LastError string `json:"lastError,omitempty"`
 
-	// conditions represent the current state of the HomeAssistantArea resource
+	// conditions represent the current state of the HomeAssistantFloor resource
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
+// +kubebuilder:storageversion
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:path=homeassistantareas,shortName=haarea;haar
+// +kubebuilder:resource:shortName=hafloor;hafl
 // +kubebuilder:printcolumn:name="HomeAssistant",type=string,JSONPath=`.spec.homeAssistantRef.name`
 // +kubebuilder:printcolumn:name="Name",type=string,JSONPath=`.spec.name`
-// +kubebuilder:printcolumn:name="Floor",type=string,JSONPath=`.spec.floorName`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.spec) || self.spec.homeAssistantRef == oldSelf.spec.homeAssistantRef",message="spec.homeAssistantRef is immutable after creation"
 
-// HomeAssistantArea is the Schema for the homeassistantareas API
-type HomeAssistantArea struct {
+// HomeAssistantFloor is the Schema for the homeassistantfloors API
+type HomeAssistantFloor struct {
 	metav1.TypeMeta `json:",inline"`
 
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// +required
-	Spec HomeAssistantAreaSpec `json:"spec"`
+	Spec HomeAssistantFloorSpec `json:"spec"`
 
 	// +optional
-	Status HomeAssistantAreaStatus `json:"status,omitempty"`
+	Status HomeAssistantFloorStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// HomeAssistantAreaList contains a list of HomeAssistantArea
-type HomeAssistantAreaList struct {
+// HomeAssistantFloorList contains a list of HomeAssistantFloor
+type HomeAssistantFloorList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []HomeAssistantArea `json:"items"`
+	Items           []HomeAssistantFloor `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&HomeAssistantArea{}, &HomeAssistantAreaList{})
+	SchemeBuilder.Register(&HomeAssistantFloor{}, &HomeAssistantFloorList{})
 }

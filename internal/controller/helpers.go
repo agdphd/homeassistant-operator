@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 )
 
 // getHomeAssistant retrieves a HomeAssistant CR by namespaced name
@@ -37,8 +37,8 @@ func getHomeAssistant(
 	ctx context.Context,
 	c client.Client,
 	haRef types.NamespacedName,
-) (*hav1alpha1.HomeAssistant, error) {
-	ha := &hav1alpha1.HomeAssistant{}
+) (*hav1.HomeAssistant, error) {
+	ha := &hav1.HomeAssistant{}
 	if err := c.Get(ctx, haRef, ha); err != nil {
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func calculateConfigHash(content string) string {
 
 // buildHomeAssistantURL builds the internal cluster URL for Home Assistant service
 // Used by automation and scene controllers for hot-reload
-func buildHomeAssistantURL(ha *hav1alpha1.HomeAssistant) string {
+func buildHomeAssistantURL(ha *hav1.HomeAssistant) string {
 	// Use internal Kubernetes service DNS name
 	// Format: <service-name>.<namespace>.svc.cluster.local:<port>
 	serviceName := ha.Name
@@ -122,7 +122,7 @@ func buildHomeAssistantURL(ha *hav1alpha1.HomeAssistant) string {
 func getAPIToken(
 	ctx context.Context,
 	c client.Client,
-	ha *hav1alpha1.HomeAssistant,
+	ha *hav1.HomeAssistant,
 ) (string, error) {
 	log := logf.FromContext(ctx)
 

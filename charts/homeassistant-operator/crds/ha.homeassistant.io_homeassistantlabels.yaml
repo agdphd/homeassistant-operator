@@ -30,7 +30,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1alpha1
+    name: v1
     schema:
       openAPIV3Schema:
         description: HomeAssistantLabel is the Schema for the homeassistantlabels
@@ -148,6 +148,11 @@ spec:
                 x-kubernetes-list-type: map
               labelID:
                 description: labelID is the ID assigned by Home Assistant after creation
+                type: string
+              lastError:
+                description: |-
+                  lastError contains the error message from the last failed operation
+                  Cleared when operation succeeds
                 type: string
               observedGeneration:
                 description: observedGeneration is the most recent generation observed

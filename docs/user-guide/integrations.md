@@ -27,7 +27,7 @@ Requires a bootstrap API token.
 # helm install mosquitto eclipse-mosquitto/mosquitto
 
 # 2. Register integration
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantIntegration
 metadata:
   name: mqtt
@@ -53,7 +53,7 @@ spec:
 ## Recorder example
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantIntegration
 metadata:
   name: recorder
