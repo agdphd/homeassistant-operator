@@ -7,7 +7,7 @@ The operator is running in namespace {{ .Release.Namespace }}:
 Quick start — deploy Home Assistant:
 
   kubectl apply -f - <<EOF
-  apiVersion: ha.homeassistant.io/v1alpha1
+  apiVersion: ha.homeassistant.io/v1
   kind: HomeAssistantConfiguration
   metadata:
     name: home
@@ -17,7 +17,7 @@ Quick start — deploy Home Assistant:
     configuration: |
       default_config:
   ---
-  apiVersion: ha.homeassistant.io/v1alpha1
+  apiVersion: ha.homeassistant.io/v1
   kind: HomeAssistant
   metadata:
     name: home

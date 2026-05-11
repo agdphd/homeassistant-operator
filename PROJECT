@@ -18,8 +18,8 @@ resources:
   domain: homeassistant.io
   group: ha
   kind: HomeAssistant
-  path: github.com/przemekhys/homeassistant-operator/api/v1alpha1
-  version: v1alpha1
+  path: github.com/przemekhys/homeassistant-operator/api/v1
+  version: v1
 - api:
     crdVersion: v1
     namespaced: true
@@ -27,8 +27,8 @@ resources:
   domain: homeassistant.io
   group: ha
   kind: HomeAssistantSecrets
-  path: github.com/przemekhys/homeassistant-operator/api/v1alpha1
-  version: v1alpha1
+  path: github.com/przemekhys/homeassistant-operator/api/v1
+  version: v1
 - api:
     crdVersion: v1
     namespaced: true
@@ -36,8 +36,8 @@ resources:
   domain: homeassistant.io
   group: ha
   kind: HomeAssistantConfiguration
-  path: github.com/przemekhys/homeassistant-operator/api/v1alpha1
-  version: v1alpha1
+  path: github.com/przemekhys/homeassistant-operator/api/v1
+  version: v1
 - api:
     crdVersion: v1
     namespaced: true
@@ -45,8 +45,8 @@ resources:
   domain: homeassistant.io
   group: ha
   kind: HomeAssistantAutomation
-  path: github.com/przemekhys/homeassistant-operator/api/v1alpha1
-  version: v1alpha1
+  path: github.com/przemekhys/homeassistant-operator/api/v1
+  version: v1
 - api:
     crdVersion: v1
     namespaced: true
@@ -54,8 +54,8 @@ resources:
   domain: homeassistant.io
   group: ha
   kind: HomeAssistantFloor
-  path: github.com/przemekhys/homeassistant-operator/api/v1alpha1
-  version: v1alpha1
+  path: github.com/przemekhys/homeassistant-operator/api/v1
+  version: v1
 - api:
     crdVersion: v1
     namespaced: true
@@ -63,8 +63,8 @@ resources:
   domain: homeassistant.io
   group: ha
   kind: HomeAssistantLabel
-  path: github.com/przemekhys/homeassistant-operator/api/v1alpha1
-  version: v1alpha1
+  path: github.com/przemekhys/homeassistant-operator/api/v1
+  version: v1
 - api:
     crdVersion: v1
     namespaced: true
@@ -72,6 +72,6 @@ resources:
   domain: homeassistant.io
   group: ha
   kind: HomeAssistantArea
-  path: github.com/przemekhys/homeassistant-operator/api/v1alpha1
-  version: v1alpha1
+  path: github.com/przemekhys/homeassistant-operator/api/v1
+  version: v1
 version: "3"

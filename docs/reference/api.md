@@ -1,12 +1,12 @@
 # API Reference
 
 ## Packages
-- [ha.homeassistant.io/v1](#hahomeassistantiov1alpha1)
+- [ha.homeassistant.io/v1](#ha-homeassistant-io-v1)
 
 
 ## ha.homeassistant.io/v1
 
-Package v1alpha1 contains API Schema definitions for the ha v1alpha1 API group.
+Package v1 contains API Schema definitions for the ha v1 API group.
 
 ### Resource Types
 - [HomeAssistant](#homeassistant)

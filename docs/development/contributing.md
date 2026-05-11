@@ -110,7 +110,7 @@ pre-commit autoupdate
 
 ## Adding a New CRD
 
-1. `kubebuilder create api --group ha --version v1alpha1 --kind YourResource`
+1. `kubebuilder create api --group ha --version v1 --kind YourResource`
 2. Define types in `api/v1/yourresource_types.go`
 3. `make manifests generate && make fmt vet`
 4. Write unit tests in `internal/controller/yourresource_controller_test.go`

@@ -146,7 +146,7 @@ Status:
     Status:  True
   Bootstrap:
     Completed:       true
-    Api Token Ready: true
+    API Token Ready: true
 ```
 
 ## Deleting an instance

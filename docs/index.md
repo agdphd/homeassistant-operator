@@ -80,7 +80,7 @@ spec:
 
 ## Project Status
 
-**Alpha** — APIs may change between minor versions until v1.0.0.
+**Beta** — API version `v1` is stable; operator features are production-ready for single-node deployments.
 
 [Get started →](getting-started/installation.md){ .md-button .md-button--primary }
 [View on GitHub →](https://github.com/przemekhys/homeassistant-operator){ .md-button }

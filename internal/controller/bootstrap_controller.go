@@ -639,6 +639,7 @@ func (r *HomeAssistantReconciler) updateBootstrapStatus(
 		if completed {
 			conditionStatus = metav1.ConditionTrue
 		}
+		freshHA.Status.ObservedGeneration = freshHA.Generation
 		meta.SetStatusCondition(&freshHA.Status.Conditions, metav1.Condition{
 			Type:               "BootstrapReady",
 			Status:             conditionStatus,

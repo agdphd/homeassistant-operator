@@ -80,6 +80,10 @@ type HomeAssistantSecretsStatus struct {
 	// ObservedGeneration reflects the generation of the most recently observed HomeAssistantSecrets
 	// +kubebuilder:validation:Optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// LastError contains a human-readable description of the last error encountered
+	// +kubebuilder:validation:Optional
+	LastError string `json:"lastError,omitempty"`
 }
 
 // +kubebuilder:storageversion
