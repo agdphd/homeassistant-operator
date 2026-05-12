@@ -1,12 +1,12 @@
 # API Reference
 
 ## Packages
-- [ha.homeassistant.io/v1alpha1](#hahomeassistantiov1alpha1)
+- [ha.homeassistant.io/v1](#ha-homeassistant-io-v1)
 
 
-## ha.homeassistant.io/v1alpha1
+## ha.homeassistant.io/v1
 
-Package v1alpha1 contains API Schema definitions for the ha v1alpha1 API group.
+Package v1 contains API Schema definitions for the ha v1 API group.
 
 ### Resource Types
 - [HomeAssistant](#homeassistant)
@@ -227,7 +227,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistant` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `spec` _[HomeAssistantSpec](#homeassistantspec)_ |  |  |  |
@@ -247,7 +247,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantArea` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  | Optional: \{\} <br /> |
 | `spec` _[HomeAssistantAreaSpec](#homeassistantareaspec)_ |  |  | Required: \{\} <br /> |
@@ -266,7 +266,7 @@ HomeAssistantAreaList contains a list of HomeAssistantArea
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantAreaList` | | |
 | `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `items` _[HomeAssistantArea](#homeassistantarea) array_ |  |  |  |
@@ -323,7 +323,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantAutomation` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `spec` _[HomeAssistantAutomationSpec](#homeassistantautomationspec)_ |  |  |  |
@@ -342,7 +342,7 @@ HomeAssistantAutomationList contains a list of HomeAssistantAutomation
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantAutomationList` | | |
 | `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `items` _[HomeAssistantAutomation](#homeassistantautomation) array_ |  |  |  |
@@ -411,7 +411,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantConfiguration` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `spec` _[HomeAssistantConfigurationSpec](#homeassistantconfigurationspec)_ |  |  |  |
@@ -430,7 +430,7 @@ HomeAssistantConfigurationList contains a list of HomeAssistantConfiguration.
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantConfigurationList` | | |
 | `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `items` _[HomeAssistantConfiguration](#homeassistantconfiguration) array_ |  |  |  |
@@ -493,7 +493,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantFloor` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  | Optional: \{\} <br /> |
 | `spec` _[HomeAssistantFloorSpec](#homeassistantfloorspec)_ |  |  | Required: \{\} <br /> |
@@ -512,7 +512,7 @@ HomeAssistantFloorList contains a list of HomeAssistantFloor
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantFloorList` | | |
 | `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `items` _[HomeAssistantFloor](#homeassistantfloor) array_ |  |  |  |
@@ -570,7 +570,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantIntegration` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `spec` _[HomeAssistantIntegrationSpec](#homeassistantintegrationspec)_ |  |  |  |
@@ -589,7 +589,7 @@ HomeAssistantIntegrationList contains a list of HomeAssistantIntegration
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantIntegrationList` | | |
 | `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `items` _[HomeAssistantIntegration](#homeassistantintegration) array_ |  |  |  |
@@ -645,7 +645,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantLabel` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  | Optional: \{\} <br /> |
 | `spec` _[HomeAssistantLabelSpec](#homeassistantlabelspec)_ |  |  | Required: \{\} <br /> |
@@ -664,7 +664,7 @@ HomeAssistantLabelList contains a list of HomeAssistantLabel
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantLabelList` | | |
 | `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `items` _[HomeAssistantLabel](#homeassistantlabel) array_ |  |  |  |
@@ -719,7 +719,7 @@ HomeAssistantList contains a list of HomeAssistant.
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantList` | | |
 | `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `items` _[HomeAssistant](#homeassistant) array_ |  |  |  |
@@ -782,7 +782,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantScene` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `spec` _[HomeAssistantSceneSpec](#homeassistantscenespec)_ |  |  |  |
@@ -801,7 +801,7 @@ HomeAssistantSceneList contains a list of HomeAssistantScene
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantSceneList` | | |
 | `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `items` _[HomeAssistantScene](#homeassistantscene) array_ |  |  |  |
@@ -863,7 +863,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantScript` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `spec` _[HomeAssistantScriptSpec](#homeassistantscriptspec)_ |  |  |  |
@@ -882,7 +882,7 @@ HomeAssistantScriptList contains a list of HomeAssistantScript
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantScriptList` | | |
 | `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `items` _[HomeAssistantScript](#homeassistantscript) array_ |  |  |  |
@@ -949,7 +949,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantSecrets` | | |
 | `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `spec` _[HomeAssistantSecretsSpec](#homeassistantsecretsspec)_ |  |  |  |
@@ -968,7 +968,7 @@ HomeAssistantSecretsList contains a list of HomeAssistantSecrets.
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1` | | |
 | `kind` _string_ | `HomeAssistantSecretsList` | | |
 | `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
 | `items` _[HomeAssistantSecrets](#homeassistantsecrets) array_ |  |  |  |

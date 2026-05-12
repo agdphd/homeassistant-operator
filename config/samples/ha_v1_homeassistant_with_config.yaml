@@ -1,4 +1,4 @@
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistant
 metadata:
   labels:
@@ -24,7 +24,7 @@ spec:
   secretsFrom:
     name: homeassistant-secrets
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantConfiguration
 metadata:
   labels:

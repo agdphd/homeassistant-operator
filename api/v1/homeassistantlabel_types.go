@@ -14,37 +14,37 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package v1alpha1
+package v1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// HomeAssistantFloorSpec defines the desired state of HomeAssistantFloor
-type HomeAssistantFloorSpec struct {
-	// homeAssistantRef is a reference to the HomeAssistant CR this floor belongs to
+// HomeAssistantLabelSpec defines the desired state of HomeAssistantLabel
+type HomeAssistantLabelSpec struct {
+	// homeAssistantRef is a reference to the HomeAssistant CR this label belongs to
 	// +required
 	HomeAssistantRef HomeAssistantReference `json:"homeAssistantRef"`
 
-	// name is the display name of the floor in Home Assistant
+	// name is the display name of the label in Home Assistant
 	// +kubebuilder:validation:MinLength=1
 	// +required
 	Name string `json:"name"`
 
-	// level is the floor level (e.g. 0 for ground, 1 for first, -1 for basement)
-	// +optional
-	Level *int `json:"level,omitempty"`
-
-	// icon is the Material Design Icon for the floor (e.g. "mdi:home-floor-1")
+	// icon is the Material Design Icon for the label (e.g. "mdi:tag")
 	// +optional
 	Icon string `json:"icon,omitempty"`
+
+	// color is the label color (e.g. "red", "blue", "green")
+	// +optional
+	Color string `json:"color,omitempty"`
 }
 
-// HomeAssistantFloorStatus defines the observed state of HomeAssistantFloor
-type HomeAssistantFloorStatus struct {
-	// floorID is the ID assigned by Home Assistant after creation
+// HomeAssistantLabelStatus defines the observed state of HomeAssistantLabel
+type HomeAssistantLabelStatus struct {
+	// labelID is the ID assigned by Home Assistant after creation
 	// +optional
-	FloorID string `json:"floorID,omitempty"`
+	LabelID string `json:"labelID,omitempty"`
 
 	// observedGeneration is the most recent generation observed
 	// +optional
@@ -55,45 +55,46 @@ type HomeAssistantFloorStatus struct {
 	// +optional
 	LastError string `json:"lastError,omitempty"`
 
-	// conditions represent the current state of the HomeAssistantFloor resource
+	// conditions represent the current state of the HomeAssistantLabel resource
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
+// +kubebuilder:storageversion
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:shortName=hafloor;hafl
+// +kubebuilder:resource:shortName=halabel;halb
 // +kubebuilder:printcolumn:name="HomeAssistant",type=string,JSONPath=`.spec.homeAssistantRef.name`
 // +kubebuilder:printcolumn:name="Name",type=string,JSONPath=`.spec.name`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.spec) || self.spec.homeAssistantRef == oldSelf.spec.homeAssistantRef",message="spec.homeAssistantRef is immutable after creation"
 
-// HomeAssistantFloor is the Schema for the homeassistantfloors API
-type HomeAssistantFloor struct {
+// HomeAssistantLabel is the Schema for the homeassistantlabels API
+type HomeAssistantLabel struct {
 	metav1.TypeMeta `json:",inline"`
 
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// +required
-	Spec HomeAssistantFloorSpec `json:"spec"`
+	Spec HomeAssistantLabelSpec `json:"spec"`
 
 	// +optional
-	Status HomeAssistantFloorStatus `json:"status,omitempty"`
+	Status HomeAssistantLabelStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// HomeAssistantFloorList contains a list of HomeAssistantFloor
-type HomeAssistantFloorList struct {
+// HomeAssistantLabelList contains a list of HomeAssistantLabel
+type HomeAssistantLabelList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []HomeAssistantFloor `json:"items"`
+	Items           []HomeAssistantLabel `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&HomeAssistantFloor{}, &HomeAssistantFloorList{})
+	SchemeBuilder.Register(&HomeAssistantLabel{}, &HomeAssistantLabelList{})
 }

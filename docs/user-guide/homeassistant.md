@@ -9,7 +9,7 @@ A `HomeAssistantConfiguration` CR with a matching `spec.homeAssistantRef.name` m
 ## Minimal example
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantConfiguration
 metadata:
   name: home
@@ -19,7 +19,7 @@ spec:
   configuration: |
     default_config:
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistant
 metadata:
   name: home
@@ -146,7 +146,7 @@ Status:
     Status:  True
   Bootstrap:
     Completed:       true
-    Api Token Ready: true
+    API Token Ready: true
 ```
 
 ## Deleting an instance

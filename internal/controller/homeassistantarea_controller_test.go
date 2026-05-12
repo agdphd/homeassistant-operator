@@ -30,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -47,7 +47,7 @@ var _ = Describe("HomeAssistantArea Controller", func() {
 	)
 
 	cleanupHA := func() {
-		ha := &hav1alpha1.HomeAssistant{}
+		ha := &hav1.HomeAssistant{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: ns}, ha); err == nil {
 			_ = k8sClient.Delete(ctx, ha)
 		}
@@ -58,16 +58,16 @@ var _ = Describe("HomeAssistantArea Controller", func() {
 	}
 
 	setupHA := func() {
-		ha := &hav1alpha1.HomeAssistant{
+		ha := &hav1.HomeAssistant{
 			ObjectMeta: metav1.ObjectMeta{Name: haName, Namespace: ns},
-			Spec: hav1alpha1.HomeAssistantSpec{
+			Spec: hav1.HomeAssistantSpec{
 				Version: "2026.3",
 			},
 		}
 		Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 		ha.Status.Phase = "Running"
-		ha.Status.Bootstrap = &hav1alpha1.BootstrapStatus{
+		ha.Status.Bootstrap = &hav1.BootstrapStatus{
 			APITokenSecretName: haName + "-api-token",
 		}
 		Expect(k8sClient.Status().Update(ctx, ha)).To(Succeed())
@@ -167,19 +167,19 @@ var _ = Describe("HomeAssistantArea Controller", func() {
 
 	Context("When HomeAssistant is not found", func() {
 		It("should set HANotReady condition", func() {
-			area := &hav1alpha1.HomeAssistantArea{
+			area := &hav1.HomeAssistantArea{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "area-no-ha",
 					Namespace: ns,
 				},
-				Spec: hav1alpha1.HomeAssistantAreaSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: "nonexistent"},
+				Spec: hav1.HomeAssistantAreaSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: "nonexistent"},
 					Name:             "Living Room",
 				},
 			}
 			Expect(k8sClient.Create(ctx, area)).To(Succeed())
 			defer func() {
-				f := &hav1alpha1.HomeAssistantArea{}
+				f := &hav1.HomeAssistantArea{}
 				_ = k8sClient.Get(ctx, types.NamespacedName{Name: area.Name, Namespace: ns}, f)
 				f.Finalizers = nil
 				_ = k8sClient.Update(ctx, f)
@@ -204,7 +204,7 @@ var _ = Describe("HomeAssistantArea Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 
-			updated := &hav1alpha1.HomeAssistantArea{}
+			updated := &hav1.HomeAssistantArea{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: area.Name, Namespace: ns}, updated)).To(Succeed())
 			Expect(updated.Status.Conditions).To(HaveLen(1))
 			Expect(updated.Status.Conditions[0].Reason).To(Equal("HANotReady"))
@@ -223,13 +223,13 @@ var _ = Describe("HomeAssistantArea Controller", func() {
 			}
 			setupMockWS()
 
-			area := &hav1alpha1.HomeAssistantArea{
+			area := &hav1.HomeAssistantArea{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "living-room",
 					Namespace: ns,
 				},
-				Spec: hav1alpha1.HomeAssistantAreaSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantAreaSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Name:             "Living Room",
 					FloorName:        "Ground Floor",
 					Icon:             "mdi:sofa",
@@ -238,7 +238,7 @@ var _ = Describe("HomeAssistantArea Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, area)).To(Succeed())
 			defer func() {
-				f := &hav1alpha1.HomeAssistantArea{}
+				f := &hav1.HomeAssistantArea{}
 				_ = k8sClient.Get(ctx, types.NamespacedName{Name: area.Name, Namespace: ns}, f)
 				f.Finalizers = nil
 				_ = k8sClient.Update(ctx, f)
@@ -266,7 +266,7 @@ var _ = Describe("HomeAssistantArea Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			updated := &hav1alpha1.HomeAssistantArea{}
+			updated := &hav1.HomeAssistantArea{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: area.Name, Namespace: ns}, updated)).To(Succeed())
 			Expect(updated.Status.AreaID).To(Equal("new-area-id"))
 			Expect(updated.Status.Conditions).To(HaveLen(1))
@@ -282,20 +282,20 @@ var _ = Describe("HomeAssistantArea Controller", func() {
 			floors = nil
 			setupMockWS()
 
-			area := &hav1alpha1.HomeAssistantArea{
+			area := &hav1.HomeAssistantArea{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "area-no-floor",
 					Namespace: ns,
 				},
-				Spec: hav1alpha1.HomeAssistantAreaSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantAreaSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Name:             "Garage",
 					FloorName:        "Nonexistent Floor",
 				},
 			}
 			Expect(k8sClient.Create(ctx, area)).To(Succeed())
 			defer func() {
-				f := &hav1alpha1.HomeAssistantArea{}
+				f := &hav1.HomeAssistantArea{}
 				_ = k8sClient.Get(ctx, types.NamespacedName{Name: area.Name, Namespace: ns}, f)
 				f.Finalizers = nil
 				_ = k8sClient.Update(ctx, f)
@@ -323,7 +323,7 @@ var _ = Describe("HomeAssistantArea Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 
-			updated := &hav1alpha1.HomeAssistantArea{}
+			updated := &hav1.HomeAssistantArea{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: area.Name, Namespace: ns}, updated)).To(Succeed())
 			Expect(updated.Status.Conditions).To(HaveLen(1))
 			Expect(updated.Status.Conditions[0].Reason).To(Equal("FloorNotFound"))
@@ -339,19 +339,19 @@ var _ = Describe("HomeAssistantArea Controller", func() {
 			}
 			setupMockWS()
 
-			area := &hav1alpha1.HomeAssistantArea{
+			area := &hav1.HomeAssistantArea{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "kitchen",
 					Namespace: ns,
 				},
-				Spec: hav1alpha1.HomeAssistantAreaSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantAreaSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Name:             "Kitchen",
 				},
 			}
 			Expect(k8sClient.Create(ctx, area)).To(Succeed())
 			defer func() {
-				f := &hav1alpha1.HomeAssistantArea{}
+				f := &hav1.HomeAssistantArea{}
 				_ = k8sClient.Get(ctx, types.NamespacedName{Name: area.Name, Namespace: ns}, f)
 				f.Finalizers = nil
 				_ = k8sClient.Update(ctx, f)
@@ -378,7 +378,7 @@ var _ = Describe("HomeAssistantArea Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			updated := &hav1alpha1.HomeAssistantArea{}
+			updated := &hav1.HomeAssistantArea{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: area.Name, Namespace: ns}, updated)).To(Succeed())
 			Expect(updated.Status.AreaID).To(Equal("existing-area-id"))
 		})

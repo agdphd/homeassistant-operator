@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -61,7 +61,7 @@ type HomeAssistantFloorReconciler struct {
 func (r *HomeAssistantFloorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	floor := &hav1alpha1.HomeAssistantFloor{}
+	floor := &hav1.HomeAssistantFloor{}
 	if err := r.Get(ctx, req.NamespacedName, floor); err != nil {
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
@@ -177,7 +177,7 @@ func (r *HomeAssistantFloorReconciler) Reconcile(ctx context.Context, req ctrl.R
 }
 
 // handleDeletion removes the floor from HA (best-effort)
-func (r *HomeAssistantFloorReconciler) handleDeletion(ctx context.Context, floor *hav1alpha1.HomeAssistantFloor) {
+func (r *HomeAssistantFloorReconciler) handleDeletion(ctx context.Context, floor *hav1.HomeAssistantFloor) {
 	log := logf.FromContext(ctx)
 
 	if floor.Status.FloorID == "" {
@@ -209,7 +209,7 @@ func (r *HomeAssistantFloorReconciler) handleDeletion(ctx context.Context, floor
 }
 
 // haClientFor returns a haclient.Client for the given HA instance
-func (r *HomeAssistantFloorReconciler) haClientFor(ha *hav1alpha1.HomeAssistant) *haclient.Client {
+func (r *HomeAssistantFloorReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
 	baseURL := buildHomeAssistantURL(ha)
 	if r.NewHAClient != nil {
 		return r.NewHAClient(baseURL)
@@ -220,7 +220,7 @@ func (r *HomeAssistantFloorReconciler) haClientFor(ha *hav1alpha1.HomeAssistant)
 // setCondition updates the Ready condition and status
 func (r *HomeAssistantFloorReconciler) setCondition(
 	ctx context.Context,
-	floor *hav1alpha1.HomeAssistantFloor,
+	floor *hav1.HomeAssistantFloor,
 	status metav1.ConditionStatus,
 	reason, message string,
 	requeueAfter time.Duration,
@@ -277,7 +277,7 @@ func (r *HomeAssistantFloorReconciler) createFloor(
 	ctx context.Context,
 	haClient *haclient.Client,
 	token string,
-	floor *hav1alpha1.HomeAssistantFloor,
+	floor *hav1.HomeAssistantFloor,
 ) (string, error) {
 	data := map[string]interface{}{
 		"name": floor.Spec.Name,
@@ -305,7 +305,7 @@ func (r *HomeAssistantFloorReconciler) updateFloor(
 	ctx context.Context,
 	haClient *haclient.Client,
 	token string,
-	floor *hav1alpha1.HomeAssistantFloor,
+	floor *hav1.HomeAssistantFloor,
 ) error {
 	data := map[string]interface{}{
 		"floor_id": floor.Status.FloorID,
@@ -353,7 +353,7 @@ func findFloorByID(floors []haFloorEntry, id string) *haFloorEntry {
 }
 
 func (r *HomeAssistantFloorReconciler) needsFloorUpdate(
-	floor *hav1alpha1.HomeAssistantFloor,
+	floor *hav1.HomeAssistantFloor,
 	existing *haFloorEntry,
 ) bool {
 	if existing.Name != floor.Spec.Name {
@@ -376,7 +376,7 @@ func (r *HomeAssistantFloorReconciler) needsFloorUpdate(
 // SetupWithManager sets up the controller with the Manager.
 func (r *HomeAssistantFloorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&hav1alpha1.HomeAssistantFloor{}).
+		For(&hav1.HomeAssistantFloor{}).
 		Named("homeassistantfloor").
 		Complete(r)
 }

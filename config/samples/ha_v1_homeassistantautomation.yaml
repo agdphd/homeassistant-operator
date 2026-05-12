@@ -1,4 +1,4 @@
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantAutomation
 metadata:
   labels:

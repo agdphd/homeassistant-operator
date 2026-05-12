@@ -1,4 +1,4 @@
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantScript
 metadata:
   name: bedtime-routine
@@ -92,7 +92,7 @@ spec:
 
 ---
 # Example of a parallel script - can handle multiple simultaneous calls
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantScript
 metadata:
   name: tts-announce

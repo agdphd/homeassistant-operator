@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 )
 
 var _ = Describe("HomeAssistantSecrets Controller", func() {
@@ -46,12 +46,12 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 
 		BeforeEach(func() {
 			// Create HomeAssistant resource for tests
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      haName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "stable",
 				},
 			}
@@ -60,7 +60,7 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 
 		AfterEach(func() {
 			// Cleanup HomeAssistantSecrets resources
-			haSecretsList := &hav1alpha1.HomeAssistantSecretsList{}
+			haSecretsList := &hav1.HomeAssistantSecretsList{}
 			_ = k8sClient.List(ctx, haSecretsList, &client.ListOptions{Namespace: namespace})
 			for _, haSecrets := range haSecretsList.Items {
 				_ = k8sClient.Delete(ctx, &haSecrets)
@@ -81,7 +81,7 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 			}
 
 			// Cleanup HomeAssistant
-			haList := &hav1alpha1.HomeAssistantList{}
+			haList := &hav1.HomeAssistantList{}
 			_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
 			for _, ha := range haList.Items {
 				_ = k8sClient.Delete(ctx, &ha)
@@ -89,7 +89,7 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 
 			// Wait for resources to be deleted
 			Eventually(func() int {
-				haSecretsList := &hav1alpha1.HomeAssistantSecretsList{}
+				haSecretsList := &hav1.HomeAssistantSecretsList{}
 				_ = k8sClient.List(ctx, haSecretsList, &client.ListOptions{Namespace: namespace})
 				return len(haSecretsList.Items)
 			}, timeout, interval).Should(Equal(0))
@@ -110,16 +110,16 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
 			By("Creating a HomeAssistantSecrets")
-			haSecrets := &hav1alpha1.HomeAssistantSecrets{
+			haSecrets := &hav1.HomeAssistantSecrets{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSecretsSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantSecretsSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: haName,
 					},
-					SecretRefs: []hav1alpha1.SecretKeyReference{
+					SecretRefs: []hav1.SecretKeyReference{
 						{
 							Name: secretName,
 							Keys: []string{"mqtt_user", "mqtt_password"},
@@ -170,16 +170,16 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
 			By("Creating a HomeAssistantSecrets with key filtering")
-			haSecrets := &hav1alpha1.HomeAssistantSecrets{
+			haSecrets := &hav1.HomeAssistantSecrets{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSecretsSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantSecretsSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: haName,
 					},
-					SecretRefs: []hav1alpha1.SecretKeyReference{
+					SecretRefs: []hav1.SecretKeyReference{
 						{
 							Name: secretName,
 							Keys: []string{"mqtt_user", "mqtt_password"}, // Only 2 of 4 keys
@@ -234,16 +234,16 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
 			By("Creating a HomeAssistantSecrets without key filtering")
-			haSecrets := &hav1alpha1.HomeAssistantSecrets{
+			haSecrets := &hav1.HomeAssistantSecrets{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSecretsSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantSecretsSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: haName,
 					},
-					SecretRefs: []hav1alpha1.SecretKeyReference{
+					SecretRefs: []hav1.SecretKeyReference{
 						{
 							Name: secretName,
 							// No Keys specified
@@ -295,16 +295,16 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
 			By("Creating a HomeAssistantSecrets")
-			haSecrets := &hav1alpha1.HomeAssistantSecrets{
+			haSecrets := &hav1.HomeAssistantSecrets{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSecretsSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantSecretsSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: haName,
 					},
-					SecretRefs: []hav1alpha1.SecretKeyReference{
+					SecretRefs: []hav1.SecretKeyReference{
 						{
 							Name: secretName,
 						},
@@ -329,7 +329,7 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 			By("Getting initial hash")
 			var initialHash string
 			Eventually(func(g Gomega) {
-				updatedHASecrets := &hav1alpha1.HomeAssistantSecrets{}
+				updatedHASecrets := &hav1.HomeAssistantSecrets{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
 					Name:      resourceName,
 					Namespace: namespace,
@@ -364,7 +364,7 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 
 			By("Verifying hash changed")
 			Eventually(func(g Gomega) {
-				updatedHASecrets := &hav1alpha1.HomeAssistantSecrets{}
+				updatedHASecrets := &hav1.HomeAssistantSecrets{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
 					Name:      resourceName,
 					Namespace: namespace,
@@ -387,16 +387,16 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
 			By("Creating a HomeAssistantSecrets")
-			haSecrets := &hav1alpha1.HomeAssistantSecrets{
+			haSecrets := &hav1.HomeAssistantSecrets{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSecretsSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantSecretsSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: haName,
 					},
-					SecretRefs: []hav1alpha1.SecretKeyReference{
+					SecretRefs: []hav1.SecretKeyReference{
 						{
 							Name: secretName,
 						},
@@ -433,16 +433,16 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 
 		It("should set status to not ready when HomeAssistant is missing", func() {
 			By("Creating a HomeAssistantSecrets without HomeAssistant")
-			haSecrets := &hav1alpha1.HomeAssistantSecrets{
+			haSecrets := &hav1.HomeAssistantSecrets{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSecretsSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantSecretsSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: "non-existent-ha",
 					},
-					SecretRefs: []hav1alpha1.SecretKeyReference{
+					SecretRefs: []hav1.SecretKeyReference{
 						{
 							Name: secretName,
 						},
@@ -467,7 +467,7 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 
 			By("Verifying status is not ready")
 			Eventually(func(g Gomega) {
-				updatedHASecrets := &hav1alpha1.HomeAssistantSecrets{}
+				updatedHASecrets := &hav1.HomeAssistantSecrets{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
 					Name:      resourceName,
 					Namespace: namespace,
@@ -494,16 +494,16 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
 			By("Creating a HomeAssistantSecrets with AutoRestart=false")
-			haSecrets := &hav1alpha1.HomeAssistantSecrets{
+			haSecrets := &hav1.HomeAssistantSecrets{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSecretsSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantSecretsSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: haName,
 					},
-					SecretRefs: []hav1alpha1.SecretKeyReference{
+					SecretRefs: []hav1.SecretKeyReference{
 						{
 							Name: secretName,
 						},
@@ -551,16 +551,16 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
 			By("Creating a HomeAssistantSecrets requesting both existing and missing keys")
-			haSecrets := &hav1alpha1.HomeAssistantSecrets{
+			haSecrets := &hav1.HomeAssistantSecrets{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSecretsSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantSecretsSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: haName,
 					},
-					SecretRefs: []hav1alpha1.SecretKeyReference{
+					SecretRefs: []hav1.SecretKeyReference{
 						{
 							Name: secretName,
 							Keys: []string{"existing_key1", "missing_key", "existing_key2"},
@@ -599,7 +599,7 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 
 			By("Verifying reconciliation succeeded")
 			Eventually(func(g Gomega) {
-				updatedHASecrets := &hav1alpha1.HomeAssistantSecrets{}
+				updatedHASecrets := &hav1.HomeAssistantSecrets{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
 					Name:      resourceName,
 					Namespace: namespace,
@@ -613,16 +613,16 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 
 		It("should return error when source Secret is missing", func() {
 			By("Creating a HomeAssistantSecrets without creating the source Secret")
-			haSecrets := &hav1alpha1.HomeAssistantSecrets{
+			haSecrets := &hav1.HomeAssistantSecrets{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSecretsSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantSecretsSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: haName,
 					},
-					SecretRefs: []hav1alpha1.SecretKeyReference{
+					SecretRefs: []hav1.SecretKeyReference{
 						{
 							Name: "non-existent-secret",
 						},
@@ -646,7 +646,7 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 
 			By("Verifying status is not ready with appropriate error")
 			Eventually(func(g Gomega) {
-				updatedHASecrets := &hav1alpha1.HomeAssistantSecrets{}
+				updatedHASecrets := &hav1.HomeAssistantSecrets{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
 					Name:      resourceName,
 					Namespace: namespace,
@@ -678,16 +678,16 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 			Expect(k8sClient.Create(ctx, sts)).To(Succeed())
 
 			By("Creating a HomeAssistantSecrets with AutoRestart=true (default)")
-			haSecrets := &hav1alpha1.HomeAssistantSecrets{
+			haSecrets := &hav1.HomeAssistantSecrets{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSecretsSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantSecretsSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: haName,
 					},
-					SecretRefs: []hav1alpha1.SecretKeyReference{
+					SecretRefs: []hav1.SecretKeyReference{
 						{
 							Name: secretName,
 						},
@@ -782,16 +782,16 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 			Expect(k8sClient.Create(ctx, sts)).To(Succeed())
 
 			By("Creating a HomeAssistantSecrets with AutoRestart=false")
-			haSecrets := &hav1alpha1.HomeAssistantSecrets{
+			haSecrets := &hav1.HomeAssistantSecrets{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSecretsSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantSecretsSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: haName,
 					},
-					SecretRefs: []hav1alpha1.SecretKeyReference{
+					SecretRefs: []hav1.SecretKeyReference{
 						{
 							Name: secretName,
 						},
@@ -844,16 +844,16 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
 			By("Creating a HomeAssistantSecrets WITHOUT creating StatefulSet")
-			haSecrets := &hav1alpha1.HomeAssistantSecrets{
+			haSecrets := &hav1.HomeAssistantSecrets{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantSecretsSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantSecretsSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: haName,
 					},
-					SecretRefs: []hav1alpha1.SecretKeyReference{
+					SecretRefs: []hav1.SecretKeyReference{
 						{
 							Name: secretName,
 						},
@@ -879,7 +879,7 @@ var _ = Describe("HomeAssistantSecrets Controller", func() {
 
 			By("Verifying reconciliation succeeded despite missing StatefulSet")
 			Eventually(func(g Gomega) {
-				updatedHASecrets := &hav1alpha1.HomeAssistantSecrets{}
+				updatedHASecrets := &hav1.HomeAssistantSecrets{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
 					Name:      resourceName,
 					Namespace: namespace,

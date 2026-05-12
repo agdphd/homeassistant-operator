@@ -1,4 +1,4 @@
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantLabel
 metadata:
   labels:
@@ -12,7 +12,7 @@ spec:
   icon: "mdi:tree"
   color: "green"
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantLabel
 metadata:
   labels:

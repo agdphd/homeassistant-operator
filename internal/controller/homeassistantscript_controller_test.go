@@ -24,7 +24,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -36,7 +36,7 @@ import (
 )
 
 // simpleScriptAction is a raw JSON action for use in script tests
-var simpleScriptAction = hav1alpha1.ScriptAction{
+var simpleScriptAction = hav1.ScriptAction{
 	RawExtension: runtime.RawExtension{Raw: []byte(`{"service":"test.service"}`)},
 }
 
@@ -55,15 +55,15 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 
 	createTestScript := func(
 		name, namespace, haRef, alias string,
-		sequence []hav1alpha1.ScriptAction,
-	) *hav1alpha1.HomeAssistantScript {
-		return &hav1alpha1.HomeAssistantScript{
+		sequence []hav1.ScriptAction,
+	) *hav1.HomeAssistantScript {
+		return &hav1.HomeAssistantScript{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: namespace,
 			},
-			Spec: hav1alpha1.HomeAssistantScriptSpec{
-				HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haRef},
+			Spec: hav1.HomeAssistantScriptSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: haRef},
 				Alias:            alias,
 				Sequence:         sequence,
 			},
@@ -86,9 +86,9 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 		}
 		Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
-		ha := &hav1alpha1.HomeAssistant{}
+		ha := &hav1.HomeAssistant{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, ha)).To(Succeed())
-		ha.Status.Bootstrap = &hav1alpha1.BootstrapStatus{
+		ha.Status.Bootstrap = &hav1.BootstrapStatus{
 			APITokenSecretName: haName + "-api-token",
 		}
 		Expect(k8sClient.Status().Update(ctx, ha)).To(Succeed())
@@ -132,7 +132,7 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 
 	AfterEach(func() {
 		// Cleanup scripts
-		scriptList := &hav1alpha1.HomeAssistantScriptList{}
+		scriptList := &hav1.HomeAssistantScriptList{}
 		_ = k8sClient.List(ctx, scriptList)
 		for i := range scriptList.Items {
 			ns := scriptList.Items[i].Namespace
@@ -149,7 +149,7 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 		}
 
 		// Cleanup HAs
-		haList := &hav1alpha1.HomeAssistantList{}
+		haList := &hav1.HomeAssistantList{}
 		_ = k8sClient.List(ctx, haList)
 		for i := range haList.Items {
 			_ = k8sClient.Delete(ctx, &haList.Items[i])
@@ -162,16 +162,16 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 		const ns = "default"
 
 		BeforeEach(func() {
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-ha-script-fin", Namespace: ns},
-				Spec:       hav1alpha1.HomeAssistantSpec{},
+				Spec:       hav1.HomeAssistantSpec{},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 		})
 
 		It("should add finalizer on first reconcile", func() {
 			script := createTestScript("finalizer-script", ns, "test-ha-script-fin", "Finalizer Test",
-				[]hav1alpha1.ScriptAction{simpleScriptAction})
+				[]hav1.ScriptAction{simpleScriptAction})
 			Expect(k8sClient.Create(ctx, script)).To(Succeed())
 
 			// First reconcile adds finalizer
@@ -197,9 +197,9 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 		const ns = "default"
 
 		BeforeEach(func() {
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{Name: haStatusName, Namespace: ns},
-				Spec:       hav1alpha1.HomeAssistantSpec{},
+				Spec:       hav1.HomeAssistantSpec{},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 			setupScriptToken(haStatusName, ns)
@@ -207,7 +207,7 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 
 		It("should set Ready condition after successful reconciliation", func() {
 			script := createTestScript("status-script", ns, haStatusName, "Status Test",
-				[]hav1alpha1.ScriptAction{simpleScriptAction})
+				[]hav1.ScriptAction{simpleScriptAction})
 			Expect(k8sClient.Create(ctx, script)).To(Succeed())
 
 			// Two reconciles: finalizer + actual reconciliation
@@ -234,14 +234,14 @@ var _ = Describe("HomeAssistantScript Controller", func() {
 		const ns = "default"
 
 		It("should requeue 30s when API token missing", func() {
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-ha-script-notoken", Namespace: ns},
-				Spec:       hav1alpha1.HomeAssistantSpec{},
+				Spec:       hav1.HomeAssistantSpec{},
 			}
 			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 			script := createTestScript("script-no-token", ns, ha.Name, "No Token",
-				[]hav1alpha1.ScriptAction{simpleScriptAction})
+				[]hav1.ScriptAction{simpleScriptAction})
 			Expect(k8sClient.Create(ctx, script)).To(Succeed())
 
 			// First reconcile adds finalizer
@@ -269,18 +269,18 @@ var _ = Describe("HomeAssistantScript Helper Functions", func() {
 
 	Context("scriptToYaml", func() {
 		It("should convert script with basic fields", func() {
-			actions := []hav1alpha1.ScriptAction{
+			actions := []hav1.ScriptAction{
 				{RawExtension: runtime.RawExtension{
 					Raw: []byte(`{"service":"light.turn_on"}`),
 				}},
 			}
 
-			script := &hav1alpha1.HomeAssistantScript{
-				Spec: hav1alpha1.HomeAssistantScriptSpec{
+			script := &hav1.HomeAssistantScript{
+				Spec: hav1.HomeAssistantScriptSpec{
 					Alias:       "Test Script",
 					Description: "Test description",
 					Icon:        "mdi:script",
-					Mode:        hav1alpha1.ScriptModeSingle,
+					Mode:        hav1.ScriptModeSingle,
 					Sequence:    actions,
 				},
 			}
@@ -298,14 +298,14 @@ var _ = Describe("HomeAssistantScript Helper Functions", func() {
 
 	Context("calculateScriptHash", func() {
 		It("should generate consistent hash for same script", func() {
-			actions := []hav1alpha1.ScriptAction{
+			actions := []hav1.ScriptAction{
 				{RawExtension: runtime.RawExtension{
 					Raw: []byte(`{"service":"test.service"}`),
 				}},
 			}
 
-			script := &hav1alpha1.HomeAssistantScript{
-				Spec: hav1alpha1.HomeAssistantScriptSpec{
+			script := &hav1.HomeAssistantScript{
+				Spec: hav1.HomeAssistantScriptSpec{
 					Alias:    "Hash Test",
 					Sequence: actions,
 				},

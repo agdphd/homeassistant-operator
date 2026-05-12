@@ -34,7 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -106,15 +106,15 @@ var _ = Describe("Backup Controller", func() {
 	}
 
 	// createHA creates a HomeAssistant CR with optional backup spec
-	createHA := func(backup *hav1alpha1.BackupSpec) {
-		ha := &hav1alpha1.HomeAssistant{
+	createHA := func(backup *hav1.BackupSpec) {
+		ha := &hav1.HomeAssistant{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      haName,
 				Namespace: namespace,
 			},
-			Spec: hav1alpha1.HomeAssistantSpec{
+			Spec: hav1.HomeAssistantSpec{
 				Version: "2025.3",
-				Bootstrap: &hav1alpha1.BootstrapSpec{
+				Bootstrap: &hav1.BootstrapSpec{
 					Enabled:        true,
 					CreateAPIToken: true,
 				},
@@ -125,11 +125,11 @@ var _ = Describe("Backup Controller", func() {
 
 		// Set bootstrap status with token secret name
 		Eventually(func() error {
-			updated := &hav1alpha1.HomeAssistant{}
+			updated := &hav1.HomeAssistant{}
 			if err := k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, updated); err != nil {
 				return err
 			}
-			updated.Status.Bootstrap = &hav1alpha1.BootstrapStatus{
+			updated.Status.Bootstrap = &hav1.BootstrapStatus{
 				Completed:          true,
 				APITokenReady:      true,
 				APITokenSecretName: haName + "-api-token",
@@ -150,13 +150,13 @@ var _ = Describe("Backup Controller", func() {
 		Expect(k8sClient.Create(ctx, tokenSecret)).To(Succeed())
 
 		// Create required HomeAssistantConfiguration
-		haConfig := &hav1alpha1.HomeAssistantConfiguration{
+		haConfig := &hav1.HomeAssistantConfiguration{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      haName + "-config",
 				Namespace: namespace,
 			},
-			Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-				HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+			Spec: hav1.HomeAssistantConfigurationSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 				Configuration:    "homeassistant:\n  name: Test\n",
 			},
 		}
@@ -165,7 +165,7 @@ var _ = Describe("Backup Controller", func() {
 
 	cleanupAll := func() {
 		// Delete HA
-		ha := &hav1alpha1.HomeAssistant{}
+		ha := &hav1.HomeAssistant{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, ha); err == nil {
 			_ = k8sClient.Delete(ctx, ha)
 		}
@@ -176,7 +176,7 @@ var _ = Describe("Backup Controller", func() {
 			_ = k8sClient.Delete(ctx, secret)
 		}
 		// Delete HAConfig
-		config := &hav1alpha1.HomeAssistantConfiguration{}
+		config := &hav1.HomeAssistantConfiguration{}
 		cfgKey := types.NamespacedName{Name: haName + "-config", Namespace: namespace}
 		if err := k8sClient.Get(ctx, cfgKey, config); err == nil {
 			_ = k8sClient.Delete(ctx, config)
@@ -189,7 +189,7 @@ var _ = Describe("Backup Controller", func() {
 		}
 		// Wait for HA to be deleted
 		Eventually(func() bool {
-			err := k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, &hav1alpha1.HomeAssistant{})
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, &hav1.HomeAssistant{})
 			return err != nil
 		}, timeout, interval).Should(BeTrue())
 	}
@@ -223,7 +223,7 @@ var _ = Describe("Backup Controller", func() {
 			NewHAClient: func(_ string) *haclient.Client { return haclient.NewClient(wsURL) },
 		}
 
-		createHA(&hav1alpha1.BackupSpec{
+		createHA(&hav1.BackupSpec{
 			Enabled:         true,
 			Recurrence:      "daily",
 			Time:            "03:00:00",
@@ -244,7 +244,7 @@ var _ = Describe("Backup Controller", func() {
 		Expect(cmdType).To(Equal("backup/config/update"))
 
 		// Verify condition
-		ha := &hav1alpha1.HomeAssistant{}
+		ha := &hav1.HomeAssistant{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, ha)).To(Succeed())
 		cond := meta.FindStatusCondition(ha.Status.Conditions, conditionTypeBackupConfigured)
 		Expect(cond).NotTo(BeNil())
@@ -269,7 +269,7 @@ var _ = Describe("Backup Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		// Verify no BackupConfigured condition
-		ha := &hav1alpha1.HomeAssistant{}
+		ha := &hav1.HomeAssistant{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, ha)).To(Succeed())
 		cond := meta.FindStatusCondition(ha.Status.Conditions, conditionTypeBackupConfigured)
 		Expect(cond).To(BeNil())
@@ -285,26 +285,26 @@ var _ = Describe("Backup Controller", func() {
 		}
 
 		// Create HA with backup but WITHOUT token secret
-		ha := &hav1alpha1.HomeAssistant{
+		ha := &hav1.HomeAssistant{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      haName,
 				Namespace: namespace,
 			},
-			Spec: hav1alpha1.HomeAssistantSpec{
+			Spec: hav1.HomeAssistantSpec{
 				Version: "2025.3",
-				Backup:  &hav1alpha1.BackupSpec{Enabled: true, Recurrence: "daily"},
+				Backup:  &hav1.BackupSpec{Enabled: true, Recurrence: "daily"},
 			},
 		}
 		Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 		// Create required HAConfig
-		haConfig := &hav1alpha1.HomeAssistantConfiguration{
+		haConfig := &hav1.HomeAssistantConfiguration{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      haName + "-config",
 				Namespace: namespace,
 			},
-			Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-				HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+			Spec: hav1.HomeAssistantConfigurationSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 				Configuration:    "homeassistant:\n  name: Test\n",
 			},
 		}
@@ -346,7 +346,7 @@ var _ = Describe("Backup Controller", func() {
 			NewHAClient: func(_ string) *haclient.Client { return haclient.NewClient(wsURL) },
 		}
 
-		createHA(&hav1alpha1.BackupSpec{
+		createHA(&hav1.BackupSpec{
 			Enabled:         true,
 			Recurrence:      "daily",
 			Time:            "03:00:00",
@@ -363,7 +363,7 @@ var _ = Describe("Backup Controller", func() {
 		Expect(updateCalled).To(BeFalse())
 
 		// Condition should still be True
-		ha := &hav1alpha1.HomeAssistant{}
+		ha := &hav1.HomeAssistant{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, ha)).To(Succeed())
 		cond := meta.FindStatusCondition(ha.Status.Conditions, conditionTypeBackupConfigured)
 		Expect(cond).NotTo(BeNil())
@@ -406,7 +406,7 @@ var _ = Describe("Backup Controller", func() {
 			NewHAClient: func(_ string) *haclient.Client { return haclient.NewClient(wsURL) },
 		}
 
-		createHA(&hav1alpha1.BackupSpec{
+		createHA(&hav1.BackupSpec{
 			Enabled:    true,
 			Recurrence: "daily",
 		})
@@ -418,7 +418,7 @@ var _ = Describe("Backup Controller", func() {
 		Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
 		// Condition should be False
-		ha := &hav1alpha1.HomeAssistant{}
+		ha := &hav1.HomeAssistant{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, ha)).To(Succeed())
 		cond := meta.FindStatusCondition(ha.Status.Conditions, conditionTypeBackupConfigured)
 		Expect(cond).NotTo(BeNil())
@@ -444,7 +444,7 @@ var _ = Describe("Backup Controller", func() {
 		}
 
 		// Create HA with backup enabled first
-		createHA(&hav1alpha1.BackupSpec{
+		createHA(&hav1.BackupSpec{
 			Enabled:    true,
 			Recurrence: "daily",
 		})
@@ -456,7 +456,7 @@ var _ = Describe("Backup Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		// Verify condition is set
-		ha := &hav1alpha1.HomeAssistant{}
+		ha := &hav1.HomeAssistant{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, ha)).To(Succeed())
 		Expect(meta.FindStatusCondition(ha.Status.Conditions, conditionTypeBackupConfigured)).NotTo(BeNil())
 
@@ -498,7 +498,7 @@ var _ = Describe("Backup Controller", func() {
 			NewHAClient: func(_ string) *haclient.Client { return haclient.NewClient(wsURL) },
 		}
 
-		createHA(&hav1alpha1.BackupSpec{
+		createHA(&hav1.BackupSpec{
 			Enabled:    true,
 			Recurrence: "mon", // different from current "daily"
 		})

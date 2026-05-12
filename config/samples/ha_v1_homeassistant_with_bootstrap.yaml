@@ -15,7 +15,7 @@
 #     --from-literal=password=your-secure-password
 #
 #   # 2. Apply this manifest
-#   kubectl apply -f ha_v1alpha1_homeassistant_with_bootstrap.yaml
+#   kubectl apply -f ha_v1_homeassistant_with_bootstrap.yaml
 #
 #   # 3. Wait for bootstrap to complete
 #   kubectl get ha my-home -o jsonpath='{.status.bootstrap}'
@@ -35,7 +35,7 @@ stringData:
   username: admin
   password: changeme123  # Change this to a secure password!
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistant
 metadata:
   name: my-home
@@ -106,7 +106,7 @@ spec:
       cpu: "1000m"
       memory: "1Gi"
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantConfiguration
 metadata:
   name: my-home-config

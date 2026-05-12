@@ -32,7 +32,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -77,9 +77,9 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 		}
 		Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
-		ha := &hav1alpha1.HomeAssistant{}
+		ha := &hav1.HomeAssistant{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, ha)).To(Succeed())
-		ha.Status.Bootstrap = &hav1alpha1.BootstrapStatus{
+		ha.Status.Bootstrap = &hav1.BootstrapStatus{
 			APITokenSecretName: haName + "-api-token",
 		}
 		Expect(k8sClient.Status().Update(ctx, ha)).To(Succeed())
@@ -130,26 +130,26 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			},
 		}
 
-		ha := &hav1alpha1.HomeAssistant{
+		ha := &hav1.HomeAssistant{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      haName,
 				Namespace: namespace,
 			},
-			Spec: hav1alpha1.HomeAssistantSpec{Version: "stable"},
+			Spec: hav1.HomeAssistantSpec{Version: "stable"},
 		}
 		Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 	})
 
 	AfterEach(func() {
 		// Cleanup integrations (trigger finalizer reconcile)
-		intList := &hav1alpha1.HomeAssistantIntegrationList{}
+		intList := &hav1.HomeAssistantIntegrationList{}
 		_ = k8sClient.List(ctx, intList)
 		for i := range intList.Items {
 			_ = k8sClient.Delete(ctx, &intList.Items[i])
 			_, _ = reconcileIntegration(intList.Items[i].Name)
 		}
 		Eventually(func() int {
-			list := &hav1alpha1.HomeAssistantIntegrationList{}
+			list := &hav1.HomeAssistantIntegrationList{}
 			_ = k8sClient.List(ctx, list)
 			return len(list.Items)
 		}, timeout, interval).Should(Equal(0))
@@ -162,7 +162,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 		}
 
 		// Cleanup HAs
-		haList := &hav1alpha1.HomeAssistantList{}
+		haList := &hav1.HomeAssistantList{}
 		_ = k8sClient.List(ctx, haList)
 		for i := range haList.Items {
 			_ = k8sClient.Delete(ctx, &haList.Items[i])
@@ -173,13 +173,13 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 
 	Context("When validating HomeAssistant reference", func() {
 		It("should set IntegrationReady=False when referenced HomeAssistant does not exist", func() {
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-no-ha",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: "non-existent-ha"},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: "non-existent-ha"},
 					Domain:           "recorder",
 				},
 			}
@@ -194,7 +194,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "int-no-ha", Namespace: namespace}, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeReady)
 				g.Expect(condition).NotTo(BeNil())
@@ -207,13 +207,13 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 	Context("When API token not available", func() {
 		It("should requeue 30s with IntegrationReady=False", func() {
 			// No token set up — ha.Status.Bootstrap is nil
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-no-token",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
 				},
 			}
@@ -228,7 +228,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				nn := types.NamespacedName{Name: "int-no-token", Namespace: namespace}
 				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeReady)
@@ -245,13 +245,13 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 		})
 
 		It("should add finalizer on first reconcile", func() {
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-finalizer",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
 				},
 			}
@@ -261,7 +261,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				nn := types.NamespacedName{Name: "int-finalizer", Namespace: namespace}
 				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				g.Expect(updated.Finalizers).To(ContainElement(integrationFinalizerName))
@@ -269,13 +269,13 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 		})
 
 		It("should set IntegrationReady=True after successful config flow", func() {
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-ready",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
 				},
 			}
@@ -283,7 +283,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Expect(reconcileIntegrationTwice("int-ready")).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "int-ready", Namespace: namespace}, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeReady)
 				g.Expect(condition).NotTo(BeNil())
@@ -293,13 +293,13 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 		})
 
 		It("should store EntryID in status after successful config flow", func() {
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-entryid",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
 				},
 			}
@@ -307,20 +307,20 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Expect(reconcileIntegrationTwice("int-entryid")).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "int-entryid", Namespace: namespace}, updated)).To(Succeed())
 				g.Expect(updated.Status.EntryID).To(Equal("test-entry-id-001"))
 			}, timeout, interval).Should(Succeed())
 		})
 
 		It("should set ConfigHash in status", func() {
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-hash",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
 				},
 			}
@@ -328,20 +328,20 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Expect(reconcileIntegrationTwice("int-hash")).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "int-hash", Namespace: namespace}, updated)).To(Succeed())
 				g.Expect(updated.Status.ConfigHash).NotTo(BeEmpty())
 			}, timeout, interval).Should(Succeed())
 		})
 
 		It("should set ObservedGeneration matching metadata.generation", func() {
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-obsgen",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
 				},
 			}
@@ -349,20 +349,20 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Expect(reconcileIntegrationTwice("int-obsgen")).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "int-obsgen", Namespace: namespace}, updated)).To(Succeed())
 				g.Expect(updated.Status.ObservedGeneration).To(Equal(updated.Generation))
 			}, timeout, interval).Should(Succeed())
 		})
 
 		It("should call StartConfigFlow via HA API on reconcile", func() {
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-flow-check",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
 				},
 			}
@@ -391,13 +391,13 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 				return haclient.NewClient(mockServer.URL)
 			}
 
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-adopt",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "mqtt",
 				},
 			}
@@ -405,7 +405,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Expect(reconcileIntegrationTwice("int-adopt")).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "int-adopt", Namespace: namespace}, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeReady)
 				g.Expect(condition).NotTo(BeNil())
@@ -416,15 +416,15 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 		})
 
 		It("should resolve configuration from plain values", func() {
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-plain-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
-					Configuration: map[string]hav1alpha1.IntegrationValue{
+					Configuration: map[string]hav1.IntegrationValue{
 						"broker": {Value: ptr.To("mosquitto.default.svc")},
 					},
 				},
@@ -476,15 +476,15 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 		})
 
 		It("should submit jsonValue fields as native JSON objects", func() {
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-json-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "openweathermap",
-					Configuration: map[string]hav1alpha1.IntegrationValue{
+					Configuration: map[string]hav1.IntegrationValue{
 						"api_key":  {Value: ptr.To("test-api-key")},
 						"location": {JSONValue: ptr.To(`{"latitude": 54.17708, "longitude": 18.557}`)},
 						"mode":     {Value: ptr.To("forecast")},
@@ -530,15 +530,15 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 		})
 
 		It("should fail resolution when jsonValue is invalid JSON", func() {
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-bad-json",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "openweathermap",
-					Configuration: map[string]hav1alpha1.IntegrationValue{
+					Configuration: map[string]hav1.IntegrationValue{
 						"location": {JSONValue: ptr.To(`not valid json`)},
 					},
 				},
@@ -546,7 +546,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Expect(k8sClient.Create(ctx, integration)).To(Succeed())
 			Expect(reconcileIntegrationTwice("int-bad-json")).To(Succeed())
 
-			updated := &hav1alpha1.HomeAssistantIntegration{}
+			updated := &hav1.HomeAssistantIntegration{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "int-bad-json", Namespace: namespace}, updated)).To(Succeed())
 			cond := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeReady)
 			Expect(cond).NotTo(BeNil())
@@ -567,17 +567,17 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-secret-config",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
-					Configuration: map[string]hav1alpha1.IntegrationValue{
+					Configuration: map[string]hav1.IntegrationValue{
 						"broker": {
-							SecretKeyRef: &hav1alpha1.IntegrationSecretKeyRef{
+							SecretKeyRef: &hav1.IntegrationSecretKeyRef{
 								Name: "mqtt-secret",
 								Key:  "broker-host",
 							},
@@ -638,17 +638,17 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-missing-key",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
-					Configuration: map[string]hav1alpha1.IntegrationValue{
+					Configuration: map[string]hav1.IntegrationValue{
 						"broker": {
-							SecretKeyRef: &hav1alpha1.IntegrationSecretKeyRef{
+							SecretKeyRef: &hav1.IntegrationSecretKeyRef{
 								Name: "missing-key-secret",
 								Key:  "nonexistent-key",
 							},
@@ -667,7 +667,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				nn := types.NamespacedName{Name: "int-missing-key", Namespace: namespace}
 				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeReady)
@@ -678,13 +678,13 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 		})
 
 		It("should call RemoveConfigEntry on deletion", func() {
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-delete-api",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
 				},
 			}
@@ -693,13 +693,13 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 
 			// Verify entry was stored
 			Eventually(func() string {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "int-delete-api", Namespace: namespace}, updated)
 				return updated.Status.EntryID
 			}, timeout, interval).ShouldNot(BeEmpty())
 
 			// Delete the CR
-			toDelete := &hav1alpha1.HomeAssistantIntegration{}
+			toDelete := &hav1.HomeAssistantIntegration{}
 			nnDel := types.NamespacedName{Name: "int-delete-api", Namespace: namespace}
 			Expect(k8sClient.Get(ctx, nnDel, toDelete)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, toDelete)).To(Succeed())
@@ -728,13 +728,13 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 				return haclient.NewClient(mockServer.URL)
 			}
 
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-flow-fail",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
 				},
 			}
@@ -749,7 +749,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				nn := types.NamespacedName{Name: "int-flow-fail", Namespace: namespace}
 				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeReady)
@@ -760,13 +760,13 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 		})
 
 		It("should remove finalizer even when HA is unavailable during deletion (best-effort)", func() {
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-delete-ha-down",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
 				},
 			}
@@ -775,7 +775,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 
 			// Wait for entryID to be stored
 			Eventually(func() string {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "int-delete-ha-down", Namespace: namespace}, updated)
 				return updated.Status.EntryID
 			}, timeout, interval).ShouldNot(BeEmpty())
@@ -790,7 +790,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			}
 
 			// Delete the CR
-			toDelete := &hav1alpha1.HomeAssistantIntegration{}
+			toDelete := &hav1.HomeAssistantIntegration{}
 			nnDown := types.NamespacedName{Name: "int-delete-ha-down", Namespace: namespace}
 			Expect(k8sClient.Get(ctx, nnDown, toDelete)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, toDelete)).To(Succeed())
@@ -801,7 +801,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 
 			// Finalizer must be removed so Kubernetes can garbage-collect the CR
 			Eventually(func() bool {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				nn := types.NamespacedName{Name: "int-delete-ha-down", Namespace: namespace}
 				if err := k8sClient.Get(ctx, nn, updated); err != nil {
 					return true // already gone
@@ -837,13 +837,13 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 				return haclient.NewClient(mockServer.URL)
 			}
 
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-idempotent",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
 				},
 			}
@@ -860,7 +860,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 
 			// Status must be Ready with entryID from adoption
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				nn := types.NamespacedName{Name: "int-idempotent", Namespace: namespace}
 				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeReady)
@@ -871,13 +871,13 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 		})
 
 		It("should reconfigure on spec change (delete old entry + start new flow)", func() {
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-reconfig",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
 				},
 			}
@@ -886,7 +886,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 
 			// Wait for initial entryID
 			Eventually(func() string {
-				updated := &hav1alpha1.HomeAssistantIntegration{}
+				updated := &hav1.HomeAssistantIntegration{}
 				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "int-reconfig", Namespace: namespace}, updated)
 				return updated.Status.EntryID
 			}, timeout, interval).Should(Equal("test-entry-id-001"))
@@ -895,9 +895,9 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Eventually(flowRequests, timeout, interval).Should(Receive())
 
 			// Change spec configuration → triggers hash mismatch on next reconcile
-			updated := &hav1alpha1.HomeAssistantIntegration{}
+			updated := &hav1.HomeAssistantIntegration{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "int-reconfig", Namespace: namespace}, updated)).To(Succeed())
-			updated.Spec.Configuration = map[string]hav1alpha1.IntegrationValue{
+			updated.Spec.Configuration = map[string]hav1.IntegrationValue{
 				"broker": {Value: ptr.To("new-broker.svc")},
 			}
 			Expect(k8sClient.Update(ctx, updated)).To(Succeed())
@@ -931,13 +931,13 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 				return haclient.NewClient(adoptServer.URL)
 			}
 
-			integration := &hav1alpha1.HomeAssistantIntegration{
+			integration := &hav1.HomeAssistantIntegration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "int-stale",
 					Namespace: namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantIntegrationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantIntegrationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Domain:           "recorder",
 				},
 			}
@@ -946,7 +946,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 			Expect(reconcileIntegrationTwice("int-stale")).To(Succeed())
 
 			Eventually(func() string {
-				obj := &hav1alpha1.HomeAssistantIntegration{}
+				obj := &hav1.HomeAssistantIntegration{}
 				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "int-stale", Namespace: namespace}, obj)
 				return obj.Status.EntryID
 			}, timeout, interval).Should(Equal("stale-entry-001"))
@@ -988,7 +988,7 @@ var _ = Describe("HomeAssistantIntegration Controller", func() {
 
 			// Status must reflect the new entryID
 			Eventually(func() string {
-				obj := &hav1alpha1.HomeAssistantIntegration{}
+				obj := &hav1.HomeAssistantIntegration{}
 				_ = k8sClient.Get(ctx, types.NamespacedName{Name: "int-stale", Namespace: namespace}, obj)
 				return obj.Status.EntryID
 			}, timeout, interval).Should(Equal("new-entry-after-stale"))

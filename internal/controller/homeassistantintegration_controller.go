@@ -37,7 +37,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -69,7 +69,7 @@ type HomeAssistantIntegrationReconciler struct {
 }
 
 // haClientFor returns a HA API client for the given HomeAssistant instance.
-func (r *HomeAssistantIntegrationReconciler) haClientFor(ha *hav1alpha1.HomeAssistant) *haclient.Client {
+func (r *HomeAssistantIntegrationReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
 	haURL := buildHomeAssistantURL(ha)
 	if r.NewHAClient != nil {
 		return r.NewHAClient(haURL)
@@ -88,7 +88,7 @@ func (r *HomeAssistantIntegrationReconciler) haClientFor(ha *hav1alpha1.HomeAssi
 func (r *HomeAssistantIntegrationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	integration := &hav1alpha1.HomeAssistantIntegration{}
+	integration := &hav1.HomeAssistantIntegration{}
 	if err := r.Get(ctx, req.NamespacedName, integration); err != nil {
 		if k8serrors.IsNotFound(err) {
 			return ctrl.Result{}, nil
@@ -276,7 +276,7 @@ func (r *HomeAssistantIntegrationReconciler) Reconcile(ctx context.Context, req 
 // handleDeletion removes the config entry from HA (best-effort)
 func (r *HomeAssistantIntegrationReconciler) handleDeletion(
 	ctx context.Context,
-	integration *hav1alpha1.HomeAssistantIntegration,
+	integration *hav1.HomeAssistantIntegration,
 ) {
 	log := logf.FromContext(ctx)
 	if integration.Status.EntryID == "" {
@@ -310,7 +310,7 @@ func (r *HomeAssistantIntegrationReconciler) handleDeletion(
 // handleCreateEntry processes a successful create_entry flow response
 func (r *HomeAssistantIntegrationReconciler) handleCreateEntry(
 	ctx context.Context,
-	integration *hav1alpha1.HomeAssistantIntegration,
+	integration *hav1.HomeAssistantIntegration,
 	configHash string,
 	flowResp *haclient.FlowResponse,
 	log interface{ Info(string, ...interface{}) },
@@ -350,7 +350,7 @@ type configFingerprint struct {
 // non-sensitive identifiers for stable hashing.
 func (r *HomeAssistantIntegrationReconciler) resolveConfiguration(
 	ctx context.Context,
-	integration *hav1alpha1.HomeAssistantIntegration,
+	integration *hav1.HomeAssistantIntegration,
 ) (map[string]interface{}, configFingerprint, error) {
 	resolved := make(map[string]interface{})
 	fp := configFingerprint{
@@ -477,7 +477,7 @@ func (r *HomeAssistantIntegrationReconciler) findEntryID(
 // setReadyCondition updates status to ready and persists
 func (r *HomeAssistantIntegrationReconciler) setReadyCondition(
 	ctx context.Context,
-	integration *hav1alpha1.HomeAssistantIntegration,
+	integration *hav1.HomeAssistantIntegration,
 	reason, message, configHash string,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
@@ -501,7 +501,7 @@ func (r *HomeAssistantIntegrationReconciler) setReadyCondition(
 // setFailedCondition updates status to not-ready and requeues
 func (r *HomeAssistantIntegrationReconciler) setFailedCondition(
 	ctx context.Context,
-	integration *hav1alpha1.HomeAssistantIntegration,
+	integration *hav1.HomeAssistantIntegration,
 	reason, message string,
 	requeueAfter time.Duration,
 ) (ctrl.Result, error) {
@@ -527,7 +527,7 @@ func (r *HomeAssistantIntegrationReconciler) setFailedCondition(
 
 // emitEvent emits a Kubernetes event for the integration
 func (r *HomeAssistantIntegrationReconciler) emitEvent(
-	integration *hav1alpha1.HomeAssistantIntegration,
+	integration *hav1.HomeAssistantIntegration,
 	eventType, reason, message string,
 ) {
 	if r.Recorder != nil {
@@ -538,9 +538,9 @@ func (r *HomeAssistantIntegrationReconciler) emitEvent(
 // SetupWithManager sets up the controller with the Manager.
 func (r *HomeAssistantIntegrationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&hav1alpha1.HomeAssistantIntegration{}).
+		For(&hav1.HomeAssistantIntegration{}).
 		Watches(
-			&hav1alpha1.HomeAssistant{},
+			&hav1.HomeAssistant{},
 			handler.EnqueueRequestsFromMapFunc(r.findIntegrationsForHomeAssistant),
 		).
 		Watches(
@@ -557,7 +557,7 @@ func (r *HomeAssistantIntegrationReconciler) findIntegrationsForSecret(
 	obj client.Object,
 ) []reconcile.Request {
 	secret := obj.(*corev1.Secret)
-	list := &hav1alpha1.HomeAssistantIntegrationList{}
+	list := &hav1.HomeAssistantIntegrationList{}
 	if err := r.List(ctx, list, client.InNamespace(secret.Namespace)); err != nil {
 		return nil
 	}
@@ -580,8 +580,8 @@ func (r *HomeAssistantIntegrationReconciler) findIntegrationsForHomeAssistant(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
-	ha := obj.(*hav1alpha1.HomeAssistant)
-	list := &hav1alpha1.HomeAssistantIntegrationList{}
+	ha := obj.(*hav1.HomeAssistant)
+	list := &hav1.HomeAssistantIntegrationList{}
 	if err := r.List(ctx, list, client.InNamespace(ha.Namespace)); err != nil {
 		return nil
 	}

@@ -37,7 +37,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -68,7 +68,7 @@ type HomeAssistantAutomationReconciler struct {
 
 // haClientFor returns a HA API client for the given HomeAssistant instance.
 // Uses NewHAClient if set (tests), otherwise the default haclient.NewClient.
-func (r *HomeAssistantAutomationReconciler) haClientFor(ha *hav1alpha1.HomeAssistant) *haclient.Client {
+func (r *HomeAssistantAutomationReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
 	haURL := buildHomeAssistantURL(ha)
 	if r.NewHAClient != nil {
 		return r.NewHAClient(haURL)
@@ -93,7 +93,7 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 	log := logf.FromContext(ctx)
 
 	// Fetch the HomeAssistantAutomation instance
-	automation := &hav1alpha1.HomeAssistantAutomation{}
+	automation := &hav1.HomeAssistantAutomation{}
 	if err := r.Get(ctx, req.NamespacedName, automation); err != nil {
 		if k8serrors.IsNotFound(err) {
 			log.Info("HomeAssistantAutomation resource not found. Ignoring since object must be deleted")
@@ -259,7 +259,7 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 
 // automationToYaml converts HomeAssistantAutomation CR to YAML-compatible map
 func (r *HomeAssistantAutomationReconciler) automationToYaml(
-	automation *hav1alpha1.HomeAssistantAutomation,
+	automation *hav1.HomeAssistantAutomation,
 ) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
 
@@ -349,8 +349,8 @@ func (r *HomeAssistantAutomationReconciler) automationToYaml(
 // HA writes the result to automations.yaml on the PVC (writable).
 func (r *HomeAssistantAutomationReconciler) reconcileAutomationViaAPI(
 	ctx context.Context,
-	automation *hav1alpha1.HomeAssistantAutomation,
-	ha *hav1alpha1.HomeAssistant,
+	automation *hav1.HomeAssistantAutomation,
+	ha *hav1.HomeAssistant,
 	token string,
 ) error {
 	log := logf.FromContext(ctx)
@@ -405,7 +405,7 @@ func (r *HomeAssistantAutomationReconciler) reconcileAutomationViaAPI(
 
 // calculateAutomationHash computes SHA256 hash of the automation spec
 func (r *HomeAssistantAutomationReconciler) calculateAutomationHash(
-	automation *hav1alpha1.HomeAssistantAutomation,
+	automation *hav1.HomeAssistantAutomation,
 ) (string, error) {
 	// Convert spec to YAML for consistent hashing
 	yamlData, err := r.automationToYaml(automation)
@@ -425,9 +425,9 @@ func (r *HomeAssistantAutomationReconciler) calculateAutomationHash(
 // SetupWithManager sets up the controller with the Manager.
 func (r *HomeAssistantAutomationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&hav1alpha1.HomeAssistantAutomation{}).
+		For(&hav1.HomeAssistantAutomation{}).
 		Watches(
-			&hav1alpha1.HomeAssistant{},
+			&hav1.HomeAssistant{},
 			handler.EnqueueRequestsFromMapFunc(r.findAutomationsForHomeAssistant),
 		).
 		Named("homeassistantautomation").
@@ -440,9 +440,9 @@ func (r *HomeAssistantAutomationReconciler) findAutomationsForHomeAssistant(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
-	ha := obj.(*hav1alpha1.HomeAssistant)
+	ha := obj.(*hav1.HomeAssistant)
 
-	automationList := &hav1alpha1.HomeAssistantAutomationList{}
+	automationList := &hav1.HomeAssistantAutomationList{}
 	if err := r.List(ctx, automationList, client.InNamespace(ha.Namespace)); err != nil {
 		return []reconcile.Request{}
 	}
@@ -467,8 +467,8 @@ func (r *HomeAssistantAutomationReconciler) findAutomationsForHomeAssistant(
 func (r *HomeAssistantAutomationReconciler) validateHomeAssistantRef(
 	ctx context.Context,
 	haRef types.NamespacedName,
-	automation *hav1alpha1.HomeAssistantAutomation,
-) (*hav1alpha1.HomeAssistant, error) {
+	automation *hav1.HomeAssistantAutomation,
+) (*hav1.HomeAssistant, error) {
 	log := logf.FromContext(ctx)
 
 	ha, err := getHomeAssistant(ctx, r.Client, haRef)

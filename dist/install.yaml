@@ -41,7 +41,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1alpha1
+    name: v1
     schema:
       openAPIV3Schema:
         description: HomeAssistantArea is the Schema for the homeassistantareas API
@@ -165,6 +165,11 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              lastError:
+                description: |-
+                  lastError contains the error message from the last failed operation
+                  Cleared when operation succeeds
+                type: string
               observedGeneration:
                 description: observedGeneration is the most recent generation observed
                 format: int64
@@ -217,7 +222,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1alpha1
+    name: v1
     schema:
       openAPIV3Schema:
         description: HomeAssistantAutomation is the Schema for the homeassistantautomations
@@ -486,7 +491,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1alpha1
+    name: v1
     schema:
       openAPIV3Schema:
         description: HomeAssistantConfiguration is the Schema for the homeassistantconfigurations
@@ -535,7 +540,7 @@ spec:
                 - name
                 type: object
               http:
-                description: Http component configuration (optional typed section)
+                description: HTTP component configuration (optional typed section)
                 properties:
                   corsDomains:
                     description: CorsDomains is a list of allowed CORS origins
@@ -567,7 +572,7 @@ spec:
                     type: object
                 type: object
               mqtt:
-                description: Mqtt component configuration (optional typed section)
+                description: MQTT component configuration (optional typed section)
                 properties:
                   broker:
                     description: Broker is the MQTT broker address (e.g., "mqtt://localhost:1883")
@@ -780,7 +785,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1alpha1
+    name: v1
     schema:
       openAPIV3Schema:
         description: HomeAssistantFloor is the Schema for the homeassistantfloors
@@ -900,6 +905,11 @@ spec:
               floorID:
                 description: floorID is the ID assigned by Home Assistant after creation
                 type: string
+              lastError:
+                description: |-
+                  lastError contains the error message from the last failed operation
+                  Cleared when operation succeeds
+                type: string
               observedGeneration:
                 description: observedGeneration is the most recent generation observed
                 format: int64
@@ -943,13 +953,13 @@ spec:
     - jsonPath: .spec.domain
       name: Domain
       type: string
-    - jsonPath: .status.conditions[?(@.type=="IntegrationReady")].status
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
       name: Ready
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1alpha1
+    name: v1
     schema:
       openAPIV3Schema:
         description: |-
@@ -981,9 +991,15 @@ spec:
               configuration:
                 additionalProperties:
                   description: |-
-                    IntegrationValue holds either a plain text value or a reference to a Kubernetes Secret key.
-                    Exactly one of Value or SecretKeyRef must be set.
+                    IntegrationValue holds a plain text value, a JSON value, or a reference to a Kubernetes Secret key.
+                    Exactly one of Value, JSONValue, or SecretKeyRef must be set.
                   properties:
+                    jsonValue:
+                      description: |-
+                        JSONValue is a JSON-encoded value that will be parsed and sent as a native JSON
+                        object to the Config Flow API. Use this for fields that expect a dictionary or
+                        array (e.g. location: '{"latitude": 54.17, "longitude": 18.55}').
+                      type: string
                     secretKeyRef:
                       description: SecretKeyRef references a key in a Kubernetes Secret
                       properties:
@@ -1000,13 +1016,18 @@ spec:
                       - name
                       type: object
                     value:
-                      description: Value is a plain text configuration value
+                      description: Value is a plain text configuration value sent
+                        as a string to the Config Flow API.
                       type: string
                   type: object
                   x-kubernetes-validations:
-                  - message: exactly one of value or secretKeyRef must be set
-                    rule: (has(self.value) && !has(self.secretKeyRef)) || (!has(self.value)
-                      && has(self.secretKeyRef))
+                  - message: at least one of value, jsonValue, or secretKeyRef must
+                      be set
+                    rule: has(self.value) || has(self.jsonValue) || has(self.secretKeyRef)
+                  - message: only one of value, jsonValue, or secretKeyRef may be
+                      set
+                    rule: '!(has(self.value) && has(self.jsonValue)) && !(has(self.value)
+                      && has(self.secretKeyRef)) && !(has(self.jsonValue) && has(self.secretKeyRef))'
                 description: |-
                   Configuration contains fields submitted to the Config Flow (single-step flows only).
                   Keys are field names from the data_schema; values are plain text or Secret references.
@@ -1105,6 +1126,11 @@ spec:
                 description: EntryID is the Home Assistant config entry ID created
                   or adopted by the Config Flow
                 type: string
+              lastError:
+                description: |-
+                  LastError contains the error message from the last failed operation
+                  Cleared when operation succeeds
+                type: string
               observedGeneration:
                 description: ObservedGeneration reflects the generation of the most
                   recently observed CR
@@ -1151,7 +1177,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1alpha1
+    name: v1
     schema:
       openAPIV3Schema:
         description: HomeAssistantLabel is the Schema for the homeassistantlabels
@@ -1270,6 +1296,11 @@ spec:
               labelID:
                 description: labelID is the ID assigned by Home Assistant after creation
                 type: string
+              lastError:
+                description: |-
+                  lastError contains the error message from the last failed operation
+                  Cleared when operation succeeds
+                type: string
               observedGeneration:
                 description: observedGeneration is the most recent generation observed
                 format: int64
@@ -1314,7 +1345,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1alpha1
+    name: v1
     schema:
       openAPIV3Schema:
         description: HomeAssistant is the Schema for the homeassistants API.
@@ -1409,14 +1440,14 @@ spec:
                     type: boolean
                   apiTokenSecretName:
                     description: |-
-                      ApiTokenSecretName is the name of the Secret where the API token will be stored
+                      APITokenSecretName is the name of the Secret where the API token will be stored
                       The Secret will have a "token" key containing the long-lived access token
                       If not specified, defaults to "{homeassistant-name}-homeassistant-api-token"
                     type: string
                   createApiToken:
                     default: true
                     description: |-
-                      CreateApiToken controls whether a long-lived access token is created after onboarding
+                      CreateAPIToken controls whether a long-lived access token is created after onboarding
                       The token is valid for 10 years and stored in a Secret
                     type: boolean
                   credentials:
@@ -1700,11 +1731,11 @@ spec:
                   bootstrap process
                 properties:
                   apiTokenReady:
-                    description: ApiTokenReady indicates whether the API token has
+                    description: APITokenReady indicates whether the API token has
                       been created and stored
                     type: boolean
                   apiTokenSecretName:
-                    description: ApiTokenSecretName is the name of the Secret containing
+                    description: APITokenSecretName is the name of the Secret containing
                       the API token
                     type: string
                   completed:
@@ -1796,6 +1827,11 @@ spec:
                   operation.
                 format: date-time
                 type: string
+              observedGeneration:
+                description: ObservedGeneration reflects the generation of the most
+                  recently observed HomeAssistant
+                format: int64
+                type: integer
               phase:
                 description: Phase represents the current lifecycle phase of the HomeAssistant
                   instance
@@ -1866,7 +1902,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1alpha1
+    name: v1
     schema:
       openAPIV3Schema:
         description: HomeAssistantScene is the Schema for the homeassistantscenes
@@ -2099,7 +2135,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1alpha1
+    name: v1
     schema:
       openAPIV3Schema:
         description: HomeAssistantScript is the Schema for the homeassistantscripts
@@ -2349,7 +2385,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1alpha1
+    name: v1
     schema:
       openAPIV3Schema:
         description: HomeAssistantSecrets is the Schema for the homeassistantsecrets
@@ -2481,11 +2517,20 @@ spec:
                   - type
                   type: object
                 type: array
+              lastError:
+                description: LastError contains a human-readable description of the
+                  last error encountered
+                type: string
               lastUpdated:
                 description: LastUpdated is the timestamp when the secrets were last
                   updated
                 format: date-time
                 type: string
+              observedGeneration:
+                description: ObservedGeneration reflects the generation of the most
+                  recently observed HomeAssistantSecrets
+                format: int64
+                type: integer
               secretsHash:
                 description: |-
                   SecretsHash is the SHA256 hash of the generated secrets.yaml content.

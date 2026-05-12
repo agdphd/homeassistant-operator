@@ -13,7 +13,7 @@ A Kubernetes operator that simplifies deploying and managing [Home Assistant](ht
 The Home Assistant Operator automates the full lifecycle of Home Assistant on Kubernetes. Instead of managing Deployments, Services, PVCs and config files by hand, you declare the desired state in custom resources and the operator handles the rest — including zero-touch bootstrap, hot-reload of configuration changes, and declarative management of automations, scenes, scripts and integrations.
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistant
 metadata:
   name: home
@@ -80,7 +80,7 @@ spec:
 
 ## Project Status
 
-**Alpha** — APIs may change between minor versions until v1.0.0.
+**Beta** — API version `v1` is stable; operator features are production-ready for single-node deployments.
 
 [Get started →](getting-started/installation.md){ .md-button .md-button--primary }
 [View on GitHub →](https://github.com/przemekhys/homeassistant-operator){ .md-button }

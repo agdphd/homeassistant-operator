@@ -39,7 +39,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 )
 
 const (
@@ -74,7 +74,7 @@ func (r *HomeAssistantSecretsReconciler) Reconcile(ctx context.Context, req ctrl
 	log := logf.FromContext(ctx)
 
 	// Fetch the HomeAssistantSecrets instance
-	haSecrets := &hav1alpha1.HomeAssistantSecrets{}
+	haSecrets := &hav1.HomeAssistantSecrets{}
 	if err := r.Get(ctx, req.NamespacedName, haSecrets); err != nil {
 		if errors.IsNotFound(err) {
 			log.Info("HomeAssistantSecrets resource not found. Ignoring since object must be deleted")
@@ -89,11 +89,12 @@ func (r *HomeAssistantSecretsReconciler) Reconcile(ctx context.Context, req ctrl
 		Name:      haSecrets.Spec.HomeAssistantRef.Name,
 		Namespace: haSecrets.Namespace,
 	}
-	ha := &hav1alpha1.HomeAssistant{}
+	ha := &hav1.HomeAssistant{}
 	if err := r.Get(ctx, haRef, ha); err != nil {
 		if errors.IsNotFound(err) {
 			log.Error(err, "Referenced HomeAssistant not found", "name", haRef.Name)
 			haSecrets.Status.ObservedGeneration = haSecrets.Generation
+			haSecrets.Status.LastError = fmt.Sprintf("HomeAssistant %s not found", haRef.Name)
 			meta.SetStatusCondition(&haSecrets.Status.Conditions, metav1.Condition{
 				Type:               conditionTypeReady,
 				Status:             metav1.ConditionFalse,
@@ -115,6 +116,7 @@ func (r *HomeAssistantSecretsReconciler) Reconcile(ctx context.Context, req ctrl
 	if err != nil {
 		log.Error(err, "Failed to collect secrets")
 		haSecrets.Status.ObservedGeneration = haSecrets.Generation
+		haSecrets.Status.LastError = fmt.Sprintf("Failed to collect secrets: %v", err)
 		meta.SetStatusCondition(&haSecrets.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
 			Status:             metav1.ConditionFalse,
@@ -138,6 +140,7 @@ func (r *HomeAssistantSecretsReconciler) Reconcile(ctx context.Context, req ctrl
 	if err := r.reconcileGeneratedSecret(ctx, haSecrets, secretsYaml, hash); err != nil {
 		log.Error(err, "Failed to reconcile generated secret")
 		haSecrets.Status.ObservedGeneration = haSecrets.Generation
+		haSecrets.Status.LastError = fmt.Sprintf("Failed to create/update generated secret: %v", err)
 		meta.SetStatusCondition(&haSecrets.Status.Conditions, metav1.Condition{
 			Type:               conditionTypeReady,
 			Status:             metav1.ConditionFalse,
@@ -164,6 +167,7 @@ func (r *HomeAssistantSecretsReconciler) Reconcile(ctx context.Context, req ctrl
 	haSecrets.Status.SecretsHash = hash
 	haSecrets.Status.LastUpdated = &now
 	haSecrets.Status.ObservedGeneration = haSecrets.Generation
+	haSecrets.Status.LastError = ""
 	meta.SetStatusCondition(&haSecrets.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             metav1.ConditionTrue,
@@ -184,7 +188,7 @@ func (r *HomeAssistantSecretsReconciler) Reconcile(ctx context.Context, req ctrl
 // collectSecrets gathers all secrets from the referenced Secret resources.
 func (r *HomeAssistantSecretsReconciler) collectSecrets(
 	ctx context.Context,
-	haSecrets *hav1alpha1.HomeAssistantSecrets,
+	haSecrets *hav1.HomeAssistantSecrets,
 ) (map[string]string, error) {
 	log := logf.FromContext(ctx)
 	secretsData := make(map[string]string)
@@ -262,7 +266,7 @@ func (r *HomeAssistantSecretsReconciler) generateSecretsYaml(secretsData map[str
 // containing secrets.yaml.
 func (r *HomeAssistantSecretsReconciler) reconcileGeneratedSecret(
 	ctx context.Context,
-	haSecrets *hav1alpha1.HomeAssistantSecrets,
+	haSecrets *hav1.HomeAssistantSecrets,
 	secretsYaml,
 	hash string,
 ) error {
@@ -338,7 +342,7 @@ func (r *HomeAssistantSecretsReconciler) SetupWithManager(mgr ctrl.Manager) erro
 		r.findHomeAssistantSecretsForSecret,
 	)
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&hav1alpha1.HomeAssistantSecrets{}).
+		For(&hav1.HomeAssistantSecrets{}).
 		Owns(&corev1.Secret{}).
 		Watches(
 			&corev1.Secret{},
@@ -357,7 +361,7 @@ func (r *HomeAssistantSecretsReconciler) findHomeAssistantSecretsForSecret(
 	secret := obj.(*corev1.Secret)
 
 	// List all HomeAssistantSecrets in the same namespace
-	haSecretsList := &hav1alpha1.HomeAssistantSecretsList{}
+	haSecretsList := &hav1.HomeAssistantSecretsList{}
 	if err := r.List(
 		ctx, haSecretsList,
 		client.InNamespace(secret.Namespace),
@@ -386,7 +390,7 @@ func (r *HomeAssistantSecretsReconciler) findHomeAssistantSecretsForSecret(
 }
 
 // isAutoRestartEnabled returns true if autoRestart is enabled (default: true)
-func (r *HomeAssistantSecretsReconciler) isAutoRestartEnabled(haSecrets *hav1alpha1.HomeAssistantSecrets) bool {
+func (r *HomeAssistantSecretsReconciler) isAutoRestartEnabled(haSecrets *hav1.HomeAssistantSecrets) bool {
 	if haSecrets.Spec.AutoRestart == nil {
 		return true // default is enabled
 	}
@@ -397,7 +401,7 @@ func (r *HomeAssistantSecretsReconciler) isAutoRestartEnabled(haSecrets *hav1alp
 // the StatefulSet to trigger a rolling restart when secrets change.
 func (r *HomeAssistantSecretsReconciler) updateStatefulSetAnnotation(
 	ctx context.Context,
-	haSecrets *hav1alpha1.HomeAssistantSecrets,
+	haSecrets *hav1.HomeAssistantSecrets,
 	hash string,
 ) error {
 	log := logf.FromContext(ctx)

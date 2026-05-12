@@ -21,7 +21,7 @@ kubectl create secret generic ha-admin \
 ```
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistant
 metadata:
   name: home

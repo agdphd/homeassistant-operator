@@ -37,7 +37,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -59,7 +59,7 @@ type HomeAssistantSceneReconciler struct {
 }
 
 // haClientFor returns a HA API client for the given HomeAssistant instance.
-func (r *HomeAssistantSceneReconciler) haClientFor(ha *hav1alpha1.HomeAssistant) *haclient.Client {
+func (r *HomeAssistantSceneReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
 	haURL := buildHomeAssistantURL(ha)
 	if r.NewHAClient != nil {
 		return r.NewHAClient(haURL)
@@ -81,7 +81,7 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 	log := logf.FromContext(ctx)
 
 	// Fetch the HomeAssistantScene instance
-	scene := &hav1alpha1.HomeAssistantScene{}
+	scene := &hav1.HomeAssistantScene{}
 	if err := r.Get(ctx, req.NamespacedName, scene); err != nil {
 		if errors.IsNotFound(err) {
 			log.Info("HomeAssistantScene resource not found. Ignoring since object must be deleted")
@@ -246,7 +246,7 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 
 // sceneToYaml converts HomeAssistantScene CR to YAML-compatible map
 func (r *HomeAssistantSceneReconciler) sceneToYaml(
-	scene *hav1alpha1.HomeAssistantScene,
+	scene *hav1.HomeAssistantScene,
 ) (map[string]interface{}, error) {
 	result := make(map[string]interface{})
 
@@ -300,8 +300,8 @@ func (r *HomeAssistantSceneReconciler) sceneToYaml(
 // HA writes the result to scenes.yaml on the PVC (writable).
 func (r *HomeAssistantSceneReconciler) reconcileSceneViaAPI(
 	ctx context.Context,
-	scene *hav1alpha1.HomeAssistantScene,
-	ha *hav1alpha1.HomeAssistant,
+	scene *hav1.HomeAssistantScene,
+	ha *hav1.HomeAssistant,
 	token string,
 ) error {
 	log := logf.FromContext(ctx)
@@ -344,7 +344,7 @@ func (r *HomeAssistantSceneReconciler) reconcileSceneViaAPI(
 
 // calculateSceneHash computes SHA256 hash of the scene spec
 func (r *HomeAssistantSceneReconciler) calculateSceneHash(
-	scene *hav1alpha1.HomeAssistantScene,
+	scene *hav1.HomeAssistantScene,
 ) (string, error) {
 	// Convert spec to YAML for consistent hashing
 	yamlData, err := r.sceneToYaml(scene)
@@ -364,9 +364,9 @@ func (r *HomeAssistantSceneReconciler) calculateSceneHash(
 // SetupWithManager sets up the controller with the Manager.
 func (r *HomeAssistantSceneReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&hav1alpha1.HomeAssistantScene{}).
+		For(&hav1.HomeAssistantScene{}).
 		Watches(
-			&hav1alpha1.HomeAssistant{},
+			&hav1.HomeAssistant{},
 			handler.EnqueueRequestsFromMapFunc(r.findScenesForHomeAssistant),
 		).
 		Named("homeassistantscene").
@@ -379,9 +379,9 @@ func (r *HomeAssistantSceneReconciler) findScenesForHomeAssistant(
 	ctx context.Context,
 	obj client.Object,
 ) []reconcile.Request {
-	ha := obj.(*hav1alpha1.HomeAssistant)
+	ha := obj.(*hav1.HomeAssistant)
 
-	sceneList := &hav1alpha1.HomeAssistantSceneList{}
+	sceneList := &hav1.HomeAssistantSceneList{}
 	if err := r.List(ctx, sceneList, client.InNamespace(ha.Namespace)); err != nil {
 		return []reconcile.Request{}
 	}
@@ -406,8 +406,8 @@ func (r *HomeAssistantSceneReconciler) findScenesForHomeAssistant(
 func (r *HomeAssistantSceneReconciler) validateHomeAssistantRef(
 	ctx context.Context,
 	haRef types.NamespacedName,
-	scene *hav1alpha1.HomeAssistantScene,
-) (*hav1alpha1.HomeAssistant, error) {
+	scene *hav1.HomeAssistantScene,
+) (*hav1.HomeAssistant, error) {
 	log := logf.FromContext(ctx)
 
 	ha, err := getHomeAssistant(ctx, r.Client, haRef)

@@ -13,7 +13,7 @@ Requires a bootstrap API token. If missing, the operator requeues.
 ## Basic example
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantScene
 metadata:
   name: movie-night
@@ -38,7 +38,7 @@ spec:
 ## Advanced example — multiple rooms
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantScene
 metadata:
   name: good-morning

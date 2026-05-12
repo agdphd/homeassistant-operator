@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -61,7 +61,7 @@ type HomeAssistantLabelReconciler struct {
 func (r *HomeAssistantLabelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	label := &hav1alpha1.HomeAssistantLabel{}
+	label := &hav1.HomeAssistantLabel{}
 	if err := r.Get(ctx, req.NamespacedName, label); err != nil {
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
@@ -176,7 +176,7 @@ func (r *HomeAssistantLabelReconciler) Reconcile(ctx context.Context, req ctrl.R
 }
 
 // handleDeletion removes the label from HA (best-effort)
-func (r *HomeAssistantLabelReconciler) handleDeletion(ctx context.Context, label *hav1alpha1.HomeAssistantLabel) {
+func (r *HomeAssistantLabelReconciler) handleDeletion(ctx context.Context, label *hav1.HomeAssistantLabel) {
 	log := logf.FromContext(ctx)
 
 	if label.Status.LabelID == "" {
@@ -208,7 +208,7 @@ func (r *HomeAssistantLabelReconciler) handleDeletion(ctx context.Context, label
 }
 
 // haClientFor returns a haclient.Client for the given HA instance
-func (r *HomeAssistantLabelReconciler) haClientFor(ha *hav1alpha1.HomeAssistant) *haclient.Client {
+func (r *HomeAssistantLabelReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
 	baseURL := buildHomeAssistantURL(ha)
 	if r.NewHAClient != nil {
 		return r.NewHAClient(baseURL)
@@ -219,7 +219,7 @@ func (r *HomeAssistantLabelReconciler) haClientFor(ha *hav1alpha1.HomeAssistant)
 // setCondition updates the Ready condition and status
 func (r *HomeAssistantLabelReconciler) setCondition(
 	ctx context.Context,
-	label *hav1alpha1.HomeAssistantLabel,
+	label *hav1.HomeAssistantLabel,
 	status metav1.ConditionStatus,
 	reason, message string,
 	requeueAfter time.Duration,
@@ -276,7 +276,7 @@ func (r *HomeAssistantLabelReconciler) createLabel(
 	ctx context.Context,
 	haClient *haclient.Client,
 	token string,
-	label *hav1alpha1.HomeAssistantLabel,
+	label *hav1.HomeAssistantLabel,
 ) (string, error) {
 	data := map[string]interface{}{
 		"name": label.Spec.Name,
@@ -304,7 +304,7 @@ func (r *HomeAssistantLabelReconciler) updateLabel(
 	ctx context.Context,
 	haClient *haclient.Client,
 	token string,
-	label *hav1alpha1.HomeAssistantLabel,
+	label *hav1.HomeAssistantLabel,
 ) error {
 	data := map[string]interface{}{
 		"label_id": label.Status.LabelID,
@@ -348,7 +348,7 @@ func findLabelByID(labels []haLabelEntry, id string) *haLabelEntry {
 }
 
 func (r *HomeAssistantLabelReconciler) needsLabelUpdate(
-	label *hav1alpha1.HomeAssistantLabel,
+	label *hav1.HomeAssistantLabel,
 	existing *haLabelEntry,
 ) bool {
 	if existing.Name != label.Spec.Name {
@@ -366,7 +366,7 @@ func (r *HomeAssistantLabelReconciler) needsLabelUpdate(
 // SetupWithManager sets up the controller with the Manager.
 func (r *HomeAssistantLabelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&hav1alpha1.HomeAssistantLabel{}).
+		For(&hav1.HomeAssistantLabel{}).
 		Named("homeassistantlabel").
 		Complete(r)
 }

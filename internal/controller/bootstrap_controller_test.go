@@ -27,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 )
 
 var _ = Describe("Bootstrap Controller", func() {
@@ -39,12 +39,12 @@ var _ = Describe("Bootstrap Controller", func() {
 	Context("When bootstrap is disabled", func() {
 		It("Should not perform bootstrap operations", func() {
 			By("Creating a HomeAssistant CR without bootstrap enabled")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ha-no-bootstrap",
 					Namespace: "default",
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1.0",
 					// Bootstrap is nil or disabled
 					Bootstrap: nil,
@@ -53,13 +53,13 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ha.Name + "-config",
 					Namespace: ha.Namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: ha.Name,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -71,7 +71,7 @@ var _ = Describe("Bootstrap Controller", func() {
 
 			By("Verifying bootstrap status remains nil")
 			Eventually(func(g Gomega) {
-				fetchedHA := &hav1alpha1.HomeAssistant{}
+				fetchedHA := &hav1.HomeAssistant{}
 				g.Expect(k8sClient.Get(ctx, haKey, fetchedHA)).Should(Succeed())
 				// Bootstrap status should remain nil since it's disabled
 				g.Expect(fetchedHA.Status.Bootstrap).Should(BeNil())
@@ -84,14 +84,14 @@ var _ = Describe("Bootstrap Controller", func() {
 
 		It("Should not perform bootstrap when explicitly disabled", func() {
 			By("Creating a HomeAssistant CR with bootstrap.enabled=false")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ha-bootstrap-disabled",
 					Namespace: "default",
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1.0",
-					Bootstrap: &hav1alpha1.BootstrapSpec{
+					Bootstrap: &hav1.BootstrapSpec{
 						Enabled: false,
 					},
 				},
@@ -99,13 +99,13 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ha.Name + "-config",
 					Namespace: ha.Namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: ha.Name,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -117,7 +117,7 @@ var _ = Describe("Bootstrap Controller", func() {
 
 			By("Verifying bootstrap status remains nil")
 			Consistently(func(g Gomega) {
-				fetchedHA := &hav1alpha1.HomeAssistant{}
+				fetchedHA := &hav1.HomeAssistant{}
 				g.Expect(k8sClient.Get(ctx, haKey, fetchedHA)).Should(Succeed())
 				g.Expect(fetchedHA.Status.Bootstrap).Should(BeNil())
 			}, time.Second*2, interval).Should(Succeed())
@@ -144,17 +144,17 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
 
 			By("Creating a HomeAssistant CR with bootstrap enabled")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ha-bootstrap-completed",
 					Namespace: "default",
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1.0",
-					Bootstrap: &hav1alpha1.BootstrapSpec{
+					Bootstrap: &hav1.BootstrapSpec{
 						Enabled: true,
-						Credentials: &hav1alpha1.BootstrapCredentials{
-							SecretRef: &hav1alpha1.CredentialsSecretRef{
+						Credentials: &hav1.BootstrapCredentials{
+							SecretRef: &hav1.CredentialsSecretRef{
 								Name: secret.Name,
 							},
 						},
@@ -164,13 +164,13 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ha.Name + "-config",
 					Namespace: ha.Namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: ha.Name,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -182,12 +182,12 @@ var _ = Describe("Bootstrap Controller", func() {
 
 			By("Manually marking bootstrap as completed")
 			Eventually(func(g Gomega) {
-				fetchedHA := &hav1alpha1.HomeAssistant{}
+				fetchedHA := &hav1.HomeAssistant{}
 				g.Expect(k8sClient.Get(ctx, haKey, fetchedHA)).Should(Succeed())
 
 				// Initialize bootstrap status and mark as completed
 				now := metav1.Now()
-				fetchedHA.Status.Bootstrap = &hav1alpha1.BootstrapStatus{
+				fetchedHA.Status.Bootstrap = &hav1.BootstrapStatus{
 					Completed:   true,
 					LastAttempt: &now,
 					Message:     "Bootstrap already completed",
@@ -204,7 +204,7 @@ var _ = Describe("Bootstrap Controller", func() {
 
 			By("Verifying bootstrap status remains completed")
 			Consistently(func(g Gomega) {
-				fetchedHA := &hav1alpha1.HomeAssistant{}
+				fetchedHA := &hav1.HomeAssistant{}
 				g.Expect(k8sClient.Get(ctx, haKey, fetchedHA)).Should(Succeed())
 				g.Expect(fetchedHA.Status.Bootstrap).NotTo(BeNil())
 				g.Expect(fetchedHA.Status.Bootstrap.Completed).Should(BeTrue())
@@ -220,16 +220,16 @@ var _ = Describe("Bootstrap Controller", func() {
 	Context("When validating bootstrap configuration", func() {
 		It("Should fail when credentials secretRef is nil", func() {
 			By("Creating a HomeAssistant CR with nil secretRef")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ha-nil-secretref",
 					Namespace: "default",
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1.0",
-					Bootstrap: &hav1alpha1.BootstrapSpec{
+					Bootstrap: &hav1.BootstrapSpec{
 						Enabled: true,
-						Credentials: &hav1alpha1.BootstrapCredentials{
+						Credentials: &hav1.BootstrapCredentials{
 							SecretRef: nil, // Invalid: nil secretRef
 						},
 					},
@@ -238,13 +238,13 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ha.Name + "-config",
 					Namespace: ha.Namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: ha.Name,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -266,10 +266,10 @@ var _ = Describe("Bootstrap Controller", func() {
 
 			By("Marking HomeAssistant as ready to trigger bootstrap")
 			Eventually(func(g Gomega) {
-				fetchedHA := &hav1alpha1.HomeAssistant{}
+				fetchedHA := &hav1.HomeAssistant{}
 				g.Expect(k8sClient.Get(ctx, haKey, fetchedHA)).Should(Succeed())
 				fetchedHA.Status.Ready = true
-				fetchedHA.Status.Phase = hav1alpha1.PhaseRunning
+				fetchedHA.Status.Phase = hav1.PhaseRunning
 				g.Expect(k8sClient.Status().Update(ctx, fetchedHA)).Should(Succeed())
 			}, timeout, interval).Should(Succeed())
 
@@ -281,7 +281,7 @@ var _ = Describe("Bootstrap Controller", func() {
 
 			By("Verifying bootstrap fails with validation error")
 			Eventually(func(g Gomega) {
-				fetchedHA := &hav1alpha1.HomeAssistant{}
+				fetchedHA := &hav1.HomeAssistant{}
 				g.Expect(k8sClient.Get(ctx, haKey, fetchedHA)).Should(Succeed())
 
 				// Should have bootstrap status with error
@@ -304,17 +304,17 @@ var _ = Describe("Bootstrap Controller", func() {
 
 		It("Should fail when secret name is empty", func() {
 			By("Creating a HomeAssistant CR with empty secret name")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ha-empty-secret-name",
 					Namespace: "default",
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1.0",
-					Bootstrap: &hav1alpha1.BootstrapSpec{
+					Bootstrap: &hav1.BootstrapSpec{
 						Enabled: true,
-						Credentials: &hav1alpha1.BootstrapCredentials{
-							SecretRef: &hav1alpha1.CredentialsSecretRef{
+						Credentials: &hav1.BootstrapCredentials{
+							SecretRef: &hav1.CredentialsSecretRef{
 								Name: "", // Invalid: empty name
 							},
 						},
@@ -324,13 +324,13 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ha.Name + "-config",
 					Namespace: ha.Namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: ha.Name,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -352,10 +352,10 @@ var _ = Describe("Bootstrap Controller", func() {
 
 			By("Marking HomeAssistant as ready to trigger bootstrap")
 			Eventually(func(g Gomega) {
-				fetchedHA := &hav1alpha1.HomeAssistant{}
+				fetchedHA := &hav1.HomeAssistant{}
 				g.Expect(k8sClient.Get(ctx, haKey, fetchedHA)).Should(Succeed())
 				fetchedHA.Status.Ready = true
-				fetchedHA.Status.Phase = hav1alpha1.PhaseRunning
+				fetchedHA.Status.Phase = hav1.PhaseRunning
 				g.Expect(k8sClient.Status().Update(ctx, fetchedHA)).Should(Succeed())
 			}, timeout, interval).Should(Succeed())
 
@@ -367,7 +367,7 @@ var _ = Describe("Bootstrap Controller", func() {
 
 			By("Verifying bootstrap fails with validation error")
 			Eventually(func(g Gomega) {
-				fetchedHA := &hav1alpha1.HomeAssistant{}
+				fetchedHA := &hav1.HomeAssistant{}
 				g.Expect(k8sClient.Get(ctx, haKey, fetchedHA)).Should(Succeed())
 
 				g.Expect(fetchedHA.Status.Bootstrap).NotTo(BeNil())
@@ -387,17 +387,17 @@ var _ = Describe("Bootstrap Controller", func() {
 
 		It("Should fail when credentials secret is missing", func() {
 			By("Creating a HomeAssistant CR referencing non-existent secret")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ha-missing-secret",
 					Namespace: "default",
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1.0",
-					Bootstrap: &hav1alpha1.BootstrapSpec{
+					Bootstrap: &hav1.BootstrapSpec{
 						Enabled: true,
-						Credentials: &hav1alpha1.BootstrapCredentials{
-							SecretRef: &hav1alpha1.CredentialsSecretRef{
+						Credentials: &hav1.BootstrapCredentials{
+							SecretRef: &hav1.CredentialsSecretRef{
 								Name: "non-existent-secret",
 							},
 						},
@@ -407,13 +407,13 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ha.Name + "-config",
 					Namespace: ha.Namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: ha.Name,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -435,10 +435,10 @@ var _ = Describe("Bootstrap Controller", func() {
 
 			By("Marking HomeAssistant as ready to trigger bootstrap")
 			Eventually(func(g Gomega) {
-				fetchedHA := &hav1alpha1.HomeAssistant{}
+				fetchedHA := &hav1.HomeAssistant{}
 				g.Expect(k8sClient.Get(ctx, haKey, fetchedHA)).Should(Succeed())
 				fetchedHA.Status.Ready = true
-				fetchedHA.Status.Phase = hav1alpha1.PhaseRunning
+				fetchedHA.Status.Phase = hav1.PhaseRunning
 				g.Expect(k8sClient.Status().Update(ctx, fetchedHA)).Should(Succeed())
 			}, timeout, interval).Should(Succeed())
 
@@ -450,7 +450,7 @@ var _ = Describe("Bootstrap Controller", func() {
 
 			By("Verifying bootstrap fails with missing secret error")
 			Eventually(func(g Gomega) {
-				fetchedHA := &hav1alpha1.HomeAssistant{}
+				fetchedHA := &hav1.HomeAssistant{}
 				g.Expect(k8sClient.Get(ctx, haKey, fetchedHA)).Should(Succeed())
 
 				g.Expect(fetchedHA.Status.Bootstrap).NotTo(BeNil())
@@ -485,17 +485,17 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
 
 			By("Creating a HomeAssistant CR")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ha-default-keys",
 					Namespace: "default",
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1.0",
-					Bootstrap: &hav1alpha1.BootstrapSpec{
+					Bootstrap: &hav1.BootstrapSpec{
 						Enabled: true,
-						Credentials: &hav1alpha1.BootstrapCredentials{
-							SecretRef: &hav1alpha1.CredentialsSecretRef{
+						Credentials: &hav1.BootstrapCredentials{
+							SecretRef: &hav1.CredentialsSecretRef{
 								Name: secret.Name,
 								// Using default keys (username, password)
 							},
@@ -506,13 +506,13 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ha.Name + "-config",
 					Namespace: ha.Namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: ha.Name,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -553,17 +553,17 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(k8sClient.Create(ctx, secret)).Should(Succeed())
 
 			By("Creating a HomeAssistant CR with custom key names")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ha-custom-keys",
 					Namespace: "default",
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1.0",
-					Bootstrap: &hav1alpha1.BootstrapSpec{
+					Bootstrap: &hav1.BootstrapSpec{
 						Enabled: true,
-						Credentials: &hav1alpha1.BootstrapCredentials{
-							SecretRef: &hav1alpha1.CredentialsSecretRef{
+						Credentials: &hav1.BootstrapCredentials{
+							SecretRef: &hav1.CredentialsSecretRef{
 								Name:        secret.Name,
 								UsernameKey: "admin-user",
 								PasswordKey: "admin-pass",
@@ -575,13 +575,13 @@ var _ = Describe("Bootstrap Controller", func() {
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
 			By("Creating HomeAssistantConfiguration")
-			haConfig := &hav1alpha1.HomeAssistantConfiguration{
+			haConfig := &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ha.Name + "-config",
 					Namespace: ha.Namespace,
 				},
-				Spec: hav1alpha1.HomeAssistantConfigurationSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{
 						Name: ha.Name,
 					},
 					Configuration: "homeassistant:\n  name: Home\n",
@@ -611,12 +611,12 @@ var _ = Describe("Bootstrap Controller", func() {
 	Context("When building Home Assistant URL", func() {
 		It("Should build correct URL with default port", func() {
 			By("Creating a HomeAssistant CR with default port")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ha-default-port",
 					Namespace: "test-namespace",
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1.0",
 					// No service spec = default port 8123
 				},
@@ -635,14 +635,14 @@ var _ = Describe("Bootstrap Controller", func() {
 
 		It("Should build correct URL with custom port", func() {
 			By("Creating a HomeAssistant CR with custom port")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-ha-custom-port",
 					Namespace: "custom-ns",
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1.0",
-					Service: &hav1alpha1.ServiceSpec{
+					Service: &hav1.ServiceSpec{
 						Port: 9999,
 					},
 				},
@@ -661,14 +661,14 @@ var _ = Describe("Bootstrap Controller", func() {
 
 		It("Should build URL with correct namespace and service name", func() {
 			By("Creating a HomeAssistant CR")
-			ha := &hav1alpha1.HomeAssistant{
+			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "my-home-assistant",
 					Namespace: "production",
 				},
-				Spec: hav1alpha1.HomeAssistantSpec{
+				Spec: hav1.HomeAssistantSpec{
 					Version: "2024.1.0",
-					Service: &hav1alpha1.ServiceSpec{
+					Service: &hav1.ServiceSpec{
 						Port: 8080,
 					},
 				},
@@ -691,12 +691,12 @@ var _ = Describe("Bootstrap Controller", func() {
 	Context("When validating bootstrap configuration helper", func() {
 		It("Should validate correctly with valid config", func() {
 			By("Creating a valid bootstrap config")
-			ha := &hav1alpha1.HomeAssistant{
-				Spec: hav1alpha1.HomeAssistantSpec{
-					Bootstrap: &hav1alpha1.BootstrapSpec{
+			ha := &hav1.HomeAssistant{
+				Spec: hav1.HomeAssistantSpec{
+					Bootstrap: &hav1.BootstrapSpec{
 						Enabled: true,
-						Credentials: &hav1alpha1.BootstrapCredentials{
-							SecretRef: &hav1alpha1.CredentialsSecretRef{
+						Credentials: &hav1.BootstrapCredentials{
+							SecretRef: &hav1.CredentialsSecretRef{
 								Name: "valid-secret",
 							},
 						},
@@ -717,9 +717,9 @@ var _ = Describe("Bootstrap Controller", func() {
 
 		It("Should fail validation when credentials is nil", func() {
 			By("Creating config with nil credentials")
-			ha := &hav1alpha1.HomeAssistant{
-				Spec: hav1alpha1.HomeAssistantSpec{
-					Bootstrap: &hav1alpha1.BootstrapSpec{
+			ha := &hav1.HomeAssistant{
+				Spec: hav1.HomeAssistantSpec{
+					Bootstrap: &hav1.BootstrapSpec{
 						Enabled:     true,
 						Credentials: nil,
 					},
@@ -740,11 +740,11 @@ var _ = Describe("Bootstrap Controller", func() {
 
 		It("Should fail validation when secretRef is nil", func() {
 			By("Creating config with nil secretRef")
-			ha := &hav1alpha1.HomeAssistant{
-				Spec: hav1alpha1.HomeAssistantSpec{
-					Bootstrap: &hav1alpha1.BootstrapSpec{
+			ha := &hav1.HomeAssistant{
+				Spec: hav1.HomeAssistantSpec{
+					Bootstrap: &hav1.BootstrapSpec{
 						Enabled: true,
-						Credentials: &hav1alpha1.BootstrapCredentials{
+						Credentials: &hav1.BootstrapCredentials{
 							SecretRef: nil,
 						},
 					},
@@ -765,12 +765,12 @@ var _ = Describe("Bootstrap Controller", func() {
 
 		It("Should fail validation when secret name is empty", func() {
 			By("Creating config with empty secret name")
-			ha := &hav1alpha1.HomeAssistant{
-				Spec: hav1alpha1.HomeAssistantSpec{
-					Bootstrap: &hav1alpha1.BootstrapSpec{
+			ha := &hav1.HomeAssistant{
+				Spec: hav1.HomeAssistantSpec{
+					Bootstrap: &hav1.BootstrapSpec{
 						Enabled: true,
-						Credentials: &hav1alpha1.BootstrapCredentials{
-							SecretRef: &hav1alpha1.CredentialsSecretRef{
+						Credentials: &hav1.BootstrapCredentials{
+							SecretRef: &hav1.CredentialsSecretRef{
 								Name: "",
 							},
 						},

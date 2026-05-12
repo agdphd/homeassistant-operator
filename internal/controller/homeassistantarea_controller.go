@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -62,7 +62,7 @@ type HomeAssistantAreaReconciler struct {
 func (r *HomeAssistantAreaReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	area := &hav1alpha1.HomeAssistantArea{}
+	area := &hav1.HomeAssistantArea{}
 	if err := r.Get(ctx, req.NamespacedName, area); err != nil {
 		if errors.IsNotFound(err) {
 			return ctrl.Result{}, nil
@@ -214,7 +214,7 @@ func (r *HomeAssistantAreaReconciler) Reconcile(ctx context.Context, req ctrl.Re
 }
 
 // handleDeletion removes the area from HA (best-effort)
-func (r *HomeAssistantAreaReconciler) handleDeletion(ctx context.Context, area *hav1alpha1.HomeAssistantArea) {
+func (r *HomeAssistantAreaReconciler) handleDeletion(ctx context.Context, area *hav1.HomeAssistantArea) {
 	log := logf.FromContext(ctx)
 
 	if area.Status.AreaID == "" {
@@ -246,7 +246,7 @@ func (r *HomeAssistantAreaReconciler) handleDeletion(ctx context.Context, area *
 }
 
 // haClientFor returns a haclient.Client for the given HA instance
-func (r *HomeAssistantAreaReconciler) haClientFor(ha *hav1alpha1.HomeAssistant) *haclient.Client {
+func (r *HomeAssistantAreaReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
 	baseURL := buildHomeAssistantURL(ha)
 	if r.NewHAClient != nil {
 		return r.NewHAClient(baseURL)
@@ -257,7 +257,7 @@ func (r *HomeAssistantAreaReconciler) haClientFor(ha *hav1alpha1.HomeAssistant) 
 // setCondition updates the Ready condition and status
 func (r *HomeAssistantAreaReconciler) setCondition(
 	ctx context.Context,
-	area *hav1alpha1.HomeAssistantArea,
+	area *hav1.HomeAssistantArea,
 	status metav1.ConditionStatus,
 	reason, message string,
 	requeueAfter time.Duration,
@@ -347,7 +347,7 @@ func (r *HomeAssistantAreaReconciler) createArea(
 	ctx context.Context,
 	haClient *haclient.Client,
 	token string,
-	area *hav1alpha1.HomeAssistantArea,
+	area *hav1.HomeAssistantArea,
 	floorID string,
 	labelIDs []string,
 ) (string, error) {
@@ -380,7 +380,7 @@ func (r *HomeAssistantAreaReconciler) updateArea(
 	ctx context.Context,
 	haClient *haclient.Client,
 	token string,
-	area *hav1alpha1.HomeAssistantArea,
+	area *hav1.HomeAssistantArea,
 	floorID string,
 	labelIDs []string,
 ) error {
@@ -431,7 +431,7 @@ func findAreaByID(areas []haAreaEntry, id string) *haAreaEntry {
 }
 
 func (r *HomeAssistantAreaReconciler) needsAreaUpdate(
-	area *hav1alpha1.HomeAssistantArea,
+	area *hav1.HomeAssistantArea,
 	existing *haAreaEntry,
 	floorID string,
 	labelIDs []string,
@@ -471,7 +471,7 @@ func stringSlicesEqual(a, b []string) bool {
 // SetupWithManager sets up the controller with the Manager.
 func (r *HomeAssistantAreaReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&hav1alpha1.HomeAssistantArea{}).
+		For(&hav1.HomeAssistantArea{}).
 		Named("homeassistantarea").
 		Complete(r)
 }

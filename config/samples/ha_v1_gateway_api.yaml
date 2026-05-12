@@ -10,7 +10,7 @@
 #
 # Usage:
 #   # 1. Create the gateway namespace and Gateway resource (once per cluster)
-#   kubectl apply -f ha_v1alpha1_gateway_api.yaml
+#   kubectl apply -f ha_v1_gateway_api.yaml
 #
 #   # 2. Wait for the certificate to be issued
 #   kubectl get certificate -n gateway
@@ -86,7 +86,7 @@ kind: Namespace
 metadata:
   name: homeassistant
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistant
 metadata:
   name: home
@@ -100,7 +100,7 @@ spec:
     type: ClusterIP
     port: 8123
 ---
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantConfiguration
 metadata:
   name: home-config

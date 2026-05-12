@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 )
 
 func TestEnsureAutoIncludes(t *testing.T) {
@@ -104,7 +104,7 @@ func TestEnsureAutoIncludes(t *testing.T) {
 
 func TestInjectLocation(t *testing.T) {
 	elevation := 100
-	loc := &hav1alpha1.LocationConfig{
+	loc := &hav1.LocationConfig{
 		Latitude:   "52.2297",
 		Longitude:  "21.0122",
 		Elevation:  &elevation,
@@ -210,7 +210,7 @@ func TestInjectRecorder(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
-		recorder   *hav1alpha1.RecorderConfig
+		recorder   *hav1.RecorderConfig
 		dbURL      string
 		useInclude bool
 		wantIn     []string
@@ -226,28 +226,28 @@ func TestInjectRecorder(t *testing.T) {
 		{
 			name:      "disabled recorder — input unchanged",
 			input:     "homeassistant:\n  name: Test\n",
-			recorder:  &hav1alpha1.RecorderConfig{Enabled: boolPtr(false)},
+			recorder:  &hav1.RecorderConfig{Enabled: boolPtr(false)},
 			dbURL:     "postgresql://user:pass@host/db",
 			wantNotIn: []string{"recorder:"},
 		},
 		{
 			name:     "dbURL injected into new recorder section",
 			input:    "homeassistant:\n  name: Test\n",
-			recorder: &hav1alpha1.RecorderConfig{},
+			recorder: &hav1.RecorderConfig{},
 			dbURL:    "postgresql://user:pass@host/db",
 			wantIn:   []string{"recorder:", "db_url: postgresql://user:pass@host/db"},
 		},
 		{
 			name:     "purge_keep_days injected",
 			input:    "homeassistant:\n  name: Test\n",
-			recorder: &hav1alpha1.RecorderConfig{PurgeKeepDays: int32Ptr(7)},
+			recorder: &hav1.RecorderConfig{PurgeKeepDays: int32Ptr(7)},
 			dbURL:    "postgresql://user:pass@host/db",
 			wantIn:   []string{"purge_keep_days: 7"},
 		},
 		{
 			name:      "existing recorder db_url overridden",
 			input:     "recorder:\n  db_url: sqlite://old\n",
-			recorder:  &hav1alpha1.RecorderConfig{},
+			recorder:  &hav1.RecorderConfig{},
 			dbURL:     "postgresql://user:pass@host/db",
 			wantIn:    []string{"db_url: postgresql://user:pass@host/db"},
 			wantNotIn: []string{"sqlite://old"},
@@ -255,14 +255,14 @@ func TestInjectRecorder(t *testing.T) {
 		{
 			name:     "!include tags in other sections preserved",
 			input:    "automation: !include automations.yaml\nscript: !include scripts.yaml\n",
-			recorder: &hav1alpha1.RecorderConfig{},
+			recorder: &hav1.RecorderConfig{},
 			dbURL:    "postgresql://user:pass@host/db",
 			wantIn:   []string{"!include automations.yaml", "!include scripts.yaml", "db_url:"},
 		},
 		{
 			name:      "empty dbURL and nil PurgeKeepDays — input unchanged",
 			input:     "homeassistant:\n  name: Test\n",
-			recorder:  &hav1alpha1.RecorderConfig{},
+			recorder:  &hav1.RecorderConfig{},
 			dbURL:     "",
 			wantNotIn: []string{"recorder:"},
 		},
@@ -271,7 +271,7 @@ func TestInjectRecorder(t *testing.T) {
 			// overwritten. injectRecorder should return configYAML unchanged.
 			name:     "tagged recorder scalar preserved (!include recorder.yaml)",
 			input:    "recorder: !include recorder.yaml\n",
-			recorder: &hav1alpha1.RecorderConfig{},
+			recorder: &hav1.RecorderConfig{},
 			dbURL:    "postgresql://user:pass@host/db",
 			wantIn:   []string{"recorder: !include recorder.yaml"},
 		},
@@ -280,7 +280,7 @@ func TestInjectRecorder(t *testing.T) {
 			// db_url should reference the mounted file via HA's !include tag.
 			name:       "useInclude writes !include reference instead of URL",
 			input:      "homeassistant:\n  name: Test\n",
-			recorder:   &hav1alpha1.RecorderConfig{},
+			recorder:   &hav1.RecorderConfig{},
 			dbURL:      "postgresql://user:pass@host/db",
 			useInclude: true,
 			wantIn:     []string{"db_url: !include recorder_db_url.yaml"},

@@ -34,7 +34,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -60,22 +60,22 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 		alias string,
 		triggers []runtime.RawExtension,
 		actions []runtime.RawExtension,
-	) *hav1alpha1.HomeAssistantAutomation {
-		triggerList := make([]hav1alpha1.AutomationTrigger, len(triggers))
+	) *hav1.HomeAssistantAutomation {
+		triggerList := make([]hav1.AutomationTrigger, len(triggers))
 		for i, t := range triggers {
-			triggerList[i] = hav1alpha1.AutomationTrigger{RawExtension: t}
+			triggerList[i] = hav1.AutomationTrigger{RawExtension: t}
 		}
-		actionList := make([]hav1alpha1.AutomationAction, len(actions))
+		actionList := make([]hav1.AutomationAction, len(actions))
 		for i, a := range actions {
-			actionList[i] = hav1alpha1.AutomationAction{RawExtension: a}
+			actionList[i] = hav1.AutomationAction{RawExtension: a}
 		}
-		return &hav1alpha1.HomeAssistantAutomation{
+		return &hav1.HomeAssistantAutomation{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      name,
 				Namespace: namespace,
 			},
-			Spec: hav1alpha1.HomeAssistantAutomationSpec{
-				HomeAssistantRef: hav1alpha1.HomeAssistantReference{
+			Spec: hav1.HomeAssistantAutomationSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{
 					Name: haRef,
 				},
 				Alias:    alias,
@@ -129,9 +129,9 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 		}
 		Expect(k8sClient.Create(ctx, secret)).To(Succeed())
 
-		ha := &hav1alpha1.HomeAssistant{}
+		ha := &hav1.HomeAssistant{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: namespace}, ha)).To(Succeed())
-		ha.Status.Bootstrap = &hav1alpha1.BootstrapStatus{
+		ha.Status.Bootstrap = &hav1.BootstrapStatus{
 			APITokenSecretName: haName + "-api-token",
 		}
 		Expect(k8sClient.Status().Update(ctx, ha)).To(Succeed())
@@ -174,26 +174,26 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			},
 		}
 
-		ha := &hav1alpha1.HomeAssistant{
+		ha := &hav1.HomeAssistant{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      haName,
 				Namespace: namespace,
 			},
-			Spec: hav1alpha1.HomeAssistantSpec{Version: "stable"},
+			Spec: hav1.HomeAssistantSpec{Version: "stable"},
 		}
 		Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 	})
 
 	AfterEach(func() {
 		// Cleanup automations (trigger finalizer reconcile)
-		autoList := &hav1alpha1.HomeAssistantAutomationList{}
+		autoList := &hav1.HomeAssistantAutomationList{}
 		_ = k8sClient.List(ctx, autoList)
 		for i := range autoList.Items {
 			_ = k8sClient.Delete(ctx, &autoList.Items[i])
 			_, _ = reconcileAutomation(autoList.Items[i].Name)
 		}
 		Eventually(func() int {
-			list := &hav1alpha1.HomeAssistantAutomationList{}
+			list := &hav1.HomeAssistantAutomationList{}
 			_ = k8sClient.List(ctx, list)
 			return len(list.Items)
 		}, timeout, interval).Should(Equal(0))
@@ -206,7 +206,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 		}
 
 		// Cleanup HAs
-		haList := &hav1alpha1.HomeAssistantList{}
+		haList := &hav1.HomeAssistantList{}
 		_ = k8sClient.List(ctx, haList)
 		for i := range haList.Items {
 			_ = k8sClient.Delete(ctx, &haList.Items[i])
@@ -230,7 +230,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(5 * time.Second))
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
+				updated := &hav1.HomeAssistantAutomation{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-no-ha", Namespace: namespace}, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
 				g.Expect(condition).NotTo(BeNil())
@@ -257,7 +257,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 
 			// Ready condition should NOT be True
 			Consistently(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
+				updated := &hav1.HomeAssistantAutomation{}
 				nn := types.NamespacedName{Name: "auto-no-token", Namespace: namespace}
 				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
@@ -281,7 +281,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(reconcileAutomationTwice("auto-ready")).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
+				updated := &hav1.HomeAssistantAutomation{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-ready", Namespace: namespace}, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
 				g.Expect(condition).NotTo(BeNil())
@@ -297,7 +297,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(reconcileAutomationTwice("auto-hash")).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
+				updated := &hav1.HomeAssistantAutomation{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-hash", Namespace: namespace}, updated)).To(Succeed())
 				g.Expect(updated.Status.AutomationHash).NotTo(BeEmpty())
 			}, timeout, interval).Should(Succeed())
@@ -310,7 +310,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(reconcileAutomationTwice("auto-obsgen")).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
+				updated := &hav1.HomeAssistantAutomation{}
 				g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-obsgen", Namespace: namespace}, updated)).To(Succeed())
 				g.Expect(updated.Status.ObservedGeneration).To(Equal(updated.Generation))
 			}, timeout, interval).Should(Succeed())
@@ -324,7 +324,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 
 			var firstHash string
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
+				updated := &hav1.HomeAssistantAutomation{}
 				nn := types.NamespacedName{Name: "auto-stable-hash", Namespace: namespace}
 				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				firstHash = updated.Status.AutomationHash
@@ -334,7 +334,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(reconcileAutomationTwice("auto-stable-hash")).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
+				updated := &hav1.HomeAssistantAutomation{}
 				nn := types.NamespacedName{Name: "auto-stable-hash", Namespace: namespace}
 				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				g.Expect(updated.Status.AutomationHash).To(Equal(firstHash))
@@ -349,7 +349,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 
 			var initialHash string
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
+				updated := &hav1.HomeAssistantAutomation{}
 				nn := types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}
 				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				initialHash = updated.Status.AutomationHash
@@ -358,12 +358,12 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 
 			// Update triggers
 			Eventually(func() error {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
+				updated := &hav1.HomeAssistantAutomation{}
 				nn := types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}
 				if err := k8sClient.Get(ctx, nn, updated); err != nil {
 					return err
 				}
-				updated.Spec.Triggers = []hav1alpha1.AutomationTrigger{
+				updated.Spec.Triggers = []hav1.AutomationTrigger{
 					{RawExtension: rawExt(map[string]interface{}{"platform": "time", "at": "06:00:00"})},
 				}
 				return k8sClient.Update(ctx, updated)
@@ -372,7 +372,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(reconcileAutomationTwice("auto-hash-change")).To(Succeed())
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
+				updated := &hav1.HomeAssistantAutomation{}
 				nn := types.NamespacedName{Name: "auto-hash-change", Namespace: namespace}
 				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				g.Expect(updated.Status.AutomationHash).NotTo(Equal(initialHash))
@@ -395,7 +395,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(reconcileAutomationTwice("auto-del-api")).To(Succeed())
 
 			// Delete the CR
-			toDelete := &hav1alpha1.HomeAssistantAutomation{}
+			toDelete := &hav1.HomeAssistantAutomation{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "auto-del-api", Namespace: namespace}, toDelete)).To(Succeed())
 			Expect(k8sClient.Delete(ctx, toDelete)).To(Succeed())
 
@@ -434,7 +434,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 			Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
 			Eventually(func(g Gomega) {
-				updated := &hav1alpha1.HomeAssistantAutomation{}
+				updated := &hav1.HomeAssistantAutomation{}
 				nn := types.NamespacedName{Name: "auto-put-fail", Namespace: namespace}
 				g.Expect(k8sClient.Get(ctx, nn, updated)).To(Succeed())
 				condition := meta.FindStatusCondition(updated.Status.Conditions, "Ready")
@@ -457,7 +457,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 					}),
 				},
 			)
-			auto.Spec.Conditions = []hav1alpha1.AutomationCondition{
+			auto.Spec.Conditions = []hav1.AutomationCondition{
 				{RawExtension: rawExt(map[string]interface{}{
 					"condition": "state",
 					"entity_id": "input_boolean.guest_mode",
@@ -497,7 +497,7 @@ var _ = Describe("HomeAssistantAutomation Controller", func() {
 				[]runtime.RawExtension{defaultTrigger()}, []runtime.RawExtension{defaultAction()})
 			auto.Spec.MaxExceeded = "error"
 			auto.Spec.InitialState = ptr.To(true)
-			auto.Spec.Mode = hav1alpha1.AutomationModeParallel
+			auto.Spec.Mode = hav1.AutomationModeParallel
 			max := int32(5)
 			auto.Spec.Max = &max
 

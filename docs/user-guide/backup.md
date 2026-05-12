@@ -11,7 +11,7 @@ Backup configuration requires a bootstrap API token. Enable `spec.bootstrap` wit
 ## Example
 
 ```yaml
-apiVersion: ha.homeassistant.io/v1alpha1
+apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistant
 metadata:
   name: home

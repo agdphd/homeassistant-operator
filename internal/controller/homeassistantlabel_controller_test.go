@@ -30,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/haclient"
 )
 
@@ -45,7 +45,7 @@ var _ = Describe("HomeAssistantLabel Controller", func() {
 	)
 
 	cleanupHA := func() {
-		ha := &hav1alpha1.HomeAssistant{}
+		ha := &hav1.HomeAssistant{}
 		if err := k8sClient.Get(ctx, types.NamespacedName{Name: haName, Namespace: ns}, ha); err == nil {
 			_ = k8sClient.Delete(ctx, ha)
 		}
@@ -56,16 +56,16 @@ var _ = Describe("HomeAssistantLabel Controller", func() {
 	}
 
 	setupHA := func() {
-		ha := &hav1alpha1.HomeAssistant{
+		ha := &hav1.HomeAssistant{
 			ObjectMeta: metav1.ObjectMeta{Name: haName, Namespace: ns},
-			Spec: hav1alpha1.HomeAssistantSpec{
+			Spec: hav1.HomeAssistantSpec{
 				Version: "2026.3",
 			},
 		}
 		Expect(k8sClient.Create(ctx, ha)).To(Succeed())
 
 		ha.Status.Phase = "Running"
-		ha.Status.Bootstrap = &hav1alpha1.BootstrapStatus{
+		ha.Status.Bootstrap = &hav1.BootstrapStatus{
 			APITokenSecretName: haName + "-api-token",
 		}
 		Expect(k8sClient.Status().Update(ctx, ha)).To(Succeed())
@@ -152,19 +152,19 @@ var _ = Describe("HomeAssistantLabel Controller", func() {
 
 	Context("When HomeAssistant is not found", func() {
 		It("should set HANotReady condition", func() {
-			label := &hav1alpha1.HomeAssistantLabel{
+			label := &hav1.HomeAssistantLabel{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "label-no-ha",
 					Namespace: ns,
 				},
-				Spec: hav1alpha1.HomeAssistantLabelSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: "nonexistent"},
+				Spec: hav1.HomeAssistantLabelSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: "nonexistent"},
 					Name:             "Test Label",
 				},
 			}
 			Expect(k8sClient.Create(ctx, label)).To(Succeed())
 			defer func() {
-				f := &hav1alpha1.HomeAssistantLabel{}
+				f := &hav1.HomeAssistantLabel{}
 				_ = k8sClient.Get(ctx, types.NamespacedName{Name: label.Name, Namespace: ns}, f)
 				f.Finalizers = nil
 				_ = k8sClient.Update(ctx, f)
@@ -189,7 +189,7 @@ var _ = Describe("HomeAssistantLabel Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 
-			updated := &hav1alpha1.HomeAssistantLabel{}
+			updated := &hav1.HomeAssistantLabel{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: label.Name, Namespace: ns}, updated)).To(Succeed())
 			Expect(updated.Status.Conditions).To(HaveLen(1))
 			Expect(updated.Status.Conditions[0].Reason).To(Equal("HANotReady"))
@@ -201,13 +201,13 @@ var _ = Describe("HomeAssistantLabel Controller", func() {
 			setupHA()
 			setupMockWS()
 
-			label := &hav1alpha1.HomeAssistantLabel{
+			label := &hav1.HomeAssistantLabel{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "outdoor-label",
 					Namespace: ns,
 				},
-				Spec: hav1alpha1.HomeAssistantLabelSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantLabelSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Name:             "Outdoor",
 					Icon:             "mdi:tree",
 					Color:            "green",
@@ -215,7 +215,7 @@ var _ = Describe("HomeAssistantLabel Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, label)).To(Succeed())
 			defer func() {
-				f := &hav1alpha1.HomeAssistantLabel{}
+				f := &hav1.HomeAssistantLabel{}
 				_ = k8sClient.Get(ctx, types.NamespacedName{Name: label.Name, Namespace: ns}, f)
 				f.Finalizers = nil
 				_ = k8sClient.Update(ctx, f)
@@ -243,7 +243,7 @@ var _ = Describe("HomeAssistantLabel Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			updated := &hav1alpha1.HomeAssistantLabel{}
+			updated := &hav1.HomeAssistantLabel{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: label.Name, Namespace: ns}, updated)).To(Succeed())
 			Expect(updated.Status.LabelID).To(Equal("new-label-id"))
 			Expect(updated.Status.Conditions).To(HaveLen(1))
@@ -261,19 +261,19 @@ var _ = Describe("HomeAssistantLabel Controller", func() {
 			}
 			setupMockWS()
 
-			label := &hav1alpha1.HomeAssistantLabel{
+			label := &hav1.HomeAssistantLabel{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "indoor-label",
 					Namespace: ns,
 				},
-				Spec: hav1alpha1.HomeAssistantLabelSpec{
-					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: haName},
+				Spec: hav1.HomeAssistantLabelSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
 					Name:             "Indoor",
 				},
 			}
 			Expect(k8sClient.Create(ctx, label)).To(Succeed())
 			defer func() {
-				f := &hav1alpha1.HomeAssistantLabel{}
+				f := &hav1.HomeAssistantLabel{}
 				_ = k8sClient.Get(ctx, types.NamespacedName{Name: label.Name, Namespace: ns}, f)
 				f.Finalizers = nil
 				_ = k8sClient.Update(ctx, f)
@@ -300,7 +300,7 @@ var _ = Describe("HomeAssistantLabel Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			updated := &hav1alpha1.HomeAssistantLabel{}
+			updated := &hav1.HomeAssistantLabel{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: label.Name, Namespace: ns}, updated)).To(Succeed())
 			Expect(updated.Status.LabelID).To(Equal("existing-label-id"))
 		})
