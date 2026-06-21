@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dependency upgrades** — Go 1.26.4 (fixes CVEs GO-2026-5037/5038/5039), `controller-runtime` v0.24.1, `k8s.io/*` v0.36.2, `ginkgo/v2` v2.31.0, `gomega` v1.42.0, `golang.org/x/net` v0.55.0 (fixes GO-2026-5026), `actions/checkout` v7.
 
-## [v1.0.0-rc.0] - 2026-05-11
+## [v1.0.0] - 2026-06-11
 
 ### Breaking Changes
 
