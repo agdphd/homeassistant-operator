@@ -5,6 +5,9 @@ on:
     branches: [main, v*]
   pull_request:
 
+permissions:
+  contents: read
+
 env:
   K3D_VERSION: v5.7.4
   HA_VERSION: stable
@@ -16,10 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: go.mod
 
@@ -30,7 +33,7 @@ jobs:
         run: docker save operator:e2e -o operator-e2e.tar
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: operator-image
           path: operator-e2e.tar
@@ -46,15 +49,15 @@ jobs:
 
     steps:
       - name: Clone the code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version-file: go.mod
 
       - name: Cache Ginkgo CLI
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: bin/ginkgo*
           key: ginkgo-${{ hashFiles('go.mod', 'Makefile') }}
@@ -69,7 +72,7 @@ jobs:
         run: k3d version
 
       - name: Download operator image artifact
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: operator-image
 
