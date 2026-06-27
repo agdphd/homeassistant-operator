@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"os"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -1609,6 +1610,94 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}, sts)).To(Succeed())
 			Expect(sts.Spec.Template.Spec.HostNetwork).To(BeFalse())
 			Expect(sts.Spec.Template.Spec.DNSPolicy).To(Equal(corev1.DNSClusterFirst))
+		})
+	})
+
+	Context("Unban init-container injection", func() {
+		var reconciler *HomeAssistantReconciler
+
+		BeforeEach(func() {
+			reconciler = &HomeAssistantReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+		})
+
+		It("should include unban-operator-ip init-container when POD_IP is set", func() {
+			Expect(os.Setenv("POD_IP", "10.42.1.99")).To(Succeed())
+			DeferCleanup(func() { Expect(os.Unsetenv("POD_IP")).To(Succeed()) })
+
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: "unban-test", Namespace: "default"},
+				Spec:       hav1.HomeAssistantSpec{Version: "2024.1.0"},
+			}
+			containers := reconciler.buildInitContainers(ha)
+
+			names := make([]string, len(containers))
+			for i, c := range containers {
+				names[i] = c.Name
+			}
+			Expect(names).To(ContainElement("unban-operator-ip"))
+			Expect(names).To(ContainElement("config-init"))
+		})
+
+		It("should NOT include unban-operator-ip init-container when POD_IP is empty", func() {
+			Expect(os.Unsetenv("POD_IP")).To(Succeed())
+
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: "unban-test-no-ip", Namespace: "default"},
+				Spec:       hav1.HomeAssistantSpec{Version: "2024.1.0"},
+			}
+			containers := reconciler.buildInitContainers(ha)
+
+			for _, c := range containers {
+				Expect(c.Name).NotTo(Equal("unban-operator-ip"))
+			}
+		})
+
+		It("should use the HA image for unban init-container", func() {
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: "unban-image-test", Namespace: "default"},
+				Spec:       hav1.HomeAssistantSpec{Version: "2024.12.0"},
+			}
+			c := reconciler.buildUnbanInitContainer(ha)
+
+			Expect(c.Image).To(ContainSubstring("home-assistant"))
+			Expect(c.Image).To(ContainSubstring("2024.12.0"))
+		})
+
+		It("should read operator IP from ConfigMap env var (not hardcoded in script)", func() {
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: "unban-cm-test", Namespace: "default"},
+				Spec:       hav1.HomeAssistantSpec{Version: "2024.1.0"},
+			}
+			c := reconciler.buildUnbanInitContainer(ha)
+
+			Expect(c.Command).To(ContainElement("python3"))
+			script := c.Command[2]
+			// Script must NOT contain any hardcoded IP; it reads OPERATOR_IP from env.
+			Expect(script).To(ContainSubstring("OPERATOR_IP"))
+			Expect(script).NotTo(MatchRegexp(`\d+\.\d+\.\d+\.\d+`))
+
+			// Env var must source from the operator-IP ConfigMap.
+			Expect(c.Env).To(HaveLen(1))
+			Expect(c.Env[0].Name).To(Equal("OPERATOR_IP"))
+			Expect(c.Env[0].ValueFrom).NotTo(BeNil())
+			Expect(c.Env[0].ValueFrom.ConfigMapKeyRef).NotTo(BeNil())
+			Expect(c.Env[0].ValueFrom.ConfigMapKeyRef.Name).To(Equal(ha.Name + operatorIPConfigMapSuffix))
+			Expect(c.Env[0].ValueFrom.ConfigMapKeyRef.Key).To(Equal(operatorIPConfigMapKey))
+		})
+
+		It("should mount the config volume in unban init-container", func() {
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: "unban-vol-test", Namespace: "default"},
+				Spec:       hav1.HomeAssistantSpec{Version: "2024.1.0"},
+			}
+			c := reconciler.buildUnbanInitContainer(ha)
+
+			Expect(c.VolumeMounts).To(HaveLen(1))
+			Expect(c.VolumeMounts[0].Name).To(Equal("config"))
+			Expect(c.VolumeMounts[0].MountPath).To(Equal("/config"))
 		})
 	})
 })

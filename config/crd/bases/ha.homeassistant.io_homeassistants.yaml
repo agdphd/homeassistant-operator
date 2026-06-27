@@ -408,6 +408,19 @@ spec:
           status:
             description: HomeAssistantStatus defines the observed state of HomeAssistant.
             properties:
+              banRestartWindowCount:
+                description: |-
+                  BanRestartWindowCount is the number of ban-recovery pod restarts within the
+                  current sliding window. When it reaches banRestartMaxCount the operator stops
+                  restarting and sets condition BanRecoveryFailed=True.
+                format: int32
+                type: integer
+              banRestartWindowStart:
+                description: |-
+                  BanRestartWindowStart is the start of the current ban-recovery sliding window.
+                  Nil means no window is active (no ban seen or window has expired).
+                format: date-time
+                type: string
               bootstrap:
                 description: BootstrapStatus contains the status of the automatic
                   bootstrap process
@@ -505,8 +518,8 @@ spec:
                   type: object
                 type: array
               lastSelfUnban:
-                description: LastSelfUnban is the timestamp of the most recent self-unban
-                  operation.
+                description: LastSelfUnban is the timestamp of the most recent ban-recovery
+                  pod restart.
                 format: date-time
                 type: string
               observedGeneration:
@@ -529,8 +542,8 @@ spec:
                 type: boolean
               selfUnbanCount:
                 description: |-
-                  SelfUnbanCount is the number of times the operator has removed its own IP
-                  from HA's ip_bans.yaml and restarted the pod to clear in-memory bans.
+                  SelfUnbanCount is the total number of ban-recovery pod restarts. Kept for
+                  backwards compatibility; prefer BanRestartWindowCount for limit enforcement.
                 format: int32
                 type: integer
               url:

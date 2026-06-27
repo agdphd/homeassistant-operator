@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -33,7 +34,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -57,26 +57,42 @@ const (
 	defaultInitImage      = "busybox"
 	defaultInitTag        = "1.36"
 
+	// operatorIPConfigMapSuffix is appended to the HA name to form the ConfigMap
+	// that holds the operator's current pod IP for the unban init-container.
+	// Using a ConfigMap (instead of embedding the IP directly in the pod template)
+	// prevents StatefulSet rollouts every time the operator pod restarts with a new IP.
+	operatorIPConfigMapSuffix = "-operator-ip"
+	operatorIPConfigMapKey    = "ip"
+
 	// Labels
 	labelAppName      = "app.kubernetes.io/name"
 	labelAppInstance  = "app.kubernetes.io/instance"
 	labelAppManagedBy = "app.kubernetes.io/managed-by"
 
 	// Condition types
-	conditionTypeReady = "Ready"
+	conditionTypeReady       = "Ready"
+	conditionTypeBanRecovery = "BanRecoveryFailed"
 
-	// Self-unban limits
-	selfUnbanMaxCount    = 5
+	// Ban-recovery sliding window: at most banRestartMaxCount pod restarts within
+	// banRestartWindow before the operator stops retrying and requires manual action.
+	// 3 restarts × ~60 s HA startup ≈ 3 min of automated recovery per 30-min window.
+	banRestartMaxCount = 3
+	banRestartWindow   = 30 * time.Minute
+
+	// selfUnbanCooldown is the minimum wait between consecutive ban-recovery restarts.
 	selfUnbanCooldown    = 5 * time.Minute
 	selfUnbanRequeueWait = 2 * time.Minute
+
+	// Condition reasons for ban-recovery
+	reasonBanRecoveryLimitExceeded = "RestartLimitExceeded"
+	reasonBanRecoveryInProgress    = "RecoveryInProgress"
 )
 
 // HomeAssistantReconciler reconciles a HomeAssistant object
 type HomeAssistantReconciler struct {
 	client.Client
-	Scheme     *runtime.Scheme
-	Recorder   events.EventRecorder
-	RestConfig *rest.Config
+	Scheme   *runtime.Scheme
+	Recorder events.EventRecorder
 
 	// NewHAClient overrides the default haclient constructor (for testing)
 	NewHAClient func(baseURL string) *haclient.Client
@@ -94,11 +110,6 @@ type HomeAssistantReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;delete
-// +kubebuilder:rbac:groups=core,resources=pods/exec,verbs=create
-// NOTE: pods/exec is granted cluster-wide because Kubebuilder generates a
-// single ClusterRole. Users with strict security requirements should manually
-// replace the generated ClusterRoleBinding with a RoleBinding scoped to the
-// Home Assistant namespace so exec is only permitted on HA pods.
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update
 
@@ -163,6 +174,13 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return r.updateStatusFailed(ctx, ha, err)
 	}
 
+	// Reconcile operator-IP ConfigMap (must run before StatefulSet so the
+	// ConfigMap exists when the init-container spec references it).
+	if err := r.reconcileOperatorIPConfigMap(ctx, ha); err != nil {
+		log.Error(err, "Failed to reconcile operator-IP ConfigMap")
+		return r.updateStatusFailed(ctx, ha, err)
+	}
+
 	// Reconcile StatefulSet
 	if err := r.reconcileStatefulSet(ctx, ha); err != nil {
 		log.Error(err, "Failed to reconcile StatefulSet")
@@ -200,6 +218,59 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Update status based on StatefulSet status
 	return r.updateStatusFromStatefulSet(ctx, ha)
+}
+
+// reconcileOperatorIPConfigMap keeps a ConfigMap <ha-name>-operator-ip up to date
+// with the operator pod's current IP. The unban init-container reads the IP from
+// this ConfigMap via an env var — decoupling the StatefulSet template from the
+// operator's pod IP so that operator restarts don't trigger HA rolling restarts.
+// When POD_IP is not set (e.g. in local dev), this is a no-op.
+func (r *HomeAssistantReconciler) reconcileOperatorIPConfigMap(ctx context.Context, ha *hav1.HomeAssistant) error {
+	podIP := os.Getenv("POD_IP")
+	if podIP == "" {
+		return nil
+	}
+
+	log := logf.FromContext(ctx)
+	cmName := ha.Name + operatorIPConfigMapSuffix
+
+	desired := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cmName,
+			Namespace: ha.Namespace,
+			Labels: map[string]string{
+				labelAppName:      "homeassistant",
+				labelAppInstance:  ha.Name,
+				labelAppManagedBy: "homeassistant-operator",
+			},
+		},
+		Data: map[string]string{
+			operatorIPConfigMapKey: podIP,
+		},
+	}
+	if err := controllerutil.SetControllerReference(ha, desired, r.Scheme); err != nil {
+		return fmt.Errorf("set owner reference on operator-IP ConfigMap: %w", err)
+	}
+
+	existing := &corev1.ConfigMap{}
+	err := r.Get(ctx, types.NamespacedName{Name: cmName, Namespace: ha.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		log.Info("Creating operator-IP ConfigMap", "configmap", cmName, "ip", podIP)
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return fmt.Errorf("get operator-IP ConfigMap: %w", err)
+	}
+
+	if existing.Data[operatorIPConfigMapKey] != podIP {
+		log.Info("Updating operator-IP ConfigMap",
+			"configmap", cmName,
+			"oldIP", existing.Data[operatorIPConfigMapKey],
+			"newIP", podIP)
+		existing.Data = desired.Data
+		return r.Update(ctx, existing)
+	}
+	return nil
 }
 
 // reconcilePVC ensures the PVC exists for Home Assistant data
@@ -1193,8 +1264,7 @@ func (r *HomeAssistantReconciler) findHomeAssistantForConfigMap(
 }
 
 // buildInitContainers returns the init containers for the Home Assistant pod.
-// The config-init container pre-creates required YAML files on the PVC so that
-// HA does not enter recovery mode on first start due to missing !include targets.
+// Order matters: config-init runs first, then unban-operator-ip (if POD_IP is set).
 func (r *HomeAssistantReconciler) buildInitContainers(ha *hav1.HomeAssistant) []corev1.Container {
 	repo := defaultInitRepository
 	img := defaultInitImage
@@ -1215,7 +1285,7 @@ func (r *HomeAssistantReconciler) buildInitContainers(ha *hav1.HomeAssistant) []
 
 	fullImage := fmt.Sprintf("%s/%s:%s", repo, img, tag)
 
-	return []corev1.Container{
+	containers := []corev1.Container{
 		{
 			Name:            "config-init",
 			Image:           fullImage,
@@ -1232,6 +1302,83 @@ func (r *HomeAssistantReconciler) buildInitContainers(ha *hav1.HomeAssistant) []
 					Name:      "config",
 					MountPath: "/config",
 				},
+			},
+		},
+	}
+
+	if os.Getenv("POD_IP") != "" {
+		containers = append(containers, r.buildUnbanInitContainer(ha))
+	}
+
+	return containers
+}
+
+// buildUnbanInitContainer returns an init-container that removes the operator's IP
+// from /config/ip_bans.yaml before HA starts. It uses the same HA image (already
+// cached on the node) so no additional image pull is required.
+// The script is idempotent: if the file is absent or the IP is not listed, it exits 0.
+//
+// The IP is injected at runtime via the OPERATOR_IP env var (sourced from the
+// <ha-name>-operator-ip ConfigMap) rather than being embedded in the pod template.
+// This keeps the StatefulSet spec stable across operator pod restarts so that a new
+// operator IP triggers only a ConfigMap update, not an HA rolling restart.
+func (r *HomeAssistantReconciler) buildUnbanInitContainer(ha *hav1.HomeAssistant) corev1.Container {
+	image := defaultImage
+	if ha.Spec.Image != "" {
+		image = ha.Spec.Image
+	}
+	version := defaultVersion
+	if ha.Spec.Version != "" {
+		version = ha.Spec.Version
+	}
+	haImage := fmt.Sprintf("%s:%s", image, version)
+
+	// OPERATOR_IP is resolved at pod-start time from the ConfigMap, so the
+	// StatefulSet template is stable regardless of operator IP changes.
+	script := `
+import yaml, os, sys
+ip = os.environ.get('OPERATOR_IP', '')
+if not ip:
+    sys.exit(0)
+path = '/config/ip_bans.yaml'
+if not os.path.exists(path):
+    sys.exit(0)
+with open(path) as f:
+    content = f.read()
+if not content.strip():
+    sys.exit(0)
+d = yaml.safe_load(content) or {}
+if ip not in d:
+    sys.exit(0)
+del d[ip]
+with open(path, 'w') as f:
+    yaml.dump(d, f, default_flow_style=False)
+print('removed operator IP from ip_bans.yaml')
+`
+
+	return corev1.Container{
+		Name:            "unban-operator-ip",
+		Image:           haImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"python3", "-c", script},
+		Env: []corev1.EnvVar{
+			{
+				Name: "OPERATOR_IP",
+				ValueFrom: &corev1.EnvVarSource{
+					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: ha.Name + operatorIPConfigMapSuffix,
+						},
+						Key:      operatorIPConfigMapKey,
+						Optional: func() *bool { v := true; return &v }(), // pod starts even if CM absent
+					},
+				},
+			},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "config",
+				MountPath: "/config",
 			},
 		},
 	}
