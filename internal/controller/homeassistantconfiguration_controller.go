@@ -132,6 +132,7 @@ type HomeAssistantConfigurationReconciler struct {
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantconfigurations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantconfigurations/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 
@@ -995,6 +996,11 @@ func (r *HomeAssistantConfigurationReconciler) reconcileRecorderDBSecret(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
 			Namespace: config.Namespace,
+			Labels: map[string]string{
+				labelAppName:      "homeassistant",
+				labelAppInstance:  config.Spec.HomeAssistantRef.Name,
+				labelAppManagedBy: "homeassistant-operator",
+			},
 		},
 		Data: map[string][]byte{
 			"recorder_db_url.yaml": []byte(dbURL),

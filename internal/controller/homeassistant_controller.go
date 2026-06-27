@@ -100,7 +100,7 @@ type HomeAssistantReconciler struct {
 // replace the generated ClusterRoleBinding with a RoleBinding scoped to the
 // Home Assistant namespace so exec is only permitted on HA pods.
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
-// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
