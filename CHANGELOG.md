@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Helm chart: `watchNamespaces`** — new `values.yaml` field (default `[]`) restricts the operator to watching only the listed namespaces. When set, generates per-namespace `RoleBinding` objects instead of a cluster-wide `ClusterRoleBinding`, reducing the operator's blast radius to only the namespaces it needs. Set `WATCH_NAMESPACES` env var is injected automatically. Backwards compatible — empty list (default) preserves the existing `ClusterRoleBinding` behaviour.
+
 ## [v1.0.1] - 2026-06-21
 
 ### Changed

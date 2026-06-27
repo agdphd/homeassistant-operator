@@ -1,0 +1,23 @@
+# RoleBinding for namespace-scoped operator deployment.
+# Create one copy of this file per watched namespace, replacing the namespace field.
+# When using this approach, remove or disable role_binding.yaml (ClusterRoleBinding).
+#
+# Usage (Helm is preferred — use watchNamespaces: [homeassistant, homeassistant-dev]):
+#   kubectl apply -f this-file -n homeassistant
+#   kubectl apply -f this-file -n homeassistant-dev
+#
+# Set WATCH_NAMESPACES=homeassistant,homeassistant-dev on the operator Deployment.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: homeassistant-operator-manager-rolebinding
+  namespace: homeassistant  # change to the target watched namespace
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: homeassistant-operator-manager-role
+subjects:
+- kind: ServiceAccount
+  name: homeassistant-operator-controller-manager
+  namespace: homeassistant-operator-system

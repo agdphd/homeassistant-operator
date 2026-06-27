@@ -21,6 +21,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -30,6 +31,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -94,6 +96,22 @@ func main() {
 		"version", version.Version,
 		"commit", version.GitCommit,
 	)
+
+	// WATCH_NAMESPACES: comma-separated list of namespaces to watch.
+	// When empty, operator watches all namespaces (requires ClusterRoleBinding).
+	// When set, operator watches only listed namespaces (RoleBindings per namespace sufficient).
+	var defaultNamespaces map[string]cache.Config
+	if watchNS := os.Getenv("WATCH_NAMESPACES"); watchNS != "" {
+		defaultNamespaces = make(map[string]cache.Config)
+		for _, ns := range strings.Split(watchNS, ",") {
+			if ns = strings.TrimSpace(ns); ns != "" {
+				defaultNamespaces[ns] = cache.Config{}
+			}
+		}
+		setupLog.Info("watching specific namespaces", "namespaces", watchNS)
+	} else {
+		setupLog.Info("watching all namespaces (set WATCH_NAMESPACES to restrict)")
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -191,6 +209,7 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "a26346d9.homeassistant.io",
+		Cache:                  cache.Options{DefaultNamespaces: defaultNamespaces},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly

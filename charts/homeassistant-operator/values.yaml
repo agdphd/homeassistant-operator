@@ -72,3 +72,14 @@ topologySpreadConstraints: []
 #     labelSelector:
 #       matchLabels:
 #         app.kubernetes.io/name: homeassistant-operator
+
+# watchNamespaces: namespaces the operator will watch for HomeAssistant CRs.
+# When empty, operator watches ALL namespaces (ClusterRoleBinding is used).
+# When set, operator watches only listed namespaces (per-namespace RoleBindings are created,
+# ClusterRoleBinding is NOT created — more secure, least-privilege).
+# The operator's own namespace (Release.Namespace) does NOT need to be listed here.
+# Example:
+# watchNamespaces:
+#   - homeassistant
+#   - homeassistant-dev
+watchNamespaces: []

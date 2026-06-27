@@ -1,7 +1,11 @@
+{{- if empty .Values.watchNamespaces }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: {{ include "homeassistant-operator.fullname" . }}-manager-rolebinding
+  annotations:
+    homeassistant-operator.io/deprecated: "true"
+    homeassistant-operator.io/deprecation-message: "ClusterRoleBinding will be removed in v2.0.0. Set watchNamespaces in values.yaml to migrate to namespace-scoped RoleBindings."
   labels:
     {{- include "homeassistant-operator.labels" . | nindent 4 }}
 roleRef:
@@ -12,3 +16,4 @@ subjects:
 - kind: ServiceAccount
   name: {{ include "homeassistant-operator.serviceAccountName" . }}
   namespace: {{ .Release.Namespace }}
+{{- end }}
