@@ -842,11 +842,29 @@ var _ = Describe("Bootstrap Controller", func() {
 		})
 
 		It("should restart pod and start window on first ban", func() {
-			// No pod exists, so Delete returns NotFound — that's fine.
+			By("Creating the HA pod so the deletion path is exercised")
+			haPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-0",
+					Namespace: ha.Namespace,
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "home-assistant", Image: "homeassistant/home-assistant:latest"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, haPod)).To(Succeed())
+
 			result, err := reconciler.handleSelfBan(ctx, ha, banErr)
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result.RequeueAfter).To(Equal(selfUnbanRequeueWait))
+
+			By("Verifying the pod was deleted")
+			deleted := &corev1.Pod{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ha.Name + "-0", Namespace: ha.Namespace}, deleted)).
+				To(MatchError(ContainSubstring("not found")))
 
 			updated := &hav1.HomeAssistant{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, updated)).To(Succeed())

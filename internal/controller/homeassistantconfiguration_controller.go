@@ -1022,10 +1022,13 @@ func (r *HomeAssistantConfigurationReconciler) reconcileRecorderDBSecret(
 		return fmt.Errorf("secret %s/%s exists but is not owned by this "+
 			"HomeAssistantConfiguration; refusing to overwrite", config.Namespace, secretName)
 	}
-	if string(existing.Data["recorder_db_url.yaml"]) == dbURL {
+	dataMatch := string(existing.Data["recorder_db_url.yaml"]) == dbURL
+	labelsMatch := reflect.DeepEqual(existing.Labels, desired.Labels)
+	if dataMatch && labelsMatch {
 		return nil
 	}
 	existing.Data = desired.Data
+	existing.Labels = desired.Labels
 	return r.Update(ctx, existing)
 }
 

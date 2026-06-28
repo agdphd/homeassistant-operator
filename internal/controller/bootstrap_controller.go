@@ -783,7 +783,20 @@ func (r *HomeAssistantReconciler) handleSelfBan(
 		ha.Status.BanRestartWindowCount = 0
 	}
 
-	// Enforce sliding window limit.
+	// Enforce cooldown between consecutive restarts first so a 403 arriving while
+	// HA is still starting after the previous restart does not prematurely count
+	// as a limit-exceeded condition.
+	if ha.Status.LastSelfUnban != nil {
+		elapsed := time.Since(ha.Status.LastSelfUnban.Time)
+		if elapsed < selfUnbanCooldown {
+			log.Info("Ban-recovery cooldown active, waiting",
+				"elapsed", elapsed.Round(time.Second),
+				"cooldown", selfUnbanCooldown)
+			return ctrl.Result{RequeueAfter: selfUnbanCooldown - elapsed}, nil
+		}
+	}
+
+	// Enforce sliding window limit only after cooldown has elapsed.
 	if ha.Status.BanRestartWindowCount >= banRestartMaxCount {
 		log.Error(banErr, "Ban-recovery restart limit reached — manual intervention required",
 			"count", ha.Status.BanRestartWindowCount,
@@ -808,17 +821,6 @@ func (r *HomeAssistantReconciler) handleSelfBan(
 			"Ban-recovery restart limit (%d in %s) reached; manual intervention required",
 			banRestartMaxCount, banRestartWindow)
 		return ctrl.Result{RequeueAfter: banRestartWindow}, nil
-	}
-
-	// Enforce cooldown between consecutive restarts.
-	if ha.Status.LastSelfUnban != nil {
-		elapsed := time.Since(ha.Status.LastSelfUnban.Time)
-		if elapsed < selfUnbanCooldown {
-			log.Info("Ban-recovery cooldown active, waiting",
-				"elapsed", elapsed.Round(time.Second),
-				"cooldown", selfUnbanCooldown)
-			return ctrl.Result{RequeueAfter: selfUnbanCooldown - elapsed}, nil
-		}
 	}
 
 	// Persist the restart in status BEFORE deleting the pod so that a failed
@@ -876,9 +878,11 @@ func (r *HomeAssistantReconciler) handleSelfBan(
 	return ctrl.Result{RequeueAfter: selfUnbanRequeueWait}, nil
 }
 
-// resetBanRecovery clears ban-recovery state after a successful HA connection.
+// resetBanRecovery clears all ban-recovery state after a successful HA connection
+// so the next ban incident starts with a clean slate and no lingering cooldown.
 func (r *HomeAssistantReconciler) resetBanRecovery(ctx context.Context, ha *hav1.HomeAssistant) {
 	if ha.Status.BanRestartWindowCount == 0 &&
+		ha.Status.LastSelfUnban == nil &&
 		meta.FindStatusCondition(ha.Status.Conditions, conditionTypeBanRecovery) == nil {
 		return // nothing to reset
 	}
@@ -887,6 +891,7 @@ func (r *HomeAssistantReconciler) resetBanRecovery(ctx context.Context, ha *hav1
 	patch := client.MergeFrom(ha.DeepCopy())
 	ha.Status.BanRestartWindowStart = nil
 	ha.Status.BanRestartWindowCount = 0
+	ha.Status.LastSelfUnban = nil
 	meta.RemoveStatusCondition(&ha.Status.Conditions, conditionTypeBanRecovery)
 	if err := r.Status().Patch(ctx, ha, patch); err != nil {
 		log.Error(err, "Failed to reset ban-recovery status")
