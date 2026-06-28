@@ -4,7 +4,7 @@ This file tracks all deprecated features, their deprecation version, planned rem
 
 | Feature | Deprecated since | Planned removal | Reason | Migration |
 |---------|-----------------|-----------------|--------|-----------|
-| [ClusterRoleBinding mode](#clusterrolebinding-mode-watchnamespaces-empty) | v1.1.0 | v2.0.0 | Violates least-privilege — operator gains access to all namespaces in the cluster | Set `watchNamespaces` in Helm values |
+| [ClusterRoleBinding mode](#clusterrolebinding-mode-watchnamespaces) | v1.1.0 | v2.0.0 | Violates least-privilege — operator gains access to all namespaces in the cluster | Set `watchNamespaces` in Helm values |
 
 ---
 

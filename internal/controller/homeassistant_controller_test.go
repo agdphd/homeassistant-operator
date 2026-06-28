@@ -1624,8 +1624,15 @@ var _ = Describe("HomeAssistant Controller", func() {
 		})
 
 		It("should include unban-operator-ip init-container when POD_IP is set", func() {
+			prev, hadPrev := os.LookupEnv("POD_IP")
 			Expect(os.Setenv("POD_IP", "10.42.1.99")).To(Succeed())
-			DeferCleanup(func() { Expect(os.Unsetenv("POD_IP")).To(Succeed()) })
+			DeferCleanup(func() {
+				if hadPrev {
+					Expect(os.Setenv("POD_IP", prev)).To(Succeed())
+				} else {
+					Expect(os.Unsetenv("POD_IP")).To(Succeed())
+				}
+			})
 
 			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{Name: "unban-test", Namespace: "default"},
@@ -1642,7 +1649,13 @@ var _ = Describe("HomeAssistant Controller", func() {
 		})
 
 		It("should NOT include unban-operator-ip init-container when POD_IP is empty", func() {
+			prev, hadPrev := os.LookupEnv("POD_IP")
 			Expect(os.Unsetenv("POD_IP")).To(Succeed())
+			DeferCleanup(func() {
+				if hadPrev {
+					Expect(os.Setenv("POD_IP", prev)).To(Succeed())
+				}
+			})
 
 			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{Name: "unban-test-no-ip", Namespace: "default"},

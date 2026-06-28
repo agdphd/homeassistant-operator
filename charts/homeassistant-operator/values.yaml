@@ -75,9 +75,10 @@ topologySpreadConstraints: []
 
 # watchNamespaces: namespaces the operator will watch for HomeAssistant CRs.
 # When empty, operator watches ALL namespaces (ClusterRoleBinding is used).
-# When set, operator watches only listed namespaces (per-namespace RoleBindings are created,
+# When set, operator watches ONLY the listed namespaces (per-namespace RoleBindings are created,
 # ClusterRoleBinding is NOT created — more secure, least-privilege).
-# The operator's own namespace (Release.Namespace) does NOT need to be listed here.
+# NOTE: the operator's own namespace is NOT automatically included — add it explicitly if
+# you deploy HomeAssistant resources there (same namespace as the operator itself).
 # Example:
 # watchNamespaces:
 #   - homeassistant

@@ -801,6 +801,7 @@ var _ = Describe("Bootstrap Controller", func() {
 	Context("Ban-recovery sliding window", func() {
 		var (
 			ha         *hav1.HomeAssistant
+			haConfig   *hav1.HomeAssistantConfiguration
 			reconciler *HomeAssistantReconciler
 			banErr     error
 		)
@@ -815,7 +816,7 @@ var _ = Describe("Bootstrap Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
 
-			haConfig := &hav1.HomeAssistantConfiguration{
+			haConfig = &hav1.HomeAssistantConfiguration{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      ha.Name + "-config",
 					Namespace: ha.Namespace,
@@ -836,6 +837,7 @@ var _ = Describe("Bootstrap Controller", func() {
 		})
 
 		AfterEach(func() {
+			_ = k8sClient.Delete(ctx, haConfig)
 			_ = k8sClient.Delete(ctx, ha)
 		})
 

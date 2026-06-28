@@ -1018,6 +1018,10 @@ func (r *HomeAssistantConfigurationReconciler) reconcileRecorderDBSecret(
 	if err != nil {
 		return err
 	}
+	if !metav1.IsControlledBy(existing, config) {
+		return fmt.Errorf("secret %s/%s exists but is not owned by this "+
+			"HomeAssistantConfiguration; refusing to overwrite", config.Namespace, secretName)
+	}
 	if string(existing.Data["recorder_db_url.yaml"]) == dbURL {
 		return nil
 	}
@@ -1025,9 +1029,9 @@ func (r *HomeAssistantConfigurationReconciler) reconcileRecorderDBSecret(
 	return r.Update(ctx, existing)
 }
 
-// cleanupRecorderDBSecret deletes the recorder-db Secret if it exists.
-// Called when databaseSecretRef is removed or the recorder is disabled so the
-// orphaned Secret does not linger.
+// cleanupRecorderDBSecret deletes the recorder-db Secret if it exists and is
+// owned by this HomeAssistantConfiguration. User-managed Secrets with the same
+// name are left untouched.
 func (r *HomeAssistantConfigurationReconciler) cleanupRecorderDBSecret(
 	ctx context.Context,
 	config *hav1.HomeAssistantConfiguration,
@@ -1040,6 +1044,9 @@ func (r *HomeAssistantConfigurationReconciler) cleanupRecorderDBSecret(
 	}
 	if err != nil {
 		return err
+	}
+	if !metav1.IsControlledBy(secret, config) {
+		return nil // not ours — leave it alone
 	}
 	return r.Delete(ctx, secret)
 }

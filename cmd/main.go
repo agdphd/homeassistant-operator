@@ -108,6 +108,11 @@ func main() {
 				defaultNamespaces[ns] = cache.Config{}
 			}
 		}
+		if len(defaultNamespaces) == 0 {
+			setupLog.Error(nil, "WATCH_NAMESPACES is set but contains no valid namespace "+
+				"entries after trimming; refusing to start with empty scope")
+			os.Exit(1)
+		}
 		setupLog.Info("watching specific namespaces", "namespaces", watchNS)
 	} else {
 		setupLog.Info("watching all namespaces (set WATCH_NAMESPACES to restrict)")
