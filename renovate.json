@@ -1,0 +1,15 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "UTC",
+  "schedule": ["every day"],
+  "enabledManagers": ["gomod", "github-actions", "dockerfile"],
+  "commitMessagePrefix": "chore(deps):",
+  "packageRules": [
+    {
+      "matchPackagePatterns": [".*"],
+      "matchUpdateTypes": ["major", "minor", "patch", "pin", "digest"],
+      "groupName": "all dependencies"
+    }
+  ]
+}
