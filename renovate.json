@@ -2,7 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
   "timezone": "UTC",
-  "schedule": ["every day"],
+  "schedule": ["at any time"],
   "enabledManagers": ["gomod", "github-actions", "dockerfile"],
   "commitMessagePrefix": "chore(deps):",
   "packageRules": [
