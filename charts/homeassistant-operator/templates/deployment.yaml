@@ -45,6 +45,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
+            {{- if not (empty .Values.watchNamespaces) }}
+            - name: WATCH_NAMESPACES
+              value: {{ .Values.watchNamespaces | join "," | quote }}
+            {{- end }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           livenessProbe:

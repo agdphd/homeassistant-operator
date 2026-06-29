@@ -1,0 +1,25 @@
+# RoleBinding for namespace-scoped operator deployment.
+# Create one copy of this file per watched namespace, editing metadata.namespace each time.
+# The -n flag on kubectl apply does NOT override metadata.namespace when it is set explicitly
+# in the manifest — you must edit the namespace field directly.
+# When using this approach, remove or disable role_binding.yaml (ClusterRoleBinding).
+#
+# Usage (Helm is preferred — use watchNamespaces: [homeassistant, homeassistant-dev]):
+#   # For each target namespace, edit metadata.namespace then apply:
+#   sed 's/namespace: homeassistant/namespace: homeassistant-dev/' this-file | kubectl apply -f -
+#
+# Set WATCH_NAMESPACES=homeassistant,homeassistant-dev on the operator Deployment.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: homeassistant-operator-manager-rolebinding
+  namespace: homeassistant  # change to the target watched namespace
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: homeassistant-operator-manager-role
+subjects:
+- kind: ServiceAccount
+  name: homeassistant-operator-controller-manager
+  namespace: homeassistant-operator-system

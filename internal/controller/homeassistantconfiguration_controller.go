@@ -132,6 +132,7 @@ type HomeAssistantConfigurationReconciler struct {
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantconfigurations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantconfigurations/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 
@@ -995,6 +996,11 @@ func (r *HomeAssistantConfigurationReconciler) reconcileRecorderDBSecret(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
 			Namespace: config.Namespace,
+			Labels: map[string]string{
+				labelAppName:      "homeassistant",
+				labelAppInstance:  config.Spec.HomeAssistantRef.Name,
+				labelAppManagedBy: "homeassistant-operator",
+			},
 		},
 		Data: map[string][]byte{
 			"recorder_db_url.yaml": []byte(dbURL),
@@ -1012,16 +1018,23 @@ func (r *HomeAssistantConfigurationReconciler) reconcileRecorderDBSecret(
 	if err != nil {
 		return err
 	}
-	if string(existing.Data["recorder_db_url.yaml"]) == dbURL {
+	if !metav1.IsControlledBy(existing, config) {
+		return fmt.Errorf("secret %s/%s exists but is not owned by this "+
+			"HomeAssistantConfiguration; refusing to overwrite", config.Namespace, secretName)
+	}
+	dataMatch := string(existing.Data["recorder_db_url.yaml"]) == dbURL
+	labelsMatch := reflect.DeepEqual(existing.Labels, desired.Labels)
+	if dataMatch && labelsMatch {
 		return nil
 	}
 	existing.Data = desired.Data
+	existing.Labels = desired.Labels
 	return r.Update(ctx, existing)
 }
 
-// cleanupRecorderDBSecret deletes the recorder-db Secret if it exists.
-// Called when databaseSecretRef is removed or the recorder is disabled so the
-// orphaned Secret does not linger.
+// cleanupRecorderDBSecret deletes the recorder-db Secret if it exists and is
+// owned by this HomeAssistantConfiguration. User-managed Secrets with the same
+// name are left untouched.
 func (r *HomeAssistantConfigurationReconciler) cleanupRecorderDBSecret(
 	ctx context.Context,
 	config *hav1.HomeAssistantConfiguration,
@@ -1034,6 +1047,9 @@ func (r *HomeAssistantConfigurationReconciler) cleanupRecorderDBSecret(
 	}
 	if err != nil {
 		return err
+	}
+	if !metav1.IsControlledBy(secret, config) {
+		return nil // not ours — leave it alone
 	}
 	return r.Delete(ctx, secret)
 }

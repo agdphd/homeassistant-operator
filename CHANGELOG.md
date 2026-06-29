@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Helm chart: `watchNamespaces`** — new `values.yaml` field (default `[]`) restricts the operator to watching only the listed namespaces. When set, generates per-namespace `RoleBinding` objects instead of a cluster-wide `ClusterRoleBinding`, reducing the operator's blast radius to only the namespaces it needs. Set `WATCH_NAMESPACES` env var is injected automatically. Backwards compatible — empty list (default) preserves the existing `ClusterRoleBinding` behaviour.
+
+- **IP ban self-recovery via init-container** — when the operator's IP is banned by Home Assistant (HTTP 403), the operator now deletes the HA pod so it restarts with a new `unban-operator-ip` init-container. The init-container (using the same HA image already cached on the node) runs an idempotent Python script that removes the operator's IP from `/config/ip_bans.yaml` before HA starts. No `pods/exec` RBAC permission needed. Sliding window protection: at most 3 pod restarts within 30 minutes; once the limit is reached the `BanRecoveryFailed=True` condition is set and manual intervention is required. The window resets automatically on a successful HA connection. Requires the `POD_IP` downward-API env var on the operator Deployment (set by default in the Helm chart).
+
+### Security
+
+- **Removed `pods/exec` RBAC permission** — the operator no longer requires `create` on `pods/exec`. The unban flow uses pod deletion + init-container instead of exec-into-pod. Run `make manifests` to regenerate `config/rbac/role.yaml`.
+
+- **Narrowed Secret RBAC** — removed unused `patch` verb from the `homeassistantsecrets` controller; moved `delete` exclusively to the `homeassistantconfiguration` controller which is the only one that deletes Secrets. All operator-managed Secrets now carry the `app.kubernetes.io/managed-by: homeassistant-operator` label for auditing and Kyverno policies.
+
+### Deprecated
+
+- **ClusterRoleBinding mode** (`watchNamespaces: []`) — deprecated since v1.1.0, planned removal in v2.0.0. See [DEPRECATIONS.md](DEPRECATIONS.md) for migration instructions.
+
 ## [v1.0.1] - 2026-06-21
 
 ### Changed

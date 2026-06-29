@@ -3,7 +3,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
 	"time"
 
@@ -117,7 +116,7 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(
 			)
 		}
 		if haclient.IsBanned(err) {
-			log.Error(err, "Operator IP banned by Home Assistant, attempting self-unban")
+			log.Error(err, "Operator IP banned by Home Assistant, triggering ban-recovery restart")
 			return r.handleSelfBan(ctx, ha, err)
 		}
 		log.Error(err, "Bootstrap health check failed")
@@ -127,6 +126,10 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(
 			false, false,
 		)
 	}
+
+	// Successful connection — reset ban-recovery state so the window doesn't
+	// linger after the ban clears.
+	r.resetBanRecovery(ctx, ha)
 	// Full API readiness check: ensure all API routes are registered before
 	// checking onboarding. This eliminates the ambiguous 404 from /api/onboarding
 	// during the startup window where HTTP is up but routes aren't loaded.
@@ -753,113 +756,152 @@ func getOrDefault(value, defaultValue string) string {
 	return defaultValue
 }
 
-// handleSelfBan is called when HA returns 403/429 indicating the operator's IP
-// is banned. It removes the IP from ip_bans.yaml via exec, deletes the HA pod
-// (forcing HA to restart and clear in-memory bans), and requeues after
-// selfUnbanRequeueWait to give HA time to come back up.
+// handleSelfBan is called when HA returns HTTP 403 indicating the operator's IP is
+// banned. It deletes the HA pod so StatefulSet recreates it; the unban-operator-ip
+// init-container (injected by buildInitContainers) removes the entry from
+// ip_bans.yaml before HA starts. No pods/exec required.
 //
-// Limits: at most selfUnbanMaxCount unbans total; at most one per selfUnbanCooldown.
-// Once limits are exceeded the operator stops retrying and requires manual intervention.
+// Sliding window: at most banRestartMaxCount pod restarts within banRestartWindow.
+// After the limit is exceeded the operator sets BanRecoveryFailed=True and waits
+// for manual intervention (remove the IP from ip_bans.yaml and restart HA).
+// The window resets automatically after banRestartWindow or on successful connection.
 func (r *HomeAssistantReconciler) handleSelfBan(
 	ctx context.Context,
 	ha *hav1.HomeAssistant,
 	banErr error,
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
+	now := metav1.Now()
 
-	// Enforce total unban limit
-	if ha.Status.SelfUnbanCount >= selfUnbanMaxCount {
-		log.Error(banErr, "Self-unban limit reached — manual intervention required",
-			"count", ha.Status.SelfUnbanCount, "max", selfUnbanMaxCount)
-		r.Recorder.Eventf(ha, nil, corev1.EventTypeWarning, "SelfUnbanLimitReached",
-			"SelfUnbanLimitReached",
-			"Operator IP banned and self-unban limit (%d) reached; "+
-				"manually remove the operator IP from /config/ip_bans.yaml and restart HA",
-			selfUnbanMaxCount)
-		return ctrl.Result{RequeueAfter: selfUnbanRequeueWait}, nil
+	// Reset expired sliding window before checking the limit.
+	if ha.Status.BanRestartWindowStart != nil &&
+		now.Sub(ha.Status.BanRestartWindowStart.Time) > banRestartWindow {
+		log.Info("Ban-recovery window expired, resetting counter",
+			"windowStart", ha.Status.BanRestartWindowStart,
+			"window", banRestartWindow)
+		ha.Status.BanRestartWindowStart = nil
+		ha.Status.BanRestartWindowCount = 0
 	}
 
-	// Enforce cooldown
+	// Enforce cooldown between consecutive restarts first so a 403 arriving while
+	// HA is still starting after the previous restart does not prematurely count
+	// as a limit-exceeded condition.
 	if ha.Status.LastSelfUnban != nil {
 		elapsed := time.Since(ha.Status.LastSelfUnban.Time)
 		if elapsed < selfUnbanCooldown {
-			log.Info("Self-unban cooldown active, waiting",
+			log.Info("Ban-recovery cooldown active, waiting",
 				"elapsed", elapsed.Round(time.Second),
 				"cooldown", selfUnbanCooldown)
 			return ctrl.Result{RequeueAfter: selfUnbanCooldown - elapsed}, nil
 		}
 	}
 
-	podIP := os.Getenv("POD_IP")
-	if podIP == "" {
-		log.Error(nil, "POD_IP env var not set — cannot determine IP to unban; "+
-			"add downward API env POD_IP=status.podIP to the operator Deployment")
-		// Emit the misconfiguration event only once (SelfUnbanCount == 0) to avoid
-		// flooding the event stream on every reconcile while the operator is banned.
-		if ha.Status.SelfUnbanCount == 0 {
-			r.Recorder.Eventf(ha, nil, corev1.EventTypeWarning, "SelfUnbanFailed",
-				"SelfUnbanFailed",
-				"POD_IP env var not set; add downward API to operator Deployment")
+	// Enforce sliding window limit only after cooldown has elapsed.
+	if ha.Status.BanRestartWindowCount >= banRestartMaxCount {
+		log.Error(banErr, "Ban-recovery restart limit reached — manual intervention required",
+			"count", ha.Status.BanRestartWindowCount,
+			"max", banRestartMaxCount,
+			"window", banRestartWindow)
+
+		patch := client.MergeFrom(ha.DeepCopy())
+		meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
+			Type:   conditionTypeBanRecovery,
+			Status: metav1.ConditionTrue,
+			Reason: reasonBanRecoveryLimitExceeded,
+			Message: fmt.Sprintf(
+				"Ban-recovery restart limit (%d in %s) reached; "+
+					"manually remove operator IP from /config/ip_bans.yaml and restart HA",
+				banRestartMaxCount, banRestartWindow),
+		})
+		if err := r.Status().Patch(ctx, ha, patch); err != nil {
+			log.Error(err, "Failed to update BanRecoveryFailed condition")
 		}
-		return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
+		r.Recorder.Eventf(ha, nil, corev1.EventTypeWarning, "BanRecoveryLimitReached",
+			"BanRecoveryLimitReached",
+			"Ban-recovery restart limit (%d in %s) reached; manual intervention required",
+			banRestartMaxCount, banRestartWindow)
+		return ctrl.Result{RequeueAfter: banRestartWindow}, nil
 	}
 
-	log.Info("Removing operator IP from HA ip_bans.yaml via exec",
-		"podIP", podIP, "haPod", ha.Name+"-0")
-
-	if r.RestConfig == nil {
-		log.Error(nil, "RestConfig not set on reconciler — cannot exec into HA pod")
-		if ha.Status.SelfUnbanCount == 0 {
-			r.Recorder.Eventf(ha, nil, corev1.EventTypeWarning, "SelfUnbanFailed",
-				"SelfUnbanFailed", "RestConfig not configured on reconciler")
-		}
-		return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
-	}
-
-	if err := unbanSelfFromHA(ctx, r.RestConfig, ha.Namespace, ha.Name, podIP); err != nil {
-		log.Error(err, "Failed to remove IP from ip_bans.yaml")
-		r.Recorder.Eventf(ha, nil, corev1.EventTypeWarning, "SelfUnbanFailed",
-			"SelfUnbanFailed",
-			"Failed to remove %s from ip_bans.yaml: %v", podIP, err)
-		return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
-	}
-
-	// Delete the HA pod so StatefulSet recreates it — clears in-memory bans.
+	// Delete the HA pod first. Only commit the restart counters to status after
+	// the pod is confirmed gone so a failed Get/Delete does not burn a restart
+	// slot without actually restarting. If the subsequent status patch fails the
+	// restart is undercounted — preferable to overcounting which would cause the
+	// operator to stop retrying prematurely.
 	haPod := &corev1.Pod{}
 	podKey := types.NamespacedName{Name: ha.Name + "-0", Namespace: ha.Namespace}
 	if err := r.Get(ctx, podKey, haPod); err != nil {
 		if !errors.IsNotFound(err) {
-			log.Error(err, "Failed to get HA pod for deletion after ip_bans removal")
+			log.Error(err, "Failed to get HA pod for ban-recovery restart")
 			return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
 		}
-		// Pod already gone — StatefulSet will recreate it; proceed to update status.
+		// Pod already gone — StatefulSet will recreate with init-container.
 	} else {
 		if err := r.Delete(ctx, haPod); err != nil {
-			log.Error(err, "Failed to delete HA pod after ip_bans removal")
-			return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
+			if !errors.IsNotFound(err) {
+				log.Error(err, "Failed to delete HA pod for ban-recovery restart")
+				return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
+			}
+			// Pod disappeared between Get and Delete — StatefulSet is already
+			// recreating it; treat this as a successful removal.
+			log.Info("HA pod already gone by the time Delete was called; counting as restart",
+				"pod", ha.Name+"-0")
+		} else {
+			log.Info("Deleted HA pod for ban-recovery; init-container will clean ip_bans.yaml",
+				"pod", ha.Name+"-0")
 		}
-		log.Info("Deleted HA pod to clear in-memory bans", "pod", ha.Name+"-0")
 	}
 
-	// Update status only after the pod delete succeeded (or pod was already gone).
-	now := metav1.Now()
+	// Pod removed (or was already gone) — now persist the restart in status.
 	patch := client.MergeFrom(ha.DeepCopy())
-	ha.Status.SelfUnbanCount++
+	if ha.Status.BanRestartWindowStart == nil {
+		ha.Status.BanRestartWindowStart = &now
+	}
+	ha.Status.BanRestartWindowCount++
 	ha.Status.LastSelfUnban = &now
+	ha.Status.SelfUnbanCount++ // kept for backwards compatibility
+	meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
+		Type:   conditionTypeBanRecovery,
+		Status: metav1.ConditionFalse,
+		Reason: reasonBanRecoveryInProgress,
+		Message: fmt.Sprintf(
+			"Ban-recovery restart %d/%d initiated; init-container will clean ip_bans.yaml",
+			ha.Status.BanRestartWindowCount, banRestartMaxCount),
+	})
 	if err := r.Status().Patch(ctx, ha, patch); err != nil {
-		log.Error(err, "Failed to update SelfUnban status")
+		log.Error(err, "Failed to update ban-recovery status")
 		return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
 	}
 
-	r.Recorder.Eventf(ha, nil, corev1.EventTypeNormal, "SelfUnbanned",
-		"SelfUnbanned",
-		"Removed operator IP %s from ip_bans.yaml and restarted HA pod (unban %d/%d)",
-		podIP, ha.Status.SelfUnbanCount, selfUnbanMaxCount)
+	r.Recorder.Eventf(ha, nil, corev1.EventTypeNormal, "BanRecoveryRestart",
+		"BanRecoveryRestart",
+		"Restarted HA pod for ban-recovery (%d/%d in %s window)",
+		ha.Status.BanRestartWindowCount, banRestartMaxCount, banRestartWindow)
 
-	log.Info("Self-unban complete, requeuing after restart wait",
-		"podIP", podIP,
-		"unbanCount", ha.Status.SelfUnbanCount,
+	log.Info("Ban-recovery restart triggered",
+		"windowCount", ha.Status.BanRestartWindowCount,
+		"maxCount", banRestartMaxCount,
 		"requeueAfter", selfUnbanRequeueWait)
 
 	return ctrl.Result{RequeueAfter: selfUnbanRequeueWait}, nil
+}
+
+// resetBanRecovery clears all ban-recovery state after a successful HA connection
+// so the next ban incident starts with a clean slate and no lingering cooldown.
+func (r *HomeAssistantReconciler) resetBanRecovery(ctx context.Context, ha *hav1.HomeAssistant) {
+	if ha.Status.BanRestartWindowCount == 0 &&
+		ha.Status.LastSelfUnban == nil &&
+		meta.FindStatusCondition(ha.Status.Conditions, conditionTypeBanRecovery) == nil {
+		return // nothing to reset
+	}
+	log := logf.FromContext(ctx)
+	log.Info("Successful HA connection — resetting ban-recovery state")
+	patch := client.MergeFrom(ha.DeepCopy())
+	ha.Status.BanRestartWindowStart = nil
+	ha.Status.BanRestartWindowCount = 0
+	ha.Status.LastSelfUnban = nil
+	meta.RemoveStatusCondition(&ha.Status.Conditions, conditionTypeBanRecovery)
+	if err := r.Status().Patch(ctx, ha, patch); err != nil {
+		log.Error(err, "Failed to reset ban-recovery status")
+	}
 }

@@ -362,14 +362,25 @@ type HomeAssistantStatus struct {
 	// +optional
 	Bootstrap *BootstrapStatus `json:"bootstrap,omitempty"`
 
-	// SelfUnbanCount is the number of times the operator has removed its own IP
-	// from HA's ip_bans.yaml and restarted the pod to clear in-memory bans.
+	// SelfUnbanCount is the total number of ban-recovery pod restarts. Kept for
+	// backwards compatibility; prefer BanRestartWindowCount for limit enforcement.
 	// +optional
 	SelfUnbanCount int32 `json:"selfUnbanCount,omitempty"`
 
-	// LastSelfUnban is the timestamp of the most recent self-unban operation.
+	// LastSelfUnban is the timestamp of the most recent ban-recovery pod restart.
 	// +optional
 	LastSelfUnban *metav1.Time `json:"lastSelfUnban,omitempty"`
+
+	// BanRestartWindowStart is the start of the current ban-recovery sliding window.
+	// Nil means no window is active (no ban seen or window has expired).
+	// +optional
+	BanRestartWindowStart *metav1.Time `json:"banRestartWindowStart,omitempty"`
+
+	// BanRestartWindowCount is the number of ban-recovery pod restarts within the
+	// current sliding window. When it reaches banRestartMaxCount the operator stops
+	// restarting and sets condition BanRecoveryFailed=True.
+	// +optional
+	BanRestartWindowCount int32 `json:"banRestartWindowCount,omitempty"`
 }
 
 // BootstrapStatus contains the status of the automatic bootstrap process

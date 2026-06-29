@@ -17,6 +17,8 @@ limitations under the License.
 package controller
 
 import (
+	"fmt"
+	"math/rand"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -25,10 +27,15 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 )
+
+func randSuffix() string {
+	return fmt.Sprintf("%06d", rand.Intn(1000000)) //nolint:gosec
+}
 
 var _ = Describe("Bootstrap Controller", func() {
 	const (
@@ -788,6 +795,173 @@ var _ = Describe("Bootstrap Controller", func() {
 			err := reconciler.validateBootstrapConfig(ha)
 			Expect(err).Should(HaveOccurred())
 			Expect(err.Error()).Should(ContainSubstring("secret name cannot be empty"))
+		})
+	})
+
+	Context("Ban-recovery sliding window", func() {
+		var (
+			ha         *hav1.HomeAssistant
+			haConfig   *hav1.HomeAssistantConfiguration
+			reconciler *HomeAssistantReconciler
+			banErr     error
+		)
+
+		BeforeEach(func() {
+			ha = &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "ban-test-" + randSuffix(),
+					Namespace: "default",
+				},
+				Spec: hav1.HomeAssistantSpec{Version: "2024.1.0"},
+			}
+			Expect(k8sClient.Create(ctx, ha)).Should(Succeed())
+
+			haConfig = &hav1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-config",
+					Namespace: ha.Namespace,
+				},
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: ha.Name},
+					Configuration:    "default_config:",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).Should(Succeed())
+
+			reconciler = &HomeAssistantReconciler{
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: events.NewFakeRecorder(16),
+			}
+			banErr = fmt.Errorf("operator IP banned (HTTP 403)")
+		})
+
+		AfterEach(func() {
+			_ = k8sClient.Delete(ctx, haConfig)
+			_ = k8sClient.Delete(ctx, ha)
+		})
+
+		It("should restart pod and start window on first ban", func() {
+			By("Creating the HA pod so the deletion path is exercised")
+			haPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ha.Name + "-0",
+					Namespace: ha.Namespace,
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "home-assistant", Image: "homeassistant/home-assistant:latest"},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, haPod)).To(Succeed())
+
+			result, err := reconciler.handleSelfBan(ctx, ha, banErr)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(selfUnbanRequeueWait))
+
+			By("Verifying the pod was deleted")
+			deleted := &corev1.Pod{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ha.Name + "-0", Namespace: ha.Namespace}, deleted)).
+				To(MatchError(ContainSubstring("not found")))
+
+			updated := &hav1.HomeAssistant{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, updated)).To(Succeed())
+			Expect(updated.Status.BanRestartWindowCount).To(Equal(int32(1)))
+			Expect(updated.Status.BanRestartWindowStart).NotTo(BeNil())
+			Expect(updated.Status.SelfUnbanCount).To(Equal(int32(1)))
+
+			cond := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeBanRecovery)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(reasonBanRecoveryInProgress))
+		})
+
+		It("should honour cooldown and not restart again too soon", func() {
+			// First restart
+			_, _ = reconciler.handleSelfBan(ctx, ha, banErr)
+
+			// Immediately call again — should hit cooldown
+			updated := &hav1.HomeAssistant{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, updated)).To(Succeed())
+
+			result, err := reconciler.handleSelfBan(ctx, updated, banErr)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+			Expect(result.RequeueAfter).To(BeNumerically("<=", selfUnbanCooldown))
+
+			// Count must not have increased
+			reFetch := &hav1.HomeAssistant{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, reFetch)).To(Succeed())
+			Expect(reFetch.Status.BanRestartWindowCount).To(Equal(int32(1)))
+		})
+
+		It("should set BanRecoveryFailed condition when limit exceeded", func() {
+			// Simulate banRestartMaxCount restarts already done, past cooldown.
+			past := metav1.NewTime(time.Now().Add(-selfUnbanCooldown - time.Second))
+			windowStart := metav1.NewTime(time.Now().Add(-time.Minute))
+			ha.Status.BanRestartWindowCount = banRestartMaxCount
+			ha.Status.BanRestartWindowStart = &windowStart
+			ha.Status.LastSelfUnban = &past
+			Expect(k8sClient.Status().Update(ctx, ha)).To(Succeed())
+
+			result, err := reconciler.handleSelfBan(ctx, ha, banErr)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(banRestartWindow))
+
+			updated := &hav1.HomeAssistant{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, updated)).To(Succeed())
+
+			cond := meta.FindStatusCondition(updated.Status.Conditions, conditionTypeBanRecovery)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+			Expect(cond.Reason).To(Equal(reasonBanRecoveryLimitExceeded))
+			// Window count must NOT have increased beyond limit
+			Expect(updated.Status.BanRestartWindowCount).To(Equal(int32(banRestartMaxCount)))
+		})
+
+		It("should reset window when it has expired and allow restart", func() {
+			// Window started more than banRestartWindow ago.
+			expiredStart := metav1.NewTime(time.Now().Add(-banRestartWindow - time.Second))
+			pastCooldown := metav1.NewTime(time.Now().Add(-selfUnbanCooldown - time.Second))
+			ha.Status.BanRestartWindowCount = banRestartMaxCount
+			ha.Status.BanRestartWindowStart = &expiredStart
+			ha.Status.LastSelfUnban = &pastCooldown
+			Expect(k8sClient.Status().Update(ctx, ha)).To(Succeed())
+
+			result, err := reconciler.handleSelfBan(ctx, ha, banErr)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(selfUnbanRequeueWait))
+
+			updated := &hav1.HomeAssistant{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, updated)).To(Succeed())
+			// Window should have been reset and then incremented to 1.
+			Expect(updated.Status.BanRestartWindowCount).To(Equal(int32(1)))
+			Expect(updated.Status.BanRestartWindowStart).NotTo(BeNil())
+			Expect(updated.Status.BanRestartWindowStart.Time).To(BeTemporally(">", expiredStart.Time))
+		})
+
+		It("should clear ban-recovery state on successful connection", func() {
+			// Pre-populate ban state.
+			windowStart := metav1.NewTime(time.Now().Add(-time.Minute))
+			ha.Status.BanRestartWindowCount = 2
+			ha.Status.BanRestartWindowStart = &windowStart
+			meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
+				Type:   conditionTypeBanRecovery,
+				Status: metav1.ConditionFalse,
+				Reason: reasonBanRecoveryInProgress,
+			})
+			Expect(k8sClient.Status().Update(ctx, ha)).To(Succeed())
+
+			// Simulate successful connection reset.
+			reconciler.resetBanRecovery(ctx, ha)
+
+			updated := &hav1.HomeAssistant{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, updated)).To(Succeed())
+			Expect(updated.Status.BanRestartWindowCount).To(Equal(int32(0)))
+			Expect(updated.Status.BanRestartWindowStart).To(BeNil())
+			Expect(meta.FindStatusCondition(updated.Status.Conditions, conditionTypeBanRecovery)).To(BeNil())
 		})
 	})
 })

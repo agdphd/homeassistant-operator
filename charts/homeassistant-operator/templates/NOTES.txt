@@ -31,3 +31,14 @@ Quick start — deploy Home Assistant:
   EOF
 
 Full documentation: https://przemekhys.github.io/homeassistant-operator/
+{{- if empty .Values.watchNamespaces }}
+
+WARNING: You are running in ClusterRoleBinding mode (watchNamespaces is empty).
+This mode is DEPRECATED and will be removed in v2.0.0.
+Migrate by setting watchNamespaces in your values:
+
+  watchNamespaces:
+    - homeassistant
+
+This switches to namespace-scoped RoleBindings, reducing the operator's cluster access.
+{{- end }}
