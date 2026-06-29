@@ -823,9 +823,29 @@ func (r *HomeAssistantReconciler) handleSelfBan(
 		return ctrl.Result{RequeueAfter: banRestartWindow}, nil
 	}
 
-	// Persist the restart in status BEFORE deleting the pod so that a failed
-	// status patch leaves the restart uncounted (safe — we haven't restarted yet)
-	// rather than leaving a restart uncounted after the pod is already gone.
+	// Delete the HA pod first. Only commit the restart counters to status after
+	// the pod is confirmed gone so a failed Get/Delete does not burn a restart
+	// slot without actually restarting. If the subsequent status patch fails the
+	// restart is undercounted — preferable to overcounting which would cause the
+	// operator to stop retrying prematurely.
+	haPod := &corev1.Pod{}
+	podKey := types.NamespacedName{Name: ha.Name + "-0", Namespace: ha.Namespace}
+	if err := r.Get(ctx, podKey, haPod); err != nil {
+		if !errors.IsNotFound(err) {
+			log.Error(err, "Failed to get HA pod for ban-recovery restart")
+			return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
+		}
+		// Pod already gone — StatefulSet will recreate with init-container.
+	} else {
+		if err := r.Delete(ctx, haPod); err != nil {
+			log.Error(err, "Failed to delete HA pod for ban-recovery restart")
+			return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
+		}
+		log.Info("Deleted HA pod for ban-recovery; init-container will clean ip_bans.yaml",
+			"pod", ha.Name+"-0")
+	}
+
+	// Pod removed (or was already gone) — now persist the restart in status.
 	patch := client.MergeFrom(ha.DeepCopy())
 	if ha.Status.BanRestartWindowStart == nil {
 		ha.Status.BanRestartWindowStart = &now
@@ -844,25 +864,6 @@ func (r *HomeAssistantReconciler) handleSelfBan(
 	if err := r.Status().Patch(ctx, ha, patch); err != nil {
 		log.Error(err, "Failed to update ban-recovery status")
 		return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
-	}
-
-	// Delete HA pod — StatefulSet recreates it with unban-operator-ip init-container
-	// that removes the operator's IP from ip_bans.yaml before HA starts.
-	haPod := &corev1.Pod{}
-	podKey := types.NamespacedName{Name: ha.Name + "-0", Namespace: ha.Namespace}
-	if err := r.Get(ctx, podKey, haPod); err != nil {
-		if !errors.IsNotFound(err) {
-			log.Error(err, "Failed to get HA pod for ban-recovery restart")
-			return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
-		}
-		// Pod already gone — StatefulSet will recreate with init-container.
-	} else {
-		if err := r.Delete(ctx, haPod); err != nil {
-			log.Error(err, "Failed to delete HA pod for ban-recovery restart")
-			return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
-		}
-		log.Info("Deleted HA pod for ban-recovery; init-container will clean ip_bans.yaml",
-			"pod", ha.Name+"-0")
 	}
 
 	r.Recorder.Eventf(ha, nil, corev1.EventTypeNormal, "BanRecoveryRestart",

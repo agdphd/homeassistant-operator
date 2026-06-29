@@ -1322,6 +1322,11 @@ func (r *HomeAssistantReconciler) buildInitContainers(ha *hav1.HomeAssistant) []
 // <ha-name>-operator-ip ConfigMap) rather than being embedded in the pod template.
 // This keeps the StatefulSet spec stable across operator pod restarts so that a new
 // operator IP triggers only a ConfigMap update, not an HA rolling restart.
+//
+// Requirement: the image used must provide python3 and PyYAML. All official Home
+// Assistant images satisfy this (HA is Python-based). If spec.image is set to a
+// custom image it must also include these dependencies, otherwise the init-container
+// will fail and the HA pod will not start.
 func (r *HomeAssistantReconciler) buildUnbanInitContainer(ha *hav1.HomeAssistant) corev1.Container {
 	image := defaultImage
 	if ha.Spec.Image != "" {
