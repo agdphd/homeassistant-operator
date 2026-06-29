@@ -838,11 +838,18 @@ func (r *HomeAssistantReconciler) handleSelfBan(
 		// Pod already gone — StatefulSet will recreate with init-container.
 	} else {
 		if err := r.Delete(ctx, haPod); err != nil {
-			log.Error(err, "Failed to delete HA pod for ban-recovery restart")
-			return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
+			if !errors.IsNotFound(err) {
+				log.Error(err, "Failed to delete HA pod for ban-recovery restart")
+				return ctrl.Result{RequeueAfter: selfUnbanCooldown}, nil
+			}
+			// Pod disappeared between Get and Delete — StatefulSet is already
+			// recreating it; treat this as a successful removal.
+			log.Info("HA pod already gone by the time Delete was called; counting as restart",
+				"pod", ha.Name+"-0")
+		} else {
+			log.Info("Deleted HA pod for ban-recovery; init-container will clean ip_bans.yaml",
+				"pod", ha.Name+"-0")
 		}
-		log.Info("Deleted HA pod for ban-recovery; init-container will clean ip_bans.yaml",
-			"pod", ha.Name+"-0")
 	}
 
 	// Pod removed (or was already gone) — now persist the restart in status.
