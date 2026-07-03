@@ -39,6 +39,11 @@ const (
 	// ready is highly trustworthy. This is just a safety net.
 	onboardingConfirmDelay = 30 * time.Second
 
+	// Post-bootstrap periodic ban detection interval. CheckHealth runs on every
+	// reconcile but external events may be infrequent; this ensures the check
+	// happens at most this often even when the cluster is idle.
+	banDetectionInterval = 2 * time.Minute
+
 	// Login recovery
 	maxLoginRecoveryRetries = 3
 
@@ -78,7 +83,7 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(
 				log.Error(err, "Operator IP banned by Home Assistant, triggering ban-recovery restart")
 				return r.handleSelfBan(ctx, ha, err)
 			}
-			// HA not ready or other transient error — not a ban, skip silently
+			// HA not ready or other transient error — not a ban, skip silently.
 			log.V(1).Info("Bootstrap already completed, skipping")
 			return ctrl.Result{}, nil
 		}
