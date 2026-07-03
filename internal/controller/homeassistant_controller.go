@@ -1363,7 +1363,10 @@ with open(path) as f:
     content = f.read()
 if not content.strip():
     sys.exit(0)
-d = yaml.safe_load(content) or {}
+d = {}
+for doc in yaml.safe_load_all(content):
+    if isinstance(doc, dict):
+        d.update(doc)
 if ip not in d:
     sys.exit(0)
 del d[ip]
