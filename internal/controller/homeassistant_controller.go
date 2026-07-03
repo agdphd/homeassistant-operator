@@ -217,7 +217,18 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Update status based on StatefulSet status
-	return r.updateStatusFromStatefulSet(ctx, ha)
+	statusResult, err := r.updateStatusFromStatefulSet(ctx, ha)
+	if err != nil || statusResult.RequeueAfter > 0 {
+		return statusResult, err
+	}
+
+	// When bootstrap is complete, requeue at a bounded interval so that the
+	// post-bootstrap ban-detection health check in reconcileBootstrap fires
+	// periodically even when the cluster is otherwise idle.
+	if ha.Status.Bootstrap != nil && ha.Status.Bootstrap.Completed {
+		return ctrl.Result{RequeueAfter: banDetectionInterval}, nil
+	}
+	return statusResult, nil
 }
 
 // reconcileOperatorIPConfigMap keeps a ConfigMap <ha-name>-operator-ip up to date
