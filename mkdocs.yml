@@ -81,6 +81,9 @@ nav:
     - Integrations: user-guide/integrations.md
     - Infrastructure (Floor/Label/Area): user-guide/infrastructure.md
     - Backup: user-guide/backup.md
+  - Ecosystem Guides:
+    - Overview: ecosystem/index.md
+    - Flux CD: ecosystem/flux.md
   - Reference:
     - CRD API Reference: reference/api.md
     - Troubleshooting: reference/troubleshooting.md
