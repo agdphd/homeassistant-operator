@@ -149,6 +149,42 @@ Status:
     API Token Ready: true
 ```
 
+## IP ban self-recovery
+
+When Home Assistant has `ip_ban_enabled: true`, it can ban the operator's own IP after repeated failed logins (HTTP `403`) — for example during bootstrap retries. A banned operator can no longer reach the HA API, which would normally require manual editing of `/config/ip_bans.yaml`. The operator recovers from this automatically, **without** needing the `pods/exec` RBAC permission.
+
+### How it works
+
+1. The operator detects it is banned (HTTP `403` from HA).
+2. It deletes the HA pod. The `StatefulSet` recreates it with an `unban-operator-ip` init-container (reusing the HA image already cached on the node).
+3. The init-container removes the operator's IP from `/config/ip_bans.yaml` **before** HA starts, then HA comes up unbanned.
+
+The operator's IP is passed to the pod via the `<ha-name>-operator-ip` ConfigMap, sourced from the `POD_IP` downward-API environment variable on the operator Deployment (set by default in the Helm chart).
+
+### Sliding-window protection
+
+To avoid a restart loop, recovery is rate-limited:
+
+- At most **3 pod restarts** within a **30-minute** window.
+- A minimum **5-minute cooldown** between consecutive restarts.
+- The window resets automatically after 30 minutes **or** on the first successful HA connection.
+
+Once the limit is exceeded the operator stops restarting and sets the `BanRecoveryFailed=True` condition, requiring manual intervention:
+
+```sh
+kubectl describe ha home   # look for the BanRecoveryFailed condition
+```
+
+Manual recovery: remove the operator's IP from `/config/ip_bans.yaml` on the PVC and restart the pod (`kubectl delete pod home-0`).
+
+### Status fields
+
+| Field | Meaning |
+|-------|---------|
+| `status.selfUnbanCount` | Total number of self-unban restarts performed. |
+| `status.lastSelfUnban` | Timestamp of the most recent self-unban. |
+
+
 ## Deleting an instance
 
 !!! warning

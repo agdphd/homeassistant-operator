@@ -213,7 +213,7 @@ docs-build: docs-api ## Build documentation to site/ (regenerates API reference 
 .PHONY: docs-api
 docs-api: crd-ref-docs ## Regenerate docs/reference/api.md from Go types
 	$(CRD_REF_DOCS) \
-		--source-path=./api/v1alpha1 \
+		--source-path=./api/v1 \
 		--config=./docs/crd-ref-docs.yaml \
 		--renderer=markdown \
 		--output-path=./docs/reference/api.md

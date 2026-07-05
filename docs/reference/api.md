@@ -1,7 +1,7 @@
 # API Reference
 
 ## Packages
-- [ha.homeassistant.io/v1](#ha-homeassistant-io-v1)
+- [ha.homeassistant.io/v1](#hahomeassistantiov1)
 
 
 ## ha.homeassistant.io/v1
@@ -169,7 +169,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `completed` _boolean_ | Completed indicates whether the bootstrap process has finished successfully |  | Optional: \{\} <br /> |
-| `apiTokenReady` _boolean_ | ApiTokenReady indicates whether the API token has been created and stored |  | Optional: \{\} <br /> |
+| `apiTokenReady` _boolean_ | APITokenReady indicates whether the API token has been created and stored |  | Optional: \{\} <br /> |
 | `apiTokenSecretName` _string_ | APITokenSecretName is the name of the Secret containing the API token |  | Optional: \{\} <br /> |
 | `lastAttempt` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | LastAttempt is the timestamp of the last bootstrap attempt |  | Optional: \{\} <br /> |
 | `message` _string_ | Message provides additional information about the bootstrap status |  | Optional: \{\} <br /> |
@@ -212,6 +212,24 @@ _Appears in:_
 | `name` _string_ | Name of the Secret |  |  |
 | `usernameKey` _string_ | UsernameKey is the key in the Secret containing the username | username | Optional: \{\} <br /> |
 | `passwordKey` _string_ | PasswordKey is the key in the Secret containing the password | password | Optional: \{\} <br /> |
+
+
+#### HTTPConfig
+
+
+
+HTTPConfig defines HTTP component configuration
+
+
+
+_Appears in:_
+- [HomeAssistantConfigurationSpec](#homeassistantconfigurationspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `corsDomains` _string array_ | CorsDomains is a list of allowed CORS origins |  | Optional: \{\} <br /> |
+| `trustProxy` _boolean_ | TrustProxy enables trust in X-Forwarded-For header |  | Optional: \{\} <br /> |
+| `useXForwardedFor` _boolean_ | UseXForwardedFor enables usage of X-Forwarded-For header |  | Optional: \{\} <br /> |
 
 
 #### HomeAssistant
@@ -307,6 +325,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `areaID` _string_ | areaID is the ID assigned by Home Assistant after creation |  | Optional: \{\} <br /> |
 | `observedGeneration` _integer_ | observedGeneration is the most recent generation observed |  | Optional: \{\} <br /> |
+| `lastError` _string_ | lastError contains the error message from the last failed operation<br />Cleared when operation succeeds |  | Optional: \{\} <br /> |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | conditions represent the current state of the HomeAssistantArea resource |  | Optional: \{\} <br /> |
 
 
@@ -552,6 +571,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `floorID` _string_ | floorID is the ID assigned by Home Assistant after creation |  | Optional: \{\} <br /> |
 | `observedGeneration` _integer_ | observedGeneration is the most recent generation observed |  | Optional: \{\} <br /> |
+| `lastError` _string_ | lastError contains the error message from the last failed operation<br />Cleared when operation succeeds |  | Optional: \{\} <br /> |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | conditions represent the current state of the HomeAssistantFloor resource |  | Optional: \{\} <br /> |
 
 
@@ -608,7 +628,7 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `homeAssistantRef` _[HomeAssistantReference](#homeassistantreference)_ | HomeAssistantRef references the HomeAssistant instance to configure |  |  |
+| `homeAssistantRef` _[HomeAssistantReference](#homeassistantreference)_ | HomeAssistantRef references the HomeAssistant instance to configure |  | Required: \{\} <br /> |
 | `domain` _string_ | Domain is the integration name in Home Assistant (e.g. "mqtt", "esphome", "recorder") |  | MinLength: 1 <br />Required: \{\} <br /> |
 | `configuration` _object (keys:string, values:[IntegrationValue](#integrationvalue))_ | Configuration contains fields submitted to the Config Flow (single-step flows only).<br />Keys are field names from the data_schema; values are plain text or Secret references. |  | Optional: \{\} <br /> |
 
@@ -629,6 +649,7 @@ _Appears in:_
 | `entryID` _string_ | EntryID is the Home Assistant config entry ID created or adopted by the Config Flow |  | Optional: \{\} <br /> |
 | `configHash` _string_ | ConfigHash is the SHA256 hash of the resolved configuration values.<br />Used to detect spec changes and trigger reconfiguration (delete + re-create). |  | Optional: \{\} <br /> |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the latest available observations of the integration state |  | Optional: \{\} <br /> |
+| `lastError` _string_ | LastError contains the error message from the last failed operation<br />Cleared when operation succeeds |  | Optional: \{\} <br /> |
 | `observedGeneration` _integer_ | ObservedGeneration reflects the generation of the most recently observed CR |  | Optional: \{\} <br /> |
 
 
@@ -704,6 +725,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `labelID` _string_ | labelID is the ID assigned by Home Assistant after creation |  | Optional: \{\} <br /> |
 | `observedGeneration` _integer_ | observedGeneration is the most recent generation observed |  | Optional: \{\} <br /> |
+| `lastError` _string_ | lastError contains the error message from the last failed operation<br />Cleared when operation succeeds |  | Optional: \{\} <br /> |
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | conditions represent the current state of the HomeAssistantLabel resource |  | Optional: \{\} <br /> |
 
 
@@ -1008,6 +1030,8 @@ _Appears in:_
 | `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the latest available observations of the HomeAssistantSecrets state |  | Optional: \{\} <br /> |
 | `secretsHash` _string_ | SecretsHash is the SHA256 hash of the generated secrets.yaml content.<br />Used to detect changes and trigger pod restarts. |  | Optional: \{\} <br /> |
 | `lastUpdated` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | LastUpdated is the timestamp when the secrets were last updated |  | Optional: \{\} <br /> |
+| `observedGeneration` _integer_ | ObservedGeneration reflects the generation of the most recently observed HomeAssistantSecrets |  | Optional: \{\} <br /> |
+| `lastError` _string_ | LastError contains a human-readable description of the last error encountered |  | Optional: \{\} <br /> |
 
 
 #### HomeAssistantSpec
@@ -1054,27 +1078,12 @@ _Appears in:_
 | `version` _string_ | Version is the currently deployed Home Assistant version |  | Optional: \{\} <br /> |
 | `url` _string_ | URL is the access URL for Home Assistant (if Ingress is enabled) |  | Optional: \{\} <br /> |
 | `ready` _boolean_ | Ready indicates if the Home Assistant instance is ready to serve traffic |  | Optional: \{\} <br /> |
+| `observedGeneration` _integer_ | ObservedGeneration reflects the generation of the most recently observed HomeAssistant |  | Optional: \{\} <br /> |
 | `bootstrap` _[BootstrapStatus](#bootstrapstatus)_ | BootstrapStatus contains the status of the automatic bootstrap process |  | Optional: \{\} <br /> |
-| `selfUnbanCount` _integer_ | SelfUnbanCount is the number of times the operator has removed its own IP<br />from HA's ip_bans.yaml and restarted the pod to clear in-memory bans. |  | Optional: \{\} <br /> |
-| `lastSelfUnban` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | LastSelfUnban is the timestamp of the most recent self-unban operation. |  | Optional: \{\} <br /> |
-
-
-#### HTTPConfig
-
-
-
-HTTPConfig defines HTTP component configuration
-
-
-
-_Appears in:_
-- [HomeAssistantConfigurationSpec](#homeassistantconfigurationspec)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `corsDomains` _string array_ | CorsDomains is a list of allowed CORS origins |  | Optional: \{\} <br /> |
-| `trustProxy` _boolean_ | TrustProxy enables trust in X-Forwarded-For header |  | Optional: \{\} <br /> |
-| `useXForwardedFor` _boolean_ | UseXForwardedFor enables usage of X-Forwarded-For header |  | Optional: \{\} <br /> |
+| `selfUnbanCount` _integer_ | SelfUnbanCount is the total number of ban-recovery pod restarts. Kept for<br />backwards compatibility; prefer BanRestartWindowCount for limit enforcement. |  | Optional: \{\} <br /> |
+| `lastSelfUnban` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | LastSelfUnban is the timestamp of the most recent ban-recovery pod restart. |  | Optional: \{\} <br /> |
+| `banRestartWindowStart` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | BanRestartWindowStart is the start of the current ban-recovery sliding window.<br />Nil means no window is active (no ban seen or window has expired). |  | Optional: \{\} <br /> |
+| `banRestartWindowCount` _integer_ | BanRestartWindowCount is the number of ban-recovery pod restarts within the<br />current sliding window. When it reaches banRestartMaxCount the operator stops<br />restarting and sets condition BanRecoveryFailed=True. |  | Optional: \{\} <br /> |
 
 
 #### IngressSpec
@@ -1182,8 +1191,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `name` _string_ | Name is the location name (e.g., "Home", "Warsaw") |  | Optional: \{\} <br /> |
-| `latitude` _string_ | Latitude in decimal degrees (e.g., "52.237703") |  | Pattern: `^-?([0-8]?[0-9](\.[0-9]+)?\|90(\.0+)?)$` <br />Optional: \{\} <br /> |
-| `longitude` _string_ | Longitude in decimal degrees (e.g., "20.989075") |  | Pattern: `^-?(1[0-7][0-9](\.[0-9]+)?\|[0-9]\{1,2\}(\.[0-9]+)?\|180(\.0+)?)$` <br />Optional: \{\} <br /> |
+| `latitude` _string_ | Latitude in decimal degrees (e.g., "52.2297") |  | Pattern: `^-?([0-8]?[0-9](\.[0-9]+)?\|90(\.0+)?)$` <br />Optional: \{\} <br /> |
+| `longitude` _string_ | Longitude in decimal degrees (e.g., "21.0122") |  | Pattern: `^-?(1[0-7][0-9](\.[0-9]+)?\|[0-9]\{1,2\}(\.[0-9]+)?\|180(\.0+)?)$` <br />Optional: \{\} <br /> |
 | `elevation` _integer_ | Elevation in meters |  | Optional: \{\} <br /> |
 | `unitSystem` _string_ | UnitSystem defines the unit system ("metric" or "us_customary") | metric | Enum: [metric us_customary] <br />Optional: \{\} <br /> |
 | `currency` _string_ | Currency is the ISO 4217 currency code (e.g., "USD", "EUR", "PLN") |  | Optional: \{\} <br /> |
