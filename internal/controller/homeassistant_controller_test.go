@@ -18,6 +18,7 @@ package controller
 
 import (
 	"os"
+	"os/exec"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -1610,6 +1611,79 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}, sts)).To(Succeed())
 			Expect(sts.Spec.Template.Spec.HostNetwork).To(BeFalse())
 			Expect(sts.Spec.Template.Spec.DNSPolicy).To(Equal(corev1.DNSClusterFirst))
+		})
+	})
+
+	Context("unban script multi-document YAML parsing", func() {
+		var script string
+
+		BeforeEach(func() {
+			if _, err := exec.LookPath("python3"); err != nil {
+				Skip("python3 not available")
+			}
+			r := &HomeAssistantReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: "script-parse-test", Namespace: "default"},
+				Spec:       hav1.HomeAssistantSpec{Version: "2024.1.0"},
+			}
+			script = r.buildUnbanInitContainer(ha).Command[2]
+		})
+
+		runUnbanScript := func(operatorIP, fileContent string) (string, error) {
+			f, err := os.CreateTemp("", "ip_bans_*.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { _ = os.Remove(f.Name()) })
+			_, err = f.WriteString(fileContent)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(f.Close()).NotTo(HaveOccurred())
+			cmd := exec.Command("python3", "-c", script)
+			cmd.Env = append(os.Environ(), "OPERATOR_IP="+operatorIP, "UNBAN_IP_BANS_PATH="+f.Name())
+			_, runErr := cmd.Output()
+			data, readErr := os.ReadFile(f.Name())
+			Expect(readErr).NotTo(HaveOccurred())
+			return string(data), runErr
+		}
+
+		It("removes operator IP from multi-doc YAML produced by HA appending to {}", func() {
+			// HA appends ban entries to a file containing '{}' without a '---' separator;
+			// yaml.safe_load crashes on this input — verify the {} prefix is stripped first.
+			content := "{}\n\n10.42.1.5:\n  banned_at: '2026-07-03T12:11:50+00:00'\n" +
+				"1.2.3.4:\n  banned_at: '2026-07-03T09:00:00+00:00'\n"
+			result, err := runUnbanScript("10.42.1.5", content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(ContainSubstring("10.42.1.5"))
+			Expect(result).To(ContainSubstring("1.2.3.4"))
+		})
+
+		It("exits cleanly when file contains only {}", func() {
+			// A file reset to '{}' with no bans must not cause a crash or modify the file.
+			content := "{}"
+			result, err := runUnbanScript("10.42.1.5", content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal("{}"))
+		})
+
+		It("strips repeated {} prefixes before parsing", func() {
+			// HA may append after multiple resets, producing {}\n{}\n<ip>: ...
+			content := "{}\n{}\n10.42.1.5:\n  banned_at: '2026-07-03T12:11:50+00:00'\n"
+			result, err := runUnbanScript("10.42.1.5", content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(ContainSubstring("10.42.1.5"))
+		})
+
+		It("exits cleanly on unparseable YAML content", func() {
+			// Corrupted or otherwise invalid YAML must not crash the init-container.
+			content := "key: [unclosed bracket\n"
+			_, err := runUnbanScript("10.42.1.5", content)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		It("does not modify file when operator IP is not present", func() {
+			// Verifies the ip-not-in-d early-exit: other IPs must remain untouched.
+			content := "1.2.3.4:\n  banned_at: '2026-07-03T09:00:00+00:00'\n"
+			result, err := runUnbanScript("10.42.1.5", content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(content))
 		})
 	})
 
