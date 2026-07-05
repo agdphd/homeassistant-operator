@@ -217,7 +217,18 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Update status based on StatefulSet status
-	return r.updateStatusFromStatefulSet(ctx, ha)
+	statusResult, err := r.updateStatusFromStatefulSet(ctx, ha)
+	if err != nil || statusResult.RequeueAfter > 0 {
+		return statusResult, err
+	}
+
+	// When bootstrap is complete, requeue at a bounded interval so that the
+	// post-bootstrap ban-detection health check in reconcileBootstrap fires
+	// periodically even when the cluster is otherwise idle.
+	if ha.Status.Bootstrap != nil && ha.Status.Bootstrap.Completed {
+		return ctrl.Result{RequeueAfter: banDetectionInterval}, nil
+	}
+	return statusResult, nil
 }
 
 // reconcileOperatorIPConfigMap keeps a ConfigMap <ha-name>-operator-ip up to date
@@ -1345,14 +1356,25 @@ import yaml, os, sys
 ip = os.environ.get('OPERATOR_IP', '')
 if not ip:
     sys.exit(0)
-path = '/config/ip_bans.yaml'
+path = os.environ.get('UNBAN_IP_BANS_PATH', '/config/ip_bans.yaml')
 if not os.path.exists(path):
     sys.exit(0)
-with open(path) as f:
-    content = f.read()
-if not content.strip():
+try:
+    with open(path) as f:
+        content = f.read()
+except OSError:
     sys.exit(0)
-d = yaml.safe_load(content) or {}
+content = content.strip()
+if not content or content == '{}':
+    sys.exit(0)
+while content.startswith('{}'):
+    content = content[2:].strip()
+if not content:
+    sys.exit(0)
+try:
+    d = yaml.safe_load(content) or {}
+except yaml.YAMLError:
+    sys.exit(0)
 if ip not in d:
     sys.exit(0)
 del d[ip]
