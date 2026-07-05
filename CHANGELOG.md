@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
-- **ClusterRoleBinding mode** (`watchNamespaces: []`) — deprecated since v1.1.0, planned removal in v2.0.0. See [DEPRECATIONS.md](DEPRECATIONS.md) for migration instructions.
+- **ClusterRoleBinding mode** (`watchNamespaces: []`) — deprecated since v1.1.0, planned removal in v2.0.0. See [DEPRECATIONS.md](https://github.com/przemekhys/homeassistant-operator/blob/main/DEPRECATIONS.md) for migration instructions.
 
 ## [v1.0.1] - 2026-06-21
 
