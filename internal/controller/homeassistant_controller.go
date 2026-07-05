@@ -1356,17 +1356,17 @@ import yaml, os, sys
 ip = os.environ.get('OPERATOR_IP', '')
 if not ip:
     sys.exit(0)
-path = '/config/ip_bans.yaml'
+path = os.environ.get('UNBAN_IP_BANS_PATH', '/config/ip_bans.yaml')
 if not os.path.exists(path):
     sys.exit(0)
 with open(path) as f:
     content = f.read()
-if not content.strip():
+content = content.strip()
+if not content or content == '{}':
     sys.exit(0)
-d = {}
-for doc in yaml.safe_load_all(content):
-    if isinstance(doc, dict):
-        d.update(doc)
+if content.startswith('{}'):
+    content = content[2:].lstrip()
+d = yaml.safe_load(content) or {}
 if ip not in d:
     sys.exit(0)
 del d[ip]
