@@ -38,10 +38,11 @@ The window resets automatically after 30 minutes or on the first successful HA c
 
 ## HomeAssistant stuck in `WaitingForConfiguration`
 
-A `HomeAssistant` CR requires a `HomeAssistantConfiguration` CR **of the same name** in the same namespace (since v0.3.0). Without it the status stays `WaitingForConfiguration` and requeues every 5s.
+A `HomeAssistant` CR requires a `HomeAssistantConfiguration` CR with a matching `spec.homeAssistantRef.name` in the same namespace (since v0.3.0). Without it the status stays `WaitingForConfiguration` and requeues every 5s.
 
 ```sh
-kubectl get haconfig home   # must exist with the same name as the HomeAssistant CR
+# List HomeAssistantConfigurations and check spec.homeAssistantRef.name matches "home"
+kubectl get homeassistantconfigurations -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.homeAssistantRef.name}{"\n"}{end}'
 ```
 
 ## Finalizer blocks resource deletion
