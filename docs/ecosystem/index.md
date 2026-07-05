@@ -8,3 +8,4 @@ Practical guides for integrating the Home Assistant Operator with other tools in
 ## Available guides
 
 - **[Flux CD](flux.md)** — deploying the operator and its custom resources with Flux, and securely auto-updating the Home Assistant image with Flux Image Automation.
+- **[External Secret Management](secrets-management.md)** — sourcing `HomeAssistantSecrets` from External Secrets Operator, Sealed Secrets, or Vault instead of `kubectl create secret`.
