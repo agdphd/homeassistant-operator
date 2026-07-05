@@ -9,8 +9,12 @@ permissions:
   contents: read
 
 env:
+  # renovate: datasource=github-releases depName=k3d-io/k3d
   K3D_VERSION: v5.7.4
-  HA_VERSION: stable
+  # renovate: datasource=docker depName=rancher/k3s
+  K3S_VERSION: v1.31.5-k3s1
+  # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
+  HA_VERSION: "2026.7.1"
 
 jobs:
   # Job 1: Build and cache operator image
@@ -79,6 +83,7 @@ jobs:
       - name: Create k3d cluster
         run: |
           k3d cluster create e2e-critical \
+            --image rancher/k3s:${{ env.K3S_VERSION }} \
             --agents 0 \
             --servers-memory 12g \
             --wait \
