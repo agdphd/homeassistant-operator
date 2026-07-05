@@ -1359,14 +1359,22 @@ if not ip:
 path = os.environ.get('UNBAN_IP_BANS_PATH', '/config/ip_bans.yaml')
 if not os.path.exists(path):
     sys.exit(0)
-with open(path) as f:
-    content = f.read()
+try:
+    with open(path) as f:
+        content = f.read()
+except OSError:
+    sys.exit(0)
 content = content.strip()
 if not content or content == '{}':
     sys.exit(0)
-if content.startswith('{}'):
-    content = content[2:].lstrip()
-d = yaml.safe_load(content) or {}
+while content.startswith('{}'):
+    content = content[2:].strip()
+if not content:
+    sys.exit(0)
+try:
+    d = yaml.safe_load(content) or {}
+except yaml.YAMLError:
+    sys.exit(0)
 if ip not in d:
     sys.exit(0)
 del d[ip]

@@ -1647,7 +1647,8 @@ var _ = Describe("HomeAssistant Controller", func() {
 		It("removes operator IP from multi-doc YAML produced by HA appending to {}", func() {
 			// HA appends ban entries to a file containing '{}' without a '---' separator;
 			// yaml.safe_load crashes on this input — verify the {} prefix is stripped first.
-			content := "{}\n\n10.42.1.5:\n  banned_at: '2026-07-03T12:11:50+00:00'\n1.2.3.4:\n  banned_at: '2026-07-03T09:00:00+00:00'\n"
+			content := "{}\n\n10.42.1.5:\n  banned_at: '2026-07-03T12:11:50+00:00'\n" +
+				"1.2.3.4:\n  banned_at: '2026-07-03T09:00:00+00:00'\n"
 			result, err := runUnbanScript("10.42.1.5", content)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).NotTo(ContainSubstring("10.42.1.5"))
@@ -1660,6 +1661,21 @@ var _ = Describe("HomeAssistant Controller", func() {
 			result, err := runUnbanScript("10.42.1.5", content)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(Equal("{}"))
+		})
+
+		It("strips repeated {} prefixes before parsing", func() {
+			// HA may append after multiple resets, producing {}\n{}\n<ip>: ...
+			content := "{}\n{}\n10.42.1.5:\n  banned_at: '2026-07-03T12:11:50+00:00'\n"
+			result, err := runUnbanScript("10.42.1.5", content)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).NotTo(ContainSubstring("10.42.1.5"))
+		})
+
+		It("exits cleanly on unparseable YAML content", func() {
+			// Corrupted or otherwise invalid YAML must not crash the init-container.
+			content := "key: [unclosed bracket\n"
+			_, err := runUnbanScript("10.42.1.5", content)
+			Expect(err).NotTo(HaveOccurred())
 		})
 
 		It("does not modify file when operator IP is not present", func() {
