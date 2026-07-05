@@ -120,19 +120,23 @@ test: manifests generate fmt vet setup-envtest ## Run unit tests.
 # E2E tests use k3d (recommended for k3s-like target environments)
 K3D_CLUSTER_E2E ?= homeassistant-operator-test-e2e
 K3D_MEMORY_E2E ?= 12g
+# renovate: datasource=docker depName=rancher/k3s
+K3S_VERSION ?= v1.31.5-k3s1
+# renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
+HA_VERSION ?= 2026.7.1
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a k3d cluster for e2e tests (always creates fresh cluster)
 	@command -v k3d >/dev/null 2>&1 || { echo "k3d is not installed. Install with: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash"; exit 1; }
 	@echo "Ensuring clean k3d cluster state..."
 	@k3d cluster delete $(K3D_CLUSTER_E2E) 2>/dev/null || true
-	@echo "Creating fresh k3d cluster $(K3D_CLUSTER_E2E) with $(K3D_MEMORY_E2E) memory..."
-	@k3d cluster create $(K3D_CLUSTER_E2E) --agents 0 --servers-memory $(K3D_MEMORY_E2E)
-	@echo "Ensuring Home Assistant image is in local Docker cache..."
-	@docker image inspect ghcr.io/home-assistant/home-assistant:stable >/dev/null 2>&1 || \
-		docker pull ghcr.io/home-assistant/home-assistant:stable
+	@echo "Creating fresh k3d cluster $(K3D_CLUSTER_E2E) with $(K3D_MEMORY_E2E) memory (k3s $(K3S_VERSION))..."
+	@k3d cluster create $(K3D_CLUSTER_E2E) --image rancher/k3s:$(K3S_VERSION) --agents 0 --servers-memory $(K3D_MEMORY_E2E)
+	@echo "Ensuring Home Assistant image $(HA_VERSION) is in local Docker cache..."
+	@docker image inspect ghcr.io/home-assistant/home-assistant:$(HA_VERSION) >/dev/null 2>&1 || \
+		docker pull ghcr.io/home-assistant/home-assistant:$(HA_VERSION)
 	@echo "Importing Home Assistant image from local Docker cache into k3d containerd..."
-	@k3d image import ghcr.io/home-assistant/home-assistant:stable -c $(K3D_CLUSTER_E2E)
+	@k3d image import ghcr.io/home-assistant/home-assistant:$(HA_VERSION) -c $(K3D_CLUSTER_E2E)
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ginkgo ## Run E2E critical path tests — 1 bootstrap, 11 tests (~40-50 min)
@@ -159,7 +163,7 @@ K3D_MEMORY ?= 12g
 .PHONY: k3d-create
 k3d-create: ## Create a k3d cluster for testing
 	@command -v k3d >/dev/null 2>&1 || { echo "k3d is not installed. Install with: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash"; exit 1; }
-	@k3d cluster list | grep -q $(K3D_CLUSTER) && echo "Cluster $(K3D_CLUSTER) already exists" || k3d cluster create $(K3D_CLUSTER) --agents 0 --servers-memory $(K3D_MEMORY)
+	@k3d cluster list | grep -q $(K3D_CLUSTER) && echo "Cluster $(K3D_CLUSTER) already exists" || k3d cluster create $(K3D_CLUSTER) --image rancher/k3s:$(K3S_VERSION) --agents 0 --servers-memory $(K3D_MEMORY)
 
 .PHONY: k3d-delete
 k3d-delete: ## Delete the k3d test cluster

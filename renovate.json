@@ -3,7 +3,7 @@
   "extends": ["config:recommended"],
   "timezone": "UTC",
   "schedule": ["at any time"],
-  "enabledManagers": ["gomod", "github-actions", "dockerfile"],
+  "enabledManagers": ["gomod", "github-actions", "dockerfile", "custom.regex"],
   "commitMessagePrefix": "chore(deps):",
   "dependencyDashboard": false,
   "packageRules": [
@@ -11,6 +11,15 @@
       "matchPackagePatterns": [".*"],
       "matchUpdateTypes": ["major", "minor", "patch", "pin", "digest"],
       "groupName": "all dependencies"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": ["^\\.github/workflows/[^/]+\\.ya?ml$", "^Makefile$"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+\\S+?[:=]\\s*[\"']?(?<currentValue>[^\"'\\s]+)"
+      ]
     }
   ]
 }
