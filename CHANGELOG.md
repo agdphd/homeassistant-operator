@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.1.0] - 2026-07-05
+
 ### Added
 
 - **Helm chart: `watchNamespaces`** — new `values.yaml` field (default `[]`) restricts the operator to watching only the listed namespaces. When set, generates per-namespace `RoleBinding` objects instead of a cluster-wide `ClusterRoleBinding`, reducing the operator's blast radius to only the namespaces it needs. Set `WATCH_NAMESPACES` env var is injected automatically. Backwards compatible — empty list (default) preserves the existing `ClusterRoleBinding` behaviour.
@@ -345,8 +347,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Primary: k3s on Raspberry Pi 4/5 (ARM64)
 - Also supported: Any Kubernetes cluster (AMD64/ARM64)
 
-[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v1.0.0-rc.0...HEAD
-[v1.0.0-rc.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.10.1...v1.0.0-rc.0
+[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v1.1.0...HEAD
+[v1.1.0]: https://github.com/przemekhys/homeassistant-operator/compare/v1.0.1...v1.1.0
+[v1.0.1]: https://github.com/przemekhys/homeassistant-operator/compare/v1.0.0...v1.0.1
+[v1.0.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.10.1...v1.0.0
 [v0.10.1]: https://github.com/przemekhys/homeassistant-operator/compare/v0.10.0...v0.10.1
 [v0.10.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.9.0...v0.10.0
 [v0.9.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.8.0...v0.9.0
