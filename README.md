@@ -14,10 +14,12 @@ A Kubernetes operator for deploying and managing [Home Assistant](https://www.ho
 ## Quick Start
 
 ```sh
-kubectl apply -f https://raw.githubusercontent.com/przemekhys/homeassistant-operator/main/dist/install.yaml
+helm install homeassistant-operator oci://ghcr.io/przemekhys/charts/homeassistant-operator \
+  --namespace homeassistant-operator-system \
+  --create-namespace
 ```
 
-See the [installation guide](https://przemekhys.github.io/homeassistant-operator/getting-started/installation/) for a full walkthrough.
+See the [installation guide](https://przemekhys.github.io/homeassistant-operator/getting-started/installation/) for a full walkthrough, including the plain-manifest (kustomize) alternative.
 
 ## Contributing
 
