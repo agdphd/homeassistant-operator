@@ -34,6 +34,36 @@ helm install homeassistant-operator oci://ghcr.io/przemekhys/charts/homeassistan
   -f values.yaml
 ```
 
+### Restrict watched namespaces (`watchNamespaces`)
+
+By default the operator watches **all** namespaces in the cluster, which requires a cluster-wide `ClusterRoleBinding`. To follow the principle of least privilege, set `watchNamespaces` to the list of namespaces where Home Assistant actually runs:
+
+```yaml
+# values.yaml
+watchNamespaces:
+  - homeassistant
+  - homeassistant-dev
+```
+
+| Mode | `watchNamespaces` | RBAC generated | Scope |
+|------|-------------------|----------------|-------|
+| Cluster-wide (default) | `[]` | `ClusterRoleBinding` | All namespaces |
+| Namespace-scoped | non-empty list | one `RoleBinding` per listed namespace | Only listed namespaces |
+
+When set, the operator receives per-namespace `RoleBinding` objects instead of the `ClusterRoleBinding`, and the `WATCH_NAMESPACES` environment variable is injected automatically.
+
+!!! warning "The operator's own namespace is not auto-included"
+    Add `homeassistant-operator-system` to the list explicitly if you deploy `HomeAssistant` resources into the same namespace as the operator itself.
+
+!!! note "ClusterRoleBinding mode is deprecated"
+    The default `watchNamespaces: []` (cluster-wide) mode is **deprecated since v1.1.0** and planned for removal in **v2.0.0**. See [DEPRECATIONS.md](https://github.com/przemekhys/homeassistant-operator/blob/main/DEPRECATIONS.md) for details.
+
+**Migrating with kustomize** (non-Helm users):
+
+1. Remove `config/rbac/role_binding.yaml` (the `ClusterRoleBinding`).
+2. Apply `config/rbac/watched_namespace_role_binding.yaml` in each watched namespace.
+3. Set the `WATCH_NAMESPACES` environment variable on the operator `Deployment`.
+
 ### Upgrade
 
 ```sh
