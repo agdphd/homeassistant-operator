@@ -6,7 +6,7 @@ Deploy the Home Assistant Operator and manage its custom resources declaratively
 
 A typical setup keeps the operator's `HelmRelease` and the Home Assistant custom resources together in one directory, applied by a single Flux `Kustomization`:
 
-```
+```text
 clusters/my-cluster/homeassistant/
 ├── kustomization.yaml
 ├── namespace.yaml
@@ -93,16 +93,16 @@ spec:
 
 **OCI `HelmRepository`, not a classic chart repo.** The chart is only published to `oci://ghcr.io/przemekhys/charts/homeassistant-operator` (see [Installation](../getting-started/installation.md)) — there's no `index.yaml`-based repo, so `spec.type: oci` is required on the `HelmRepository`.
 
-**Version pinning: watch out for pre-releases.** Once a stable version exists, a semver range like `>=1.0.0 <2.0.0` lets Flux pick up minor/patch updates automatically. But Flux's `HelmRelease` semver matching **does not match pre-release versions** (tags like `1.1.0-rc.0`) even with a range written as `>=1.0.0-0 <2.0.0`. If you need to track a pre-release chart — e.g. testing a release candidate before it goes stable — pin the exact version instead:
+**Version pinning: ranges are stable-only by default.** Once a stable version exists, a semver range like `>=1.0.0 <2.0.0` lets Flux pick up minor/patch updates automatically — but a plain range like that will **never** match a pre-release tag (`1.1.0-rc.0`), even after one is published. Pre-releases are only matched if the range itself opts in with a pre-release lower bound (e.g. `>=1.0.0-0`). If you're tracking a single release candidate before it goes stable, it's simplest to just pin the exact version instead of tuning a range for it:
 
 ```yaml
 spec:
   chart:
     spec:
-      version: "1.1.0-rc.0"   # exact pin; ranges won't match pre-releases
+      version: "1.1.0-rc.0"   # exact pin — simplest way to track one specific pre-release
 ```
 
-Switch back to a range once the corresponding stable tag is published.
+Switch back to a plain range once the corresponding stable tag is published.
 
 **Custom resources live next to the `HelmRelease`.** Grouping the operator's `HelmRelease` and its `HomeAssistant`/`HomeAssistantConfiguration` CRs in the same directory (and the same Flux `Kustomization`) keeps "the operator" and "what it manages" as one reconciled unit in Git — one `flux diff` or `flux reconcile` covers the whole thing.
 
