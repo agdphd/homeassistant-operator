@@ -5,6 +5,7 @@
   "schedule": ["at any time"],
   "enabledManagers": ["gomod", "github-actions", "dockerfile"],
   "commitMessagePrefix": "chore(deps):",
+  "dependencyDashboard": false,
   "packageRules": [
     {
       "matchPackagePatterns": [".*"],
