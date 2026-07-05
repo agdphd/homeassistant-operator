@@ -25,6 +25,8 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1611,6 +1613,163 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}, sts)).To(Succeed())
 			Expect(sts.Spec.Template.Spec.HostNetwork).To(BeFalse())
 			Expect(sts.Spec.Template.Spec.DNSPolicy).To(Equal(corev1.DNSClusterFirst))
+		})
+	})
+
+	Context("When spec.alpha.networkPolicy is configured", func() {
+		const (
+			testName  = "test-netpol"
+			namespace = "default"
+			timeout   = time.Second * 10
+			interval  = time.Millisecond * 250
+		)
+
+		AfterEach(func() {
+			configList := &hav1.HomeAssistantConfigurationList{}
+			_ = k8sClient.List(ctx, configList, &client.ListOptions{Namespace: namespace})
+			for _, config := range configList.Items {
+				_ = k8sClient.Delete(ctx, &config)
+			}
+			haList := &hav1.HomeAssistantList{}
+			_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
+			for _, ha := range haList.Items {
+				_ = k8sClient.Delete(ctx, &ha)
+			}
+			cmList := &corev1.ConfigMapList{}
+			_ = k8sClient.List(ctx, cmList, &client.ListOptions{Namespace: namespace})
+			for _, cm := range cmList.Items {
+				_ = k8sClient.Delete(ctx, &cm)
+			}
+			Eventually(func() int {
+				haList := &hav1.HomeAssistantList{}
+				_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
+				return len(haList.Items)
+			}, timeout, interval).Should(Equal(0))
+		})
+
+		It("should not create NetworkPolicy when spec.alpha is unset", func() {
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: namespace},
+				Spec:       hav1.HomeAssistantSpec{Version: "stable"},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			haConfig := &hav1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{Name: testName + "-config", Namespace: namespace},
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: testName},
+					Configuration:    "homeassistant:\n  name: Test\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
+			reconciler := &HomeAssistantReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: testName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			np := &networkingv1.NetworkPolicy{}
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: testName, Namespace: namespace}, np)
+			Expect(errors.IsNotFound(err)).To(BeTrue())
+		})
+
+		It("should create NetworkPolicy with owner reference when enabled", func() {
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: namespace},
+				Spec: hav1.HomeAssistantSpec{
+					Version: "stable",
+					Alpha: &hav1.AlphaSpec{
+						NetworkPolicy: &hav1.NetworkPolicyAlphaSpec{Enabled: true},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			haConfig := &hav1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{Name: testName + "-config", Namespace: namespace},
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: testName},
+					Configuration:    "homeassistant:\n  name: Test\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
+			reconciler := &HomeAssistantReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: testName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				np := &networkingv1.NetworkPolicy{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name: testName, Namespace: namespace,
+				}, np)).To(Succeed())
+
+				g.Expect(np.OwnerReferences).To(HaveLen(1))
+				g.Expect(np.OwnerReferences[0].Kind).To(Equal("HomeAssistant"))
+				g.Expect(np.OwnerReferences[0].Name).To(Equal(testName))
+
+				g.Expect(np.Spec.PolicyTypes).To(ConsistOf(networkingv1.PolicyTypeIngress))
+				g.Expect(np.Spec.PodSelector.MatchLabels).To(HaveKeyWithValue(labelAppInstance, testName))
+				g.Expect(np.Spec.Ingress).To(HaveLen(1))
+				g.Expect(np.Spec.Ingress[0].Ports).To(HaveLen(1))
+				g.Expect(np.Spec.Ingress[0].Ports[0].Port.IntValue()).To(Equal(8123))
+			}, timeout, interval).Should(Succeed())
+		})
+
+		It("should delete NetworkPolicy when toggled from enabled to disabled", func() {
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: namespace},
+				Spec: hav1.HomeAssistantSpec{
+					Version: "stable",
+					Alpha: &hav1.AlphaSpec{
+						NetworkPolicy: &hav1.NetworkPolicyAlphaSpec{Enabled: true},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			haConfig := &hav1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{Name: testName + "-config", Namespace: namespace},
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: testName},
+					Configuration:    "homeassistant:\n  name: Test\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
+			reconciler := &HomeAssistantReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: testName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name: testName, Namespace: namespace,
+				}, &networkingv1.NetworkPolicy{})
+			}, timeout, interval).Should(Succeed())
+
+			// Toggle off — re-fetch before update to get current resourceVersion
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: testName, Namespace: namespace,
+			}, ha)).To(Succeed())
+			ha.Spec.Alpha.NetworkPolicy.Enabled = false
+			Expect(k8sClient.Update(ctx, ha)).To(Succeed())
+
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: testName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name: testName, Namespace: namespace,
+				}, &networkingv1.NetworkPolicy{})
+				return errors.IsNotFound(err)
+			}, timeout, interval).Should(BeTrue())
 		})
 	})
 

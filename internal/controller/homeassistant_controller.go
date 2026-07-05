@@ -27,6 +27,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -112,6 +113,7 @@ type HomeAssistantReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -190,6 +192,12 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Reconcile Service
 	if err := r.reconcileService(ctx, ha); err != nil {
 		log.Error(err, "Failed to reconcile Service")
+		return r.updateStatusFailed(ctx, ha, err)
+	}
+
+	// Reconcile NetworkPolicy (alpha, opt-in via spec.alpha.networkPolicy.enabled)
+	if err := r.reconcileNetworkPolicy(ctx, ha); err != nil {
+		log.Error(err, "Failed to reconcile NetworkPolicy")
 		return r.updateStatusFailed(ctx, ha, err)
 	}
 
@@ -902,6 +910,111 @@ func (r *HomeAssistantReconciler) buildService(ha *hav1.HomeAssistant) *corev1.S
 	return svc
 }
 
+// reconcileNetworkPolicy creates, updates, or removes the (alpha) NetworkPolicy
+// for the Home Assistant pod based on spec.alpha.networkPolicy.enabled. This is
+// the first conditionally-created resource in this reconciler, so unlike
+// reconcileService/reconcilePVC it must also handle the disabled case by
+// deleting a previously-created policy.
+func (r *HomeAssistantReconciler) reconcileNetworkPolicy(ctx context.Context, ha *hav1.HomeAssistant) error {
+	log := logf.FromContext(ctx)
+
+	enabled := ha.Spec.Alpha != nil &&
+		ha.Spec.Alpha.NetworkPolicy != nil &&
+		ha.Spec.Alpha.NetworkPolicy.Enabled
+
+	np := &networkingv1.NetworkPolicy{}
+	err := r.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, np)
+
+	if !enabled {
+		if err == nil {
+			log.Info("Deleting NetworkPolicy (spec.alpha.networkPolicy.enabled is false)", "NetworkPolicy.Name", np.Name)
+			return client.IgnoreNotFound(r.Delete(ctx, np))
+		}
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+
+	if err != nil && errors.IsNotFound(err) {
+		np = r.buildNetworkPolicy(ha)
+		if err := controllerutil.SetControllerReference(ha, np, r.Scheme); err != nil {
+			return err
+		}
+		log.Info("Creating NetworkPolicy", "NetworkPolicy.Name", np.Name)
+		return r.Create(ctx, np)
+	} else if err != nil {
+		return err
+	}
+
+	desired := r.buildNetworkPolicy(ha)
+	if !reflect.DeepEqual(np.Spec, desired.Spec) {
+		np.Spec = desired.Spec
+		log.Info("Updating NetworkPolicy", "NetworkPolicy.Name", np.Name)
+		return r.Update(ctx, np)
+	}
+
+	return nil
+}
+
+// buildNetworkPolicy builds the (alpha) NetworkPolicy restricting ingress to the
+// Home Assistant pod to the same namespace and the operator's namespace, on the
+// Service port. Egress is intentionally left unrestricted — Home Assistant needs
+// broad, unpredictable egress to IoT devices, cloud APIs, and MQTT brokers.
+func (r *HomeAssistantReconciler) buildNetworkPolicy(ha *hav1.HomeAssistant) *networkingv1.NetworkPolicy {
+	labels := r.labelsForHomeAssistant(ha)
+
+	port := int32(defaultPort)
+	if ha.Spec.Service != nil && ha.Spec.Service.Port != 0 {
+		port = ha.Spec.Service.Port
+	}
+	tcpPort := intstr.FromInt(int(port))
+	protocol := corev1.ProtocolTCP
+
+	// Same namespace as the Home Assistant pod (e.g. other tooling, add-ons).
+	peers := []networkingv1.NetworkPolicyPeer{
+		{PodSelector: &metav1.LabelSelector{}},
+	}
+
+	// The operator's own namespace, so it can keep reaching the HA API
+	// (bootstrap, hot-reload, health checks). Uses the well-known
+	// kubernetes.io/metadata.name label present on every namespace.
+	if operatorNamespace := os.Getenv("OPERATOR_NAMESPACE"); operatorNamespace != "" {
+		peers = append(peers, networkingv1.NetworkPolicyPeer{
+			NamespaceSelector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					corev1.LabelMetadataName: operatorNamespace,
+				},
+			},
+		})
+	}
+
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      ha.Name,
+			Namespace: ha.Namespace,
+			Labels:    labels,
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: labels,
+			},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{
+				{
+					From: peers,
+					Ports: []networkingv1.NetworkPolicyPort{
+						{
+							Protocol: &protocol,
+							Port:     &tcpPort,
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
 // labelsForHomeAssistant returns the labels for selecting resources belonging to the given HomeAssistant CR
 func (r *HomeAssistantReconciler) labelsForHomeAssistant(ha *hav1.HomeAssistant) map[string]string {
 	return map[string]string{
@@ -1194,6 +1307,7 @@ func (r *HomeAssistantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Watches(
 			&hav1.HomeAssistantConfiguration{},
 			handler.EnqueueRequestsFromMapFunc(r.findHomeAssistantForConfiguration),

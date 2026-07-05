@@ -116,6 +116,22 @@ spec:
 !!! warning
     `hostNetwork: true` binds HA directly to the node's network interface. Use only on single-node clusters or when LAN device discovery is required.
 
+    It also weakens `spec.alpha.networkPolicy.enabled` (see below): NetworkPolicy operates on pod IPs, so it does not restrict traffic arriving via the host's network interface. Combining both gives only partial isolation.
+
+### `spec.alpha.networkPolicy.enabled`
+
+!!! note "Alpha"
+    Opt-in, off by default. Fields under `spec.alpha` are experimental and may change or be removed without a deprecation notice.
+
+When enabled, the operator creates a `NetworkPolicy` restricting ingress to the Home Assistant pod to the same namespace and the operator's own namespace, on the Service port. Egress is left unrestricted — Home Assistant needs broad, unpredictable egress to IoT devices, cloud APIs, and MQTT brokers.
+
+```yaml
+spec:
+  alpha:
+    networkPolicy:
+      enabled: true
+```
+
 ### `spec.secretsFrom`
 
 Direct reference to a Kubernetes Secret containing a `secrets.yaml` blob. Prefer `HomeAssistantSecrets` CR for managed secret composition.

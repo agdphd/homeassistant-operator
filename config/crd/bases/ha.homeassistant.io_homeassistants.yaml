@@ -52,6 +52,31 @@ spec:
           spec:
             description: HomeAssistantSpec defines the desired state of HomeAssistant.
             properties:
+              alpha:
+                description: |-
+                  Alpha groups experimental, unstable fields. Fields here may change or be
+                  removed without a deprecation notice.
+                properties:
+                  networkPolicy:
+                    description: |-
+                      NetworkPolicy controls whether the operator creates a NetworkPolicy
+                      restricting ingress to the Home Assistant pod.
+                    properties:
+                      enabled:
+                        default: false
+                        description: |-
+                          Enabled controls whether the operator creates a NetworkPolicy for the
+                          Home Assistant pod, restricting ingress to the operator's namespace and
+                          the Home Assistant namespace on the Service port. Egress is left
+                          unrestricted (Home Assistant needs broad, unpredictable egress to IoT
+                          devices, cloud APIs, and MQTT brokers).
+
+                          NetworkPolicy operates on pod IPs — it does not restrict traffic
+                          arriving via the host network interface. Combining this with
+                          spec.hostNetwork: true gives only partial isolation.
+                        type: boolean
+                    type: object
+                type: object
               backup:
                 description: |-
                   Backup configures automatic backups using Home Assistant's built-in backup system.
