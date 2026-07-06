@@ -1719,6 +1719,68 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}, timeout, interval).Should(Succeed())
 		})
 
+		It("should include an operator-namespace ingress peer when OPERATOR_NAMESPACE is set", func() {
+			prev, hadPrev := os.LookupEnv("OPERATOR_NAMESPACE")
+			Expect(os.Setenv("OPERATOR_NAMESPACE", "homeassistant-operator-system")).To(Succeed())
+			DeferCleanup(func() {
+				if hadPrev {
+					Expect(os.Setenv("OPERATOR_NAMESPACE", prev)).To(Succeed())
+				} else {
+					Expect(os.Unsetenv("OPERATOR_NAMESPACE")).To(Succeed())
+				}
+			})
+
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: namespace},
+				Spec: hav1.HomeAssistantSpec{
+					Version: "stable",
+					Alpha: &hav1.AlphaSpec{
+						NetworkPolicy: &hav1.NetworkPolicyAlphaSpec{Enabled: true},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			haConfig := &hav1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{Name: testName + "-config", Namespace: namespace},
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: testName},
+					Configuration:    "homeassistant:\n  name: Test\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
+			reconciler := &HomeAssistantReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: testName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func(g Gomega) {
+				np := &networkingv1.NetworkPolicy{}
+				g.Expect(k8sClient.Get(ctx, types.NamespacedName{
+					Name: testName, Namespace: namespace,
+				}, np)).To(Succeed())
+
+				g.Expect(np.Spec.Ingress).To(HaveLen(1))
+				peers := np.Spec.Ingress[0].From
+				g.Expect(peers).To(HaveLen(2))
+
+				g.Expect(peers).To(ContainElement(
+					networkingv1.NetworkPolicyPeer{PodSelector: &metav1.LabelSelector{}},
+				))
+				g.Expect(peers).To(ContainElement(
+					networkingv1.NetworkPolicyPeer{
+						NamespaceSelector: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								corev1.LabelMetadataName: "homeassistant-operator-system",
+							},
+						},
+					},
+				))
+			}, timeout, interval).Should(Succeed())
+		})
+
 		It("should delete NetworkPolicy when toggled from enabled to disabled", func() {
 			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: namespace},

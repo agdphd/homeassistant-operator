@@ -1,4 +1,4 @@
-{{- if .Values.networkPolicy.enabled }}
+{{- if .Values.metricsNetworkPolicy.enabled }}
 # Restricts ingress to the operator's /metrics endpoint to Pods running in
 # namespaces labeled "metrics: enabled". Only Ingress is restricted here —
 # Egress is intentionally left unrestricted (see values.yaml comment).

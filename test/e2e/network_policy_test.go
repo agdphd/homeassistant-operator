@@ -118,11 +118,15 @@ spec:
 				"-o", "jsonpath={.status.phase}")).To(Equal("Running"))
 		}, utils.ResourceTimeout, 2*time.Second).Should(Succeed())
 
-		blockedCmd := exec.Command("kubectl", "exec", "-n", probeNamespace, "probe-blocked", "--",
-			"wget", "-q", "-T", "3", "-O-", haURL)
-		_, blockedErr := utils.Run(blockedCmd)
-		Expect(blockedErr).To(HaveOccurred(),
-			"a pod in an unrelated namespace should NOT reach the HA Service once the NetworkPolicy is enabled")
+		// NetworkPolicy object existing does not mean the CNI has already
+		// programmed the dataplane — retry until enforcement is actually active.
+		Eventually(func(g Gomega) {
+			blockedCmd := exec.Command("kubectl", "exec", "-n", probeNamespace, "probe-blocked", "--",
+				"wget", "-q", "-T", "3", "-O-", haURL)
+			_, blockedErr := utils.Run(blockedCmd)
+			g.Expect(blockedErr).To(HaveOccurred(),
+				"a pod in an unrelated namespace should NOT reach the HA Service once the NetworkPolicy is enabled")
+		}, utils.ResourceTimeout, 5*time.Second).Should(Succeed())
 
 		By("Creating a probe pod in the same namespace as HA — expected to be ALLOWED")
 		runCmd = exec.Command("kubectl", "run", "probe-allowed", "-n", namespace,

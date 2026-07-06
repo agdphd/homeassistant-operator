@@ -74,6 +74,11 @@ spec:
                           NetworkPolicy operates on pod IPs — it does not restrict traffic
                           arriving via the host network interface. Combining this with
                           spec.hostNetwork: true gives only partial isolation.
+
+                          Deliberately without omitempty: this field represents explicit user
+                          intent, and the spec.alpha lifecycle plans to flip its default to true
+                          in a later phase — omitempty would let an explicit false be dropped and
+                          silently re-defaulted to true by the API server once that happens.
                         type: boolean
                     type: object
                 type: object

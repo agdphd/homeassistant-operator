@@ -85,9 +85,11 @@ topologySpreadConstraints: []
 #   - homeassistant-dev
 watchNamespaces: []
 
-# networkPolicy restricts ingress to the operator's own /metrics endpoint to
-# namespaces labeled "metrics: enabled". Off by default (opt-in) — egress is
+# metricsNetworkPolicy restricts ingress to the operator's own /metrics endpoint
+# to namespaces labeled "metrics: enabled". Off by default (opt-in) — egress is
 # intentionally not restricted here, since there is no portable way to address
 # the Kubernetes API server across cluster types/CNIs from a generic chart.
-networkPolicy:
+# NOTE: unrelated to spec.alpha.networkPolicy.enabled on the HomeAssistant CR,
+# which instead protects the Home Assistant pod itself.
+metricsNetworkPolicy:
   enabled: false

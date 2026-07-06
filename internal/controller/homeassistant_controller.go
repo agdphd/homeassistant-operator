@@ -922,6 +922,12 @@ func (r *HomeAssistantReconciler) reconcileNetworkPolicy(ctx context.Context, ha
 		ha.Spec.Alpha.NetworkPolicy != nil &&
 		ha.Spec.Alpha.NetworkPolicy.Enabled
 
+	if enabled && os.Getenv("OPERATOR_NAMESPACE") == "" {
+		log.Info("WARNING: spec.alpha.networkPolicy.enabled is true but OPERATOR_NAMESPACE is not set — " +
+			"the NetworkPolicy will not include an operator-namespace ingress peer, which may break " +
+			"bootstrap, hot-reload, and health-check connectivity from the operator to this HomeAssistant")
+	}
+
 	np := &networkingv1.NetworkPolicy{}
 	err := r.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, np)
 

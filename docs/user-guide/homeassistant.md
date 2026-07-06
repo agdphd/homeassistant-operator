@@ -118,7 +118,7 @@ spec:
 
     It also weakens `spec.alpha.networkPolicy.enabled` (see below): NetworkPolicy operates on pod IPs, so it does not restrict traffic arriving via the host's network interface. Combining both gives only partial isolation.
 
-### `spec.alpha.networkPolicy.enabled`
+### `spec.alpha.networkPolicy`
 
 !!! note "Alpha"
     Opt-in, off by default. Fields under `spec.alpha` are experimental and may change or be removed without a deprecation notice.

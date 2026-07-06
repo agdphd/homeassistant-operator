@@ -105,9 +105,14 @@ type NetworkPolicyAlphaSpec struct {
 	// NetworkPolicy operates on pod IPs — it does not restrict traffic
 	// arriving via the host network interface. Combining this with
 	// spec.hostNetwork: true gives only partial isolation.
+	//
+	// Deliberately without omitempty: this field represents explicit user
+	// intent, and the spec.alpha lifecycle plans to flip its default to true
+	// in a later phase — omitempty would let an explicit false be dropped and
+	// silently re-defaulted to true by the API server once that happens.
 	// +kubebuilder:default=false
 	// +optional
-	Enabled bool `json:"enabled,omitempty"`
+	Enabled bool `json:"enabled"`
 }
 
 // BackupSpec configures Home Assistant's built-in backup system via WebSocket API.
