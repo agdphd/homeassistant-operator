@@ -933,6 +933,11 @@ func (r *HomeAssistantReconciler) reconcileNetworkPolicy(ctx context.Context, ha
 
 	if !enabled {
 		if err == nil {
+			if !metav1.IsControlledBy(np, ha) {
+				log.Info("Existing NetworkPolicy is not owned by this HomeAssistant, leaving it untouched",
+					"NetworkPolicy.Name", np.Name)
+				return nil
+			}
 			log.Info("Deleting NetworkPolicy (spec.alpha.networkPolicy.enabled is false)", "NetworkPolicy.Name", np.Name)
 			return client.IgnoreNotFound(r.Delete(ctx, np))
 		}
@@ -951,6 +956,12 @@ func (r *HomeAssistantReconciler) reconcileNetworkPolicy(ctx context.Context, ha
 		return r.Create(ctx, np)
 	} else if err != nil {
 		return err
+	}
+
+	if !metav1.IsControlledBy(np, ha) {
+		log.Info("Existing NetworkPolicy is not owned by this HomeAssistant, leaving it untouched",
+			"NetworkPolicy.Name", np.Name)
+		return nil
 	}
 
 	desired := r.buildNetworkPolicy(ha)

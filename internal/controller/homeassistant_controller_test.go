@@ -1640,6 +1640,13 @@ var _ = Describe("HomeAssistant Controller", func() {
 			for _, cm := range cmList.Items {
 				_ = k8sClient.Delete(ctx, &cm)
 			}
+			// envtest has no garbage collector, so owner-referenced NetworkPolicies
+			// do not cascade-delete. Remove them explicitly for test isolation.
+			npList := &networkingv1.NetworkPolicyList{}
+			_ = k8sClient.List(ctx, npList, &client.ListOptions{Namespace: namespace})
+			for _, np := range npList.Items {
+				_ = k8sClient.Delete(ctx, &np)
+			}
 			Eventually(func() int {
 				haList := &hav1.HomeAssistantList{}
 				_ = k8sClient.List(ctx, haList, &client.ListOptions{Namespace: namespace})
@@ -1832,6 +1839,49 @@ var _ = Describe("HomeAssistant Controller", func() {
 				}, &networkingv1.NetworkPolicy{})
 				return errors.IsNotFound(err)
 			}, timeout, interval).Should(BeTrue())
+		})
+
+		It("should not delete a pre-existing NetworkPolicy it does not own", func() {
+			// A user-managed NetworkPolicy sharing the HA name must never be touched.
+			foreign := &networkingv1.NetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: namespace},
+				Spec: networkingv1.NetworkPolicySpec{
+					PodSelector: metav1.LabelSelector{},
+					PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
+				},
+			}
+			Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
+
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: namespace},
+				Spec: hav1.HomeAssistantSpec{
+					Version: "stable",
+					// Alpha unset → enabled == false → reconcile takes the delete path.
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+
+			haConfig := &hav1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{Name: testName + "-config", Namespace: namespace},
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: testName},
+					Configuration:    "homeassistant:\n  name: Test\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+
+			reconciler := &HomeAssistantReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: testName, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			// Foreign policy must still exist and carry no owner reference.
+			fetched := &networkingv1.NetworkPolicy{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: testName, Namespace: namespace,
+			}, fetched)).To(Succeed())
+			Expect(fetched.OwnerReferences).To(BeEmpty())
 		})
 	})
 

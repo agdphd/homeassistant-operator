@@ -132,6 +132,9 @@ spec:
       enabled: true
 ```
 
+!!! warning
+    The operator-namespace ingress peer is only added when the controller knows its own namespace via the `OPERATOR_NAMESPACE` environment variable (set automatically by the shipped manifests). If it is unset, the operator silently omits that peer and only logs a warning — the resulting policy blocks the operator from reaching the HA API, breaking bootstrap, hot-reload, and health checks. Ensure `OPERATOR_NAMESPACE` is set on the controller before enabling this.
+
 ### `spec.secretsFrom`
 
 Direct reference to a Kubernetes Secret containing a `secrets.yaml` blob. Prefer `HomeAssistantSecrets` CR for managed secret composition.
