@@ -1,6 +1,8 @@
 module github.com/przemekhys/homeassistant-operator
 
-go 1.26.5
+go 1.26.0
+
+toolchain go1.26.5
 
 require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
@@ -16,7 +18,6 @@ require (
 
 require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
-	github.com/moby/spdystream v0.5.1 // indirect
 	k8s.io/streaming v0.36.2 // indirect
 )
 
