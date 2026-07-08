@@ -138,10 +138,18 @@ spec:
 				"-o", "jsonpath={.status.phase}")).To(Equal("Running"))
 		}, utils.ResourceTimeout, 2*time.Second).Should(Succeed())
 
-		allowedCmd := exec.Command("kubectl", "exec", "-n", namespace, "probe-allowed", "--",
-			"wget", "-q", "-T", "5", "-O-", haURL)
-		_, allowedErr := utils.Run(allowedCmd)
-		Expect(allowedErr).NotTo(HaveOccurred(), "a pod in the same namespace as HA should still reach it")
+		// Same as the blocked probe, allowing the traffic in the dataplane is not
+		// instantaneous: right after the NetworkPolicy is enabled the CNI is still
+		// programming rules and the HA Service endpoints may briefly resync, so a
+		// single shot can hit a transient "connection refused". Retry until the
+		// same-namespace path is actually reachable.
+		Eventually(func(g Gomega) {
+			allowedCmd := exec.Command("kubectl", "exec", "-n", namespace, "probe-allowed", "--",
+				"wget", "-q", "-T", "5", "-O-", haURL)
+			_, allowedErr := utils.Run(allowedCmd)
+			g.Expect(allowedErr).NotTo(HaveOccurred(),
+				"a pod in the same namespace as HA should still reach it")
+		}, utils.ResourceTimeout, 5*time.Second).Should(Succeed())
 
 		By("Disabling spec.alpha.networkPolicy.enabled")
 		Expect(utils.PatchResource("homeassistants", haName, namespace, "merge",
