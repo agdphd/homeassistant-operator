@@ -91,6 +91,10 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: status.podIP
+        - name: OPERATOR_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         resources:
           limits:
             cpu: 500m

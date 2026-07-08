@@ -1,0 +1,27 @@
+{{- if .Values.metricsNetworkPolicy.enabled }}
+# Restricts ingress to the operator's /metrics endpoint to Pods running in
+# namespaces labeled "metrics: enabled". Only Ingress is restricted here —
+# Egress is intentionally left unrestricted (see values.yaml comment).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "homeassistant-operator.fullname" . }}-allow-metrics-traffic
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "homeassistant-operator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "homeassistant-operator.selectorLabels" . | nindent 6 }}
+      control-plane: controller-manager
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              metrics: enabled
+      ports:
+        - port: 8443
+          protocol: TCP
+{{- end }}

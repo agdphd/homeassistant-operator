@@ -76,6 +76,43 @@ type HomeAssistantSpec struct {
 	// Requires bootstrap with API token enabled.
 	// +optional
 	Backup *BackupSpec `json:"backup,omitempty"`
+
+	// Alpha groups experimental, unstable fields. Fields here may change or be
+	// removed without a deprecation notice.
+	// +optional
+	Alpha *AlphaSpec `json:"alpha,omitempty"`
+}
+
+// AlphaSpec groups experimental fields that are not yet stable enough for the
+// top-level spec. See spec.alpha.* lifecycle: alpha (opt-in,
+// default false) -> stable default false -> stable default true -> mandatory.
+type AlphaSpec struct {
+	// NetworkPolicy controls whether the operator creates a NetworkPolicy
+	// restricting ingress to the Home Assistant pod.
+	// +optional
+	NetworkPolicy *NetworkPolicyAlphaSpec `json:"networkPolicy,omitempty"`
+}
+
+// NetworkPolicyAlphaSpec configures the (alpha) NetworkPolicy created for the
+// Home Assistant pod.
+type NetworkPolicyAlphaSpec struct {
+	// Enabled controls whether the operator creates a NetworkPolicy for the
+	// Home Assistant pod, restricting ingress to the operator's namespace and
+	// the Home Assistant namespace on the Service port. Egress is left
+	// unrestricted (Home Assistant needs broad, unpredictable egress to IoT
+	// devices, cloud APIs, and MQTT brokers).
+	//
+	// NetworkPolicy operates on pod IPs — it does not restrict traffic
+	// arriving via the host network interface. Combining this with
+	// spec.hostNetwork: true gives only partial isolation.
+	//
+	// Deliberately without omitempty: this field represents explicit user
+	// intent, and the spec.alpha lifecycle plans to flip its default to true
+	// in a later phase — omitempty would let an explicit false be dropped and
+	// silently re-defaulted to true by the API server once that happens.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled"`
 }
 
 // BackupSpec configures Home Assistant's built-in backup system via WebSocket API.
