@@ -5,6 +5,18 @@ metadata:
     control-plane: controller-manager
     app.kubernetes.io/name: homeassistant-operator
     app.kubernetes.io/managed-by: kustomize
+    # Enforce the "restricted" Pod Security Standard on the operator's own
+    # namespace. The controller-manager pod already satisfies restricted, so
+    # enforcement blocks only future regressions or unrelated non-compliant pods.
+    # Version "latest" auto-applies the newest restricted rules on cluster upgrade.
+    # NOTE: this covers ONLY the operator; Home Assistant workloads run in their
+    # own namespaces and are out of scope (they often need elevated privileges).
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
   name: system
 ---
 apiVersion: apps/v1
@@ -69,6 +81,10 @@ spec:
         ports: []
         securityContext:
           allowPrivilegeEscalation: false
+          # Declared here at the container level too (the pod securityContext also
+          # sets it) so the restricted profile is satisfied regardless of cluster
+          # defaults or later pod-level edits.
+          runAsNonRoot: true
           capabilities:
             drop:
             - "ALL"

@@ -229,6 +229,10 @@ security-check: ## Run govulncheck to scan for vulnerabilities
 	@echo "Running govulncheck..."
 	@go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+.PHONY: verify-pss
+verify-pss: kustomize ## Verify operator manifests satisfy the "restricted" Pod Security Standard
+	@KUSTOMIZE=$(KUSTOMIZE) ./hack/verify-pss.sh
+
 .PHONY: dupl-check
 dupl-check: ## Check for duplicate code (excluding tests and generated files)
 	@echo "Checking for code duplication..."
