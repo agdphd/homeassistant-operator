@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in NetworkPolicy for the Home Assistant pod (alpha)** — new `spec.alpha.networkPolicy.enabled` field (default `false`). When enabled, the operator creates a `NetworkPolicy` that restricts ingress to the HA pod to the same namespace and the operator's own namespace on the Service port, while leaving egress unrestricted (HA needs broad, unpredictable egress to IoT devices, cloud APIs, and MQTT brokers). The operator only manages `NetworkPolicy` objects it owns (via controller reference), so a pre-existing policy of the same name is left untouched. The operator-namespace ingress peer is added only when the controller knows its own namespace via the `OPERATOR_NAMESPACE` env var (set by the shipped manifests); otherwise it is omitted with a warning. Being an `spec.alpha` feature, it is off by default and may change or be removed without a deprecation notice.
+
 ## [v1.1.0] - 2026-07-05
 
 ### Added
