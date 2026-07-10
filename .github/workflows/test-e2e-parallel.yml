@@ -14,7 +14,7 @@ env:
   # renovate: datasource=docker depName=rancher/k3s
   K3S_VERSION: v1.36.2-k3s1
   # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
-  HA_VERSION: "2026.7.1"
+  HA_VERSION: "2026.7.2"
 
 jobs:
   # Job 1: Build and cache operator image
