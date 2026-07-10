@@ -1,0 +1,20 @@
+{{- if .Values.namespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Release.Namespace }}
+  labels:
+    {{- include "homeassistant-operator.labels" . | nindent 4 }}
+    control-plane: controller-manager
+    # Enforce the "restricted" Pod Security Standard on the operator's own
+    # namespace. The controller-manager pod already satisfies restricted, so
+    # enforcement blocks only future regressions or unrelated non-compliant pods.
+    # Version "latest" auto-applies the newest restricted rules on cluster upgrade.
+    # Scope: operator only — Home Assistant workloads run in their own namespaces.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+{{- end }}

@@ -17,6 +17,15 @@ serviceAccount:
   name: ""
   annotations: {}
 
+namespace:
+  # create: when true, the chart renders the release Namespace and labels it to
+  # enforce the "restricted" Pod Security Standard (version latest). Install the
+  # chart WITHOUT `--create-namespace` so the chart owns the namespace, e.g.:
+  #   helm install ha-operator ... -n homeassistant-operator-system --set namespace.create=true
+  # When false (default), Helm/you manage the namespace and no PSA labels are added;
+  # the operator pod is restricted-compliant regardless (see securityContext below).
+  create: false
+
 podAnnotations: {}
 
 podSecurityContext:

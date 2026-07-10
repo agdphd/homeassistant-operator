@@ -81,6 +81,7 @@ nav:
     - Integrations: user-guide/integrations.md
     - Infrastructure (Floor/Label/Area): user-guide/infrastructure.md
     - Backup: user-guide/backup.md
+    - Security (Pod Security Standards): user-guide/security.md
   - Ecosystem Guides:
     - Overview: ecosystem/index.md
     - Flux CD: ecosystem/flux.md
