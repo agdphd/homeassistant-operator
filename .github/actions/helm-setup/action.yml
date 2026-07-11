@@ -14,10 +14,18 @@ inputs:
     description: "helm-unittest plugin version"
     required: false
     default: "v0.7.2"
+  yq-version:
+    description: "mikefarah yq version"
+    required: false
+    default: "v4.44.3"
   install-k3d:
     description: "Also install k3d (for e2e/smoke jobs)"
     required: false
     default: "false"
+  k3d-version:
+    description: "k3d version to install"
+    required: false
+    default: "v5.8.1"
 
 runs:
   using: "composite"
@@ -60,10 +68,12 @@ runs:
 
     - name: Install yq
       shell: bash
+      env:
+        YQ_VERSION: ${{ inputs.yq-version }}
       run: |
         set -euo pipefail
         command -v yq >/dev/null 2>&1 || {
-          sudo curl -sSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo curl -sSL -o /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
           sudo chmod +x /usr/local/bin/yq
         }
         yq --version
@@ -71,6 +81,8 @@ runs:
     - name: Install k3d
       if: ${{ inputs.install-k3d == 'true' }}
       shell: bash
+      env:
+        TAG: ${{ inputs.k3d-version }}
       run: |
         set -euo pipefail
         curl -sS https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash

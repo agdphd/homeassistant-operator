@@ -3,15 +3,15 @@
 # The RBAC upgrade gate fails when the chart grants a permission the previous
 # release (N-1) did not. To intentionally add a permission, list its triple here
 # with a justification comment. This is a deliberate, reviewed exception to the
-# minimal-RBAC principle (Constitution Principle V) — keep it short and current.
+# minimal-RBAC rule — keep it short and current.
 #
 # Format: one triple per line, apiGroup/resource/verb (empty apiGroup = core "").
 # Example (with justification on the preceding comment line):
-#   # needed to watch HA pods for the /unban sidecar (feature X, PR #NNN)
+#   # needed to watch HA pods for the /unban init-container recovery flow
 #   /pods/watch
 #
 # NetworkPolicy reconciliation for the HomeAssistant pod
-# (spec.alpha.networkPolicy.enabled — reconcileNetworkPolicy, PR #139).
+# (spec.alpha.networkPolicy.enabled).
 networking.k8s.io/networkpolicies/create
 networking.k8s.io/networkpolicies/delete
 networking.k8s.io/networkpolicies/get

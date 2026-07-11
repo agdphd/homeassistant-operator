@@ -311,10 +311,16 @@ $(KUBECONFORM): $(LOCALBIN)
 	$(call go-install-tool,$(KUBECONFORM),github.com/yannh/kubeconform/cmd/kubeconform,$(KUBECONFORM_VERSION))
 
 .PHONY: helm-unittest-plugin
-helm-unittest-plugin: ## Install/verify the helm-unittest plugin.
-	@helm plugin list 2>/dev/null | grep -q unittest || \
+helm-unittest-plugin: ## Install/verify the helm-unittest plugin (pinned to HELM_UNITTEST_VERSION).
+	@want="$(HELM_UNITTEST_VERSION)"; want="$${want#v}"; \
+	have="$$(helm plugin list 2>/dev/null | awk '$$1=="unittest"{print $$2}')"; \
+	if [ "$$have" = "$$want" ]; then \
+		echo "helm-unittest $$want already installed"; \
+	else \
+		[ -n "$$have" ] && helm plugin uninstall unittest >/dev/null 2>&1 || true; \
 		helm plugin install https://github.com/helm-unittest/helm-unittest --version $(HELM_UNITTEST_VERSION) --verify=false 2>/dev/null || \
-		helm plugin install https://github.com/helm-unittest/helm-unittest --version $(HELM_UNITTEST_VERSION)
+		helm plugin install https://github.com/helm-unittest/helm-unittest --version $(HELM_UNITTEST_VERSION); \
+	fi
 
 .PHONY: helm-lint
 helm-lint: ## Lint the Helm chart.
@@ -359,7 +365,7 @@ helm-verify-docs: helm-docs-bin ## Fail if the committed chart README drifted fr
 	@HELM_DOCS=$(HELM_DOCS) HELM_CHART_DIR=$(HELM_CHART_DIR) ./hack/verify-helm-docs.sh
 
 .PHONY: helm-verify
-helm-verify: helm-verify-sync helm-verify-equivalence helm-schema-lint helm-unittest helm-verify-docs ## Fast pre-PR gate: all chart checks that do not need a cluster.
+helm-verify: helm-verify-sync helm-verify-equivalence helm-verify-rbac-upgrade helm-schema-lint helm-unittest helm-verify-docs ## Fast pre-PR gate: all chart checks that do not need a cluster.
 
 ## --- End-to-end / packaging ------------------------------------------------------
 

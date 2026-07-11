@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # verify-equivalence.sh — fail if the Kustomize and Helm renders diverge on the
-# security-critical operator fields (FR-002, SC-005):
+# security-critical operator fields:
 #   - manager ClusterRole .rules
 #   - Deployment pod + container securityContext
 #   - operator Namespace Pod Security Admission labels
@@ -19,8 +19,8 @@ YQ="$(hh_yq)"
 hh_require helm
 ALLOWLIST="$ROOT/hack/equivalence-allowlist.txt"
 
-k_render="$(mktemp)"; h_render="$(mktemp)"
-trap 'rm -f "$k_render" "$h_render"' EXIT
+k_render="$(mktemp)"; h_render="$(mktemp)"; eq_diff="$(mktemp)"
+trap 'rm -f "$k_render" "$h_render" "$eq_diff"' EXIT
 
 hh_render_kustomize config/default > "$k_render"
 hh_render_helm --set namespace.create=true > "$h_render"
@@ -46,12 +46,12 @@ for field in rules containerSecurityContext podSecurityContext psaLabels; do
     echo "⏭️  $field — intended difference (allowlisted), skipping"
     continue
   fi
-  if diff <(extract "$k_render" "$field") <(extract "$h_render" "$field") >/tmp/eq.diff 2>&1; then
+  if diff <(extract "$k_render" "$field") <(extract "$h_render" "$field") >"$eq_diff" 2>&1; then
     echo "✅ $field — Kustomize and Helm equivalent"
   else
     echo "❌ $field — Kustomize and Helm diverge:" >&2
     echo "   (< Kustomize   > Helm)" >&2
-    sed 's/^/   /' /tmp/eq.diff >&2
+    sed 's/^/   /' "$eq_diff" >&2
     rc=1
   fi
 done

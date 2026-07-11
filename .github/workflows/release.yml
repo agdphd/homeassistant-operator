@@ -12,6 +12,10 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false # never abort a release mid-publish
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -70,7 +74,7 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
@@ -106,7 +110,7 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Update chart version
         env:
@@ -134,7 +138,9 @@ jobs:
       issues: write # raise a maintainer alert when the smoke test fails
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Set up Helm and k3d
         uses: ./.github/actions/helm-setup
@@ -143,7 +149,7 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Smoke test the published OCI chart
         id: smoke
@@ -155,7 +161,7 @@ jobs:
 
       # On failure: alert the maintainer and mark the release "needs verification".
       # Deliberately NO automatic yank/delete of the published artifact — the
-      # decision to withdraw a release stays manual (FR-008).
+      # decision to withdraw a release stays manual.
       - name: Alert on smoke-test failure
         if: failure()
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdc9 # v7
@@ -173,11 +179,29 @@ jobs:
               ``,
               `Failed run: ${runUrl}`,
             ].join('\n');
-            const issue = await github.rest.issues.create({
-              owner: context.repo.owner, repo: context.repo.repo,
-              title, body, labels: ['release', 'needs-verification'],
-            });
-            core.notice(`Opened alert issue #${issue.data.number} for ${version}`);
+            // Create the alert issue defensively: if the labels do not exist the
+            // API returns 422, so fall back to creating the issue without labels
+            // rather than losing the maintainer notification entirely.
+            let issueNumber = null;
+            try {
+              const issue = await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ['release', 'needs-verification'],
+              });
+              issueNumber = issue.data.number;
+            } catch (e) {
+              core.warning(`Issue creation with labels failed (${e.message}); retrying without labels.`);
+              try {
+                const issue = await github.rest.issues.create({
+                  owner: context.repo.owner, repo: context.repo.repo, title, body,
+                });
+                issueNumber = issue.data.number;
+              } catch (e2) {
+                core.error(`Could not open alert issue for ${version}: ${e2.message}`);
+              }
+            }
+            if (issueNumber) core.notice(`Opened alert issue #${issueNumber} for ${version}`);
+            const ref = issueNumber ? ` (see #${issueNumber})` : '';
             try {
               const rel = await github.rest.repos.getReleaseByTag({
                 owner: context.repo.owner, repo: context.repo.repo, tag: version,
@@ -185,7 +209,7 @@ jobs:
               await github.rest.repos.updateRelease({
                 owner: context.repo.owner, repo: context.repo.repo,
                 release_id: rel.data.id,
-                body: `> ⚠️ **Needs verification** — post-publish smoke test failed (see #${issue.data.number}).\n\n${rel.data.body || ''}`,
+                body: `> ⚠️ **Needs verification** — post-publish smoke test failed${ref}.\n\n${rel.data.body || ''}`,
               });
             } catch (e) {
               core.warning(`Could not annotate release ${version}: ${e.message}`);

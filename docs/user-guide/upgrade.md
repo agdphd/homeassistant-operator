@@ -23,6 +23,14 @@ helm install ha-operator \
   --namespace homeassistant-operator-system --create-namespace
 ```
 
+!!! note "Namespace ownership and Pod Security enforcement"
+    `--create-namespace` lets Helm create the namespace **without** the chart's
+    Pod Security Admission labels — the operator pod is restricted-compliant
+    regardless, but the namespace is not labeled to *enforce* `restricted`. To
+    have the chart own the namespace and apply the enforcing PSA labels, install
+    **without** `--create-namespace` and set `--set namespace.create=true`
+    instead.
+
 On a fresh install all CRDs are created **before** the operator Deployment, so no
 extra step is needed. Verify:
 
@@ -81,4 +89,4 @@ The upgrade succeeded when:
 - `kubectl rollout status` reports the controller-manager Deployment is available;
 - `kubectl get crds | grep homeassistant.io` lists all 10 CRDs;
 - your existing Custom Resources are still present and reconciling
-  (`kubectl get ha,haconfig,haauto,hasc,hascp,haint -A`).
+  (`kubectl get ha,haconfig,hasec,haauto,hasc,hascp,haint,haarea,hafloor,halabel -A`).

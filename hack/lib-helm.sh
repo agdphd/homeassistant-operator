@@ -75,8 +75,35 @@ hh_normalize() {
     del(.metadata.labels["app.kubernetes.io/version"]) |
     del(.metadata.annotations["meta.helm.sh/release-name"]) |
     del(.metadata.annotations["meta.helm.sh/release-namespace"]) |
-    (.. | select(tag == "!!map") | keys) as $k | sort_keys(..)
+    sort_keys(..)
   ' -
+}
+
+# --- k3d / operator helpers (shared by helm-e2e.sh and helm-smoke-oci.sh) --------
+
+# hh_k3d_create <cluster> [memory] — (re)create a fresh single-node k3d cluster.
+hh_k3d_create() {
+  local cluster="$1" mem="${2:-4g}"
+  k3d cluster delete "$cluster" >/dev/null 2>&1 || true
+  k3d cluster create "$cluster" --image "rancher/k3s:${K3S_VERSION:-v1.36.2-k3s1}" \
+    --agents 0 --servers-memory "$mem" --wait
+}
+
+# hh_k3d_cleanup <cluster> — delete a k3d cluster, ignoring errors.
+hh_k3d_cleanup() { k3d cluster delete "$1" >/dev/null 2>&1 || true; }
+
+# hh_wait_ready <namespace> — wait for the controller-manager Deployment rollout.
+hh_wait_ready() {
+  echo "    waiting for operator rollout in $1 ..."
+  kubectl -n "$1" rollout status deploy -l control-plane=controller-manager --timeout=180s
+}
+
+# hh_assert_crds [min] — assert at least <min> (default 10) homeassistant.io CRDs.
+hh_assert_crds() {
+  local min="${1:-10}" n
+  n="$(kubectl get crds -o name | grep -c 'homeassistant.io' || true)"
+  [ "$n" -ge "$min" ] || { echo "❌ expected >=$min homeassistant.io CRDs, found $n" >&2; return 1; }
+  echo "    ✅ $n homeassistant.io CRDs present"
 }
 
 # hh_previous_version — echo the N-1 released chart version (semver, no leading v).

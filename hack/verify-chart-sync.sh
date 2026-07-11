@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-chart-sync.sh — fail if the committed chart drifted from config/ (FR-002).
+# verify-chart-sync.sh — fail if the committed chart drifted from config/.
 #
 # Regenerates the chart's static parts and fails if that produces any change,
 # proving the chart was not hand-edited out of sync with config/.

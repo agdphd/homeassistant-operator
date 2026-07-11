@@ -39,3 +39,14 @@ tests:
     asserts:
       - hasDocuments:
           count: 0
+
+  - it: rejects a blank watchNamespaces entry
+    templates:
+      - watched_namespace_rolebindings.yaml
+    set:
+      watchNamespaces:
+        - homeassistant
+        - "  "
+    asserts:
+      - failedTemplate:
+          errorMessage: "watchNamespaces contains a blank entry — each item must be a non-empty namespace name"

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# helm-e2e.sh — Helm install/upgrade e2e on k3d (FR-003/FR-004/FR-011).
+# helm-e2e.sh — Helm install/upgrade e2e on k3d.
 #
 # Part 1 (fresh install): install the HEAD chart on a clean cluster and assert
 #   the operator becomes Ready and all CRDs exist.
 # Part 2 (upgrade):        install the previous release (N-1) from the OCI
-#   registry, then follow the DOCUMENTED upgrade path — `kubectl apply -f crds/`
+#   registry, then follow the documented upgrade path — `kubectl apply -f crds/`
 #   followed by `helm upgrade` to HEAD — and assert the operator is Ready and
 #   pre-existing CRs survive.
 #
-# The upgrade steps mirror docs/user-guide/upgrade.md exactly, so this test also
-# guards the documentation. Requires: k3d, docker, helm, kubectl.
+# The upgrade steps mirror the published upgrade guide exactly. Requires: k3d,
+# docker, helm, kubectl.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,29 +28,17 @@ K3D_MEMORY="${HELM_E2E_MEMORY:-4g}"
 K3S_VERSION="${K3S_VERSION:-v1.36.2-k3s1}"
 
 for t in k3d docker helm kubectl; do hh_require "$t"; done
+[ -n "$HELM_CHART_DIR" ] || { echo "❌ HELM_CHART_DIR is empty" >&2; exit 2; }
+[ -n "${HELM_REGISTRY:-}" ] || { echo "❌ HELM_REGISTRY must be set (e.g. ghcr.io/<owner>)" >&2; exit 2; }
 
-cleanup() { k3d cluster delete "$CLUSTER" >/dev/null 2>&1 || true; }
-trap cleanup EXIT
+trap 'hh_k3d_cleanup "$CLUSTER"' EXIT
 
 echo "==> Creating fresh k3d cluster '$CLUSTER'"
-k3d cluster delete "$CLUSTER" >/dev/null 2>&1 || true
-k3d cluster create "$CLUSTER" --image "rancher/k3s:$K3S_VERSION" --agents 0 --servers-memory "$K3D_MEMORY" --wait
+hh_k3d_create "$CLUSTER" "$K3D_MEMORY"
 
 echo "==> Building and importing the HEAD operator image ($IMG)"
 make docker-build IMG="$IMG" >/dev/null
 k3d image import "$IMG" -c "$CLUSTER"
-
-wait_ready() {
-  echo "    waiting for operator rollout in $NS ..."
-  kubectl -n "$NS" rollout status deploy -l control-plane=controller-manager --timeout=180s
-}
-
-assert_crds() {
-  local n
-  n="$(kubectl get crds -o name | grep -c 'homeassistant.io' || true)"
-  [ "$n" -ge 10 ] || { echo "❌ expected >=10 homeassistant.io CRDs, found $n" >&2; exit 1; }
-  echo "    ✅ $n homeassistant.io CRDs present"
-}
 
 # ---- Part 1: fresh install of HEAD ---------------------------------------------
 echo ""
@@ -59,8 +47,8 @@ helm install "$RELEASE" "$HELM_CHART_DIR" \
   --namespace "$NS" --create-namespace \
   --set image.repository="$IMG_REPO" --set image.tag="$IMG_TAG" --set image.pullPolicy=IfNotPresent \
   --wait --timeout 180s
-wait_ready
-assert_crds
+hh_wait_ready "$NS"
+hh_assert_crds
 echo "    ✅ fresh install OK"
 
 echo "==> Tearing down fresh install to prepare the upgrade scenario"
@@ -80,7 +68,7 @@ OCI="oci://${HELM_REGISTRY}/charts/homeassistant-operator"
 echo "    installing N-1 chart from $OCI --version $N1"
 helm install "$RELEASE" "$OCI" --version "$N1" \
   --namespace "$NS" --create-namespace --wait --timeout 180s
-wait_ready
+hh_wait_ready "$NS"
 
 echo "    creating a sample CR to verify it survives the upgrade"
 kubectl -n "$NS" apply -f - >/dev/null <<'EOF'
@@ -93,20 +81,23 @@ spec:
     name: e2e-upgrade-probe
 EOF
 
-echo "    [documented step] kubectl apply -f $HELM_CHART_DIR/crds/"
+echo "    [CRD update step] kubectl apply -f $HELM_CHART_DIR/crds/"
 kubectl apply -f "$HELM_CHART_DIR/crds/"
 
-echo "    [documented step] helm upgrade to HEAD"
+echo "    [release upgrade step] helm upgrade to HEAD"
 helm upgrade "$RELEASE" "$HELM_CHART_DIR" \
   --namespace "$NS" \
   --set image.repository="$IMG_REPO" --set image.tag="$IMG_TAG" --set image.pullPolicy=IfNotPresent \
   --wait --timeout 180s
-wait_ready
-assert_crds
+hh_wait_ready "$NS"
+hh_assert_crds
 
-kubectl -n "$NS" get homeassistantconfiguration e2e-upgrade-probe >/dev/null \
-  && echo "    ✅ pre-existing CR survived the upgrade" \
-  || { echo "❌ pre-existing CR was lost during upgrade" >&2; exit 1; }
+if kubectl -n "$NS" get homeassistantconfiguration e2e-upgrade-probe >/dev/null; then
+  echo "    ✅ pre-existing CR survived the upgrade"
+else
+  echo "❌ pre-existing CR was lost during upgrade" >&2
+  exit 1
+fi
 
 echo ""
 echo "✅ helm-e2e passed: fresh install + upgrade N-1 ($N1) -> HEAD."

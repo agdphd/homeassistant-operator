@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# verify-rbac-upgrade.sh — hard security gate on RBAC growth across releases
-# (FR-005, Constitution Principle V — minimal RBAC).
+# verify-rbac-upgrade.sh — hard security gate on RBAC growth across releases,
+# enforcing least-privilege.
 #
 # Computes the set of (apiGroup/resource/verb) triples granted by the chart's
 # ClusterRole + leader-election Role at HEAD and at the previous release (N-1),
@@ -86,7 +86,7 @@ done <<< "$new_triples"
 
 if [ -n "${unjustified//[$'\n']/}" ]; then
   echo "" >&2
-  echo "❌ Chart expands RBAC vs ${n1_tag} without justification (Principle V):" >&2
+  echo "❌ Chart expands RBAC vs ${n1_tag} without justification:" >&2
   printf '%s' "$unjustified" | sed '/^$/d;s/^/   + /' >&2
   echo "" >&2
   echo "👉 Narrow the permission, or add each triple with a justification comment to" >&2

@@ -25,5 +25,11 @@ tests:
           path: metadata.labels["pod-security.kubernetes.io/audit"]
           value: restricted
       - equal:
+          path: metadata.labels["pod-security.kubernetes.io/audit-version"]
+          value: latest
+      - equal:
           path: metadata.labels["pod-security.kubernetes.io/warn"]
           value: restricted
+      - equal:
+          path: metadata.labels["pod-security.kubernetes.io/warn-version"]
+          value: latest
