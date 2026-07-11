@@ -79,6 +79,8 @@ metadata:
 spec:
   homeAssistantRef:
     name: e2e-upgrade-probe
+  configuration: |
+    default_config:
 EOF
 
 echo "    [CRD update step] kubectl apply -f $HELM_CHART_DIR/crds/"
