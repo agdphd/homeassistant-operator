@@ -1,0 +1,114 @@
+name: Helm Chart
+
+on:
+  pull_request:
+    paths:
+      - "charts/**"
+      - "config/**"
+      - "hack/*.sh"
+      - "hack/rbac-allowlist.txt"
+      - "Makefile"
+      - "docs/user-guide/upgrade.md"
+      - ".github/workflows/test-helm.yml"
+      - ".github/actions/helm-setup/**"
+
+concurrency:
+  group: helm-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: helm lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: ./.github/actions/helm-setup
+      - name: helm lint
+        run: helm lint charts/homeassistant-operator
+
+  values-schema:
+    name: values schema validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: ./.github/actions/helm-setup
+      - name: Validate values.yaml against values.schema.json
+        run: make helm-schema-lint
+
+  unit:
+    name: helm unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: ./.github/actions/helm-setup
+      - name: helm unittest
+        run: helm unittest charts/homeassistant-operator
+
+  docs:
+    name: helm-docs drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: ./.github/actions/helm-setup
+      - name: Verify chart README is up to date
+        run: make helm-verify-docs HELM_DOCS=helm-docs
+
+  sync:
+    name: chart synced with config/
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/helm-setup
+      - name: Install kustomize
+        run: make kustomize
+      - name: Verify chart is regenerated from config/
+        run: make helm-verify-sync
+
+  equivalence:
+    name: kustomize <-> helm equivalence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/helm-setup
+      - name: Install kustomize
+        run: make kustomize
+      - name: Verify Kustomize and Helm renders are equivalent
+        run: make helm-verify-equivalence
+
+  rbac-upgrade:
+    name: RBAC privilege gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0 # tags needed for N-1 discovery
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/helm-setup
+      - name: Install kustomize
+        run: make kustomize
+      - name: Verify RBAC is not silently expanded vs previous release
+        run: make helm-verify-rbac-upgrade
+
+  e2e-k3d:
+    name: fresh install + upgrade (k3d)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0 # tags needed for N-1 discovery
+      - uses: ./.github/actions/helm-setup
+        with:
+          install-k3d: "true"
+      - name: Fresh install + upgrade N-1 -> HEAD on k3d
+        run: make helm-test-e2e

@@ -125,3 +125,68 @@ jobs:
           mkdir -p dist
           helm package charts/homeassistant-operator --destination dist/
           helm push dist/homeassistant-operator-${{ steps.version.outputs.VERSION }}.tgz oci://${{ env.REGISTRY }}/${OWNER}/charts
+
+  smoke-oci:
+    needs: helm-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # annotate the GitHub Release when the smoke test fails
+      issues: write # raise a maintainer alert when the smoke test fails
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Set up Helm and k3d
+        uses: ./.github/actions/helm-setup
+        with:
+          install-k3d: "true"
+
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Smoke test the published OCI chart
+        id: smoke
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          HELM_REGISTRY="${{ env.REGISTRY }}/${OWNER}" ./hack/helm-smoke-oci.sh
+
+      # On failure: alert the maintainer and mark the release "needs verification".
+      # Deliberately NO automatic yank/delete of the published artifact — the
+      # decision to withdraw a release stays manual (FR-008).
+      - name: Alert on smoke-test failure
+        if: failure()
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdc9 # v7
+        with:
+          script: |
+            const version = process.env.GITHUB_REF_NAME;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const title = `Post-publish smoke test FAILED for ${version}`;
+            const body = [
+              `The post-publish OCI smoke test failed for **${version}**.`,
+              ``,
+              `The chart was published but does **not** install cleanly from the OCI`,
+              `registry. This release is marked **needs verification**. The artifact`,
+              `was intentionally NOT yanked — decide manually whether to withdraw it.`,
+              ``,
+              `Failed run: ${runUrl}`,
+            ].join('\n');
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner, repo: context.repo.repo,
+              title, body, labels: ['release', 'needs-verification'],
+            });
+            core.notice(`Opened alert issue #${issue.data.number} for ${version}`);
+            try {
+              const rel = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner, repo: context.repo.repo, tag: version,
+              });
+              await github.rest.repos.updateRelease({
+                owner: context.repo.owner, repo: context.repo.repo,
+                release_id: rel.data.id,
+                body: `> ⚠️ **Needs verification** — post-publish smoke test failed (see #${issue.data.number}).\n\n${rel.data.body || ''}`,
+              });
+            } catch (e) {
+              core.warning(`Could not annotate release ${version}: ${e.message}`);
+            }

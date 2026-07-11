@@ -1,0 +1,41 @@
+suite: RBAC binding mode by watchNamespaces
+tests:
+  - it: creates a ClusterRoleBinding when watchNamespaces is empty (default)
+    templates:
+      - clusterrolebinding.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ClusterRoleBinding
+
+  - it: creates no ClusterRoleBinding when watchNamespaces is set
+    templates:
+      - clusterrolebinding.yaml
+    set:
+      watchNamespaces:
+        - homeassistant
+        - homeassistant-dev
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: creates per-namespace RoleBindings when watchNamespaces is set
+    templates:
+      - watched_namespace_rolebindings.yaml
+    set:
+      watchNamespaces:
+        - homeassistant
+        - homeassistant-dev
+    asserts:
+      - hasDocuments:
+          count: 2
+      - isKind:
+          of: RoleBinding
+
+  - it: creates no per-namespace RoleBindings by default
+    templates:
+      - watched_namespace_rolebindings.yaml
+    asserts:
+      - hasDocuments:
+          count: 0

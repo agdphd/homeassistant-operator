@@ -1,0 +1,29 @@
+suite: operator namespace and Pod Security Admission
+templates:
+  - namespace.yaml
+tests:
+  - it: renders no Namespace by default (namespace.create=false)
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders a labeled Namespace enforcing restricted PSA when namespace.create=true
+    set:
+      namespace.create: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Namespace
+      - equal:
+          path: metadata.labels["pod-security.kubernetes.io/enforce"]
+          value: restricted
+      - equal:
+          path: metadata.labels["pod-security.kubernetes.io/enforce-version"]
+          value: latest
+      - equal:
+          path: metadata.labels["pod-security.kubernetes.io/audit"]
+          value: restricted
+      - equal:
+          path: metadata.labels["pod-security.kubernetes.io/warn"]
+          value: restricted

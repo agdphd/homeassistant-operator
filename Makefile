@@ -282,12 +282,94 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 	$(KUSTOMIZE) build config/default > dist/install.yaml
 
+##@ Helm
+
 HELM_CHART_DIR ?= charts/homeassistant-operator
 HELM_REGISTRY ?= $(shell echo $(IMAGE_TAG_BASE) | rev | cut -d/ -f2- | rev)
+
+## Helm dev/CI tooling (never a runtime dependency of the chart or operator)
+HELM_DOCS ?= $(LOCALBIN)/helm-docs
+KUBECONFORM ?= $(LOCALBIN)/kubeconform
+# renovate: datasource=github-releases depName=norwoodj/helm-docs
+HELM_DOCS_VERSION ?= v1.14.2
+# renovate: datasource=github-releases depName=yannh/kubeconform
+KUBECONFORM_VERSION ?= v0.6.7
+# renovate: datasource=github-releases depName=helm-unittest/helm-unittest
+HELM_UNITTEST_VERSION ?= v0.7.2
+
+.PHONY: helm-tools
+helm-tools: helm-docs-bin kubeconform helm-unittest-plugin ## Install Helm dev/CI tooling (helm-docs, kubeconform, helm-unittest plugin).
+
+.PHONY: helm-docs-bin
+helm-docs-bin: $(HELM_DOCS) ## Download helm-docs locally if necessary.
+$(HELM_DOCS): $(LOCALBIN)
+	$(call go-install-tool,$(HELM_DOCS),github.com/norwoodj/helm-docs/cmd/helm-docs,$(HELM_DOCS_VERSION))
+
+.PHONY: kubeconform
+kubeconform: $(KUBECONFORM) ## Download kubeconform locally if necessary.
+$(KUBECONFORM): $(LOCALBIN)
+	$(call go-install-tool,$(KUBECONFORM),github.com/yannh/kubeconform/cmd/kubeconform,$(KUBECONFORM_VERSION))
+
+.PHONY: helm-unittest-plugin
+helm-unittest-plugin: ## Install/verify the helm-unittest plugin.
+	@helm plugin list 2>/dev/null | grep -q unittest || \
+		helm plugin install https://github.com/helm-unittest/helm-unittest --version $(HELM_UNITTEST_VERSION) --verify=false 2>/dev/null || \
+		helm plugin install https://github.com/helm-unittest/helm-unittest --version $(HELM_UNITTEST_VERSION)
 
 .PHONY: helm-lint
 helm-lint: ## Lint the Helm chart.
 	helm lint $(HELM_CHART_DIR)
+
+## --- Single source of truth: generate chart's static parts from config/ ----------
+
+.PHONY: helm-sync
+helm-sync: kustomize ## Regenerate chart CRDs + RBAC rules from the authoritative config/ (mutates the chart).
+	@KUSTOMIZE=$(KUSTOMIZE) HELM_CHART_DIR=$(HELM_CHART_DIR) ./hack/sync-chart-from-config.sh
+
+.PHONY: helm-verify-sync
+helm-verify-sync: kustomize ## Fail if the committed chart drifted from config/ (run `make helm-sync`).
+	@KUSTOMIZE=$(KUSTOMIZE) HELM_CHART_DIR=$(HELM_CHART_DIR) ./hack/verify-chart-sync.sh
+
+.PHONY: helm-verify-equivalence
+helm-verify-equivalence: kustomize ## Fail if Kustomize and Helm renders diverge on RBAC/securityContext/image/PSA.
+	@KUSTOMIZE=$(KUSTOMIZE) HELM_CHART_DIR=$(HELM_CHART_DIR) ./hack/verify-equivalence.sh
+
+.PHONY: helm-verify-rbac-upgrade
+helm-verify-rbac-upgrade: kustomize ## Fail if the chart expands RBAC vs the previous release without justification.
+	@KUSTOMIZE=$(KUSTOMIZE) HELM_CHART_DIR=$(HELM_CHART_DIR) HELM_REGISTRY=$(HELM_REGISTRY) ./hack/verify-rbac-upgrade.sh
+
+## --- Chart quality gates ---------------------------------------------------------
+
+.PHONY: helm-schema-lint
+helm-schema-lint: ## Lint the chart and validate default + example values against values.schema.json.
+	helm lint $(HELM_CHART_DIR)
+	helm template schema-check $(HELM_CHART_DIR) >/dev/null
+	helm template schema-check $(HELM_CHART_DIR) --set replicaCount=2 --set image.pullPolicy=Always >/dev/null
+
+.PHONY: helm-unittest
+helm-unittest: helm-unittest-plugin ## Run helm-unittest template unit tests.
+	helm unittest $(HELM_CHART_DIR)
+
+.PHONY: helm-docs
+helm-docs: helm-docs-bin ## Generate the chart values documentation (README.md) from values.yaml.
+	$(HELM_DOCS) --chart-search-root=$(HELM_CHART_DIR) --skip-version-footer
+
+.PHONY: helm-verify-docs
+helm-verify-docs: helm-docs-bin ## Fail if the committed chart README drifted from values.yaml (run `make helm-docs`).
+	@HELM_DOCS=$(HELM_DOCS) HELM_CHART_DIR=$(HELM_CHART_DIR) ./hack/verify-helm-docs.sh
+
+.PHONY: helm-verify
+helm-verify: helm-verify-sync helm-verify-equivalence helm-schema-lint helm-unittest helm-verify-docs ## Fast pre-PR gate: all chart checks that do not need a cluster.
+
+## --- End-to-end / packaging ------------------------------------------------------
+
+.PHONY: helm-test-e2e
+helm-test-e2e: ## Fresh install + upgrade N-1 -> HEAD on k3d (requires k3d + docker).
+	@HELM_CHART_DIR=$(HELM_CHART_DIR) HELM_REGISTRY=$(HELM_REGISTRY) IMG=$(IMG) ./hack/helm-e2e.sh
+
+.PHONY: helm-smoke-oci
+helm-smoke-oci: ## Install the published OCI chart artifact on k3d (post-publish smoke test).
+	@HELM_REGISTRY=$(HELM_REGISTRY) ./hack/helm-smoke-oci.sh
 
 .PHONY: helm-package
 helm-package: ## Package the Helm chart into a .tgz archive.
@@ -295,8 +377,8 @@ helm-package: ## Package the Helm chart into a .tgz archive.
 	helm package $(HELM_CHART_DIR) --destination dist/
 
 .PHONY: helm-push
-helm-push: helm-package ## Push Helm chart to OCI registry (HELM_REGISTRY derived from IMAGE_TAG_BASE).
-	helm push dist/homeassistant-operator-$(VERSION).tgz oci://$(HELM_REGISTRY)
+helm-push: helm-package ## Push Helm chart to OCI registry (matches release.yml publish path).
+	helm push dist/homeassistant-operator-$(VERSION).tgz oci://$(HELM_REGISTRY)/charts
 
 ##@ Deployment
 
