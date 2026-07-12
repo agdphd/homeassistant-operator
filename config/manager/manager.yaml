@@ -85,6 +85,9 @@ spec:
           # sets it) so the restricted profile is satisfied regardless of cluster
           # defaults or later pod-level edits.
           runAsNonRoot: true
+          readOnlyRootFilesystem: true
+          runAsUser: 65532
+          runAsGroup: 65532
           capabilities:
             drop:
             - "ALL"

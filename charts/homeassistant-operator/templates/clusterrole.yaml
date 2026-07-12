@@ -5,136 +5,137 @@ metadata:
   labels:
     {{- include "homeassistant-operator.labels" . | nindent 4 }}
 rules:
+# GENERATED rules from config/rbac/role.yaml — edit config/rbac, then run 'make helm-sync'.
 - apiGroups:
-  - ""
+    - ""
   resources:
-  - configmaps
-  - persistentvolumeclaims
-  - services
+    - configmaps
+    - persistentvolumeclaims
+    - services
   verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch
 - apiGroups:
-  - ""
+    - ""
   resources:
-  - pods
+    - pods
   verbs:
-  - delete
-  - get
-  - list
-  - watch
+    - delete
+    - get
+    - list
+    - watch
 - apiGroups:
-  - ""
+    - ""
   resources:
-  - secrets
+    - secrets
   verbs:
-  - create
-  - delete
-  - get
-  - list
-  - update
-  - watch
+    - create
+    - delete
+    - get
+    - list
+    - update
+    - watch
 - apiGroups:
-  - apps
+    - apps
   resources:
-  - statefulsets
+    - statefulsets
   verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch
 - apiGroups:
-  - discovery.k8s.io
+    - discovery.k8s.io
   resources:
-  - endpointslices
+    - endpointslices
   verbs:
-  - get
-  - list
-  - watch
+    - get
+    - list
+    - watch
 - apiGroups:
-  - events.k8s.io
+    - events.k8s.io
   resources:
-  - events
+    - events
   verbs:
-  - create
-  - patch
+    - create
+    - patch
 - apiGroups:
-  - ha.homeassistant.io
+    - ha.homeassistant.io
   resources:
-  - homeassistantareas
-  - homeassistantautomations
-  - homeassistantconfigurations
-  - homeassistantfloors
-  - homeassistantintegrations
-  - homeassistantlabels
-  - homeassistants
-  - homeassistantscenes
-  - homeassistantscripts
+    - homeassistantareas
+    - homeassistantautomations
+    - homeassistantconfigurations
+    - homeassistantfloors
+    - homeassistantintegrations
+    - homeassistantlabels
+    - homeassistants
+    - homeassistantscenes
+    - homeassistantscripts
   verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch
 - apiGroups:
-  - ha.homeassistant.io
+    - ha.homeassistant.io
   resources:
-  - homeassistantareas/finalizers
-  - homeassistantautomations/finalizers
-  - homeassistantconfigurations/finalizers
-  - homeassistantfloors/finalizers
-  - homeassistantintegrations/finalizers
-  - homeassistantlabels/finalizers
-  - homeassistants/finalizers
-  - homeassistantscenes/finalizers
-  - homeassistantscripts/finalizers
-  - homeassistantsecrets/finalizers
+    - homeassistantareas/finalizers
+    - homeassistantautomations/finalizers
+    - homeassistantconfigurations/finalizers
+    - homeassistantfloors/finalizers
+    - homeassistantintegrations/finalizers
+    - homeassistantlabels/finalizers
+    - homeassistants/finalizers
+    - homeassistantscenes/finalizers
+    - homeassistantscripts/finalizers
+    - homeassistantsecrets/finalizers
   verbs:
-  - update
+    - update
 - apiGroups:
-  - ha.homeassistant.io
+    - ha.homeassistant.io
   resources:
-  - homeassistantareas/status
-  - homeassistantautomations/status
-  - homeassistantconfigurations/status
-  - homeassistantfloors/status
-  - homeassistantintegrations/status
-  - homeassistantlabels/status
-  - homeassistants/status
-  - homeassistantscenes/status
-  - homeassistantscripts/status
-  - homeassistantsecrets/status
+    - homeassistantareas/status
+    - homeassistantautomations/status
+    - homeassistantconfigurations/status
+    - homeassistantfloors/status
+    - homeassistantintegrations/status
+    - homeassistantlabels/status
+    - homeassistants/status
+    - homeassistantscenes/status
+    - homeassistantscripts/status
+    - homeassistantsecrets/status
   verbs:
-  - get
-  - patch
-  - update
+    - get
+    - patch
+    - update
 - apiGroups:
-  - ha.homeassistant.io
+    - ha.homeassistant.io
   resources:
-  - homeassistantsecrets
+    - homeassistantsecrets
   verbs:
-  - get
-  - list
-  - watch
+    - get
+    - list
+    - watch
 - apiGroups:
-  - networking.k8s.io
+    - networking.k8s.io
   resources:
-  - networkpolicies
+    - networkpolicies
   verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
+    - create
+    - delete
+    - get
+    - list
+    - patch
+    - update
+    - watch

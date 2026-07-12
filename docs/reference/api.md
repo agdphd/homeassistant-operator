@@ -32,6 +32,24 @@ Package v1 contains API Schema definitions for the ha v1 API group.
 
 
 
+#### AlphaSpec
+
+
+
+AlphaSpec groups experimental fields that are not yet stable enough for the
+top-level spec. See spec.alpha.* lifecycle: alpha (opt-in,
+default false) -> stable default false -> stable default true -> mandatory.
+
+
+
+_Appears in:_
+- [HomeAssistantSpec](#homeassistantspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `networkPolicy` _[NetworkPolicyAlphaSpec](#networkpolicyalphaspec)_ | NetworkPolicy controls whether the operator creates a NetworkPolicy<br />restricting ingress to the Home Assistant pod. |  | Optional: \{\} <br /> |
+
+
 #### AutomationAction
 
 
@@ -1058,6 +1076,7 @@ _Appears in:_
 | `hostNetwork` _boolean_ | HostNetwork enables host networking for the Home Assistant pod.<br />When true, the pod uses the host's network namespace, enabling discovery<br />of IoT devices via mDNS, SSDP, and DHCP on the local network. |  | Optional: \{\} <br /> |
 | `bootstrap` _[BootstrapSpec](#bootstrapspec)_ | Bootstrap configures automatic onboarding and API token creation<br />When enabled, the operator will automatically complete the Home Assistant<br />onboarding process and create a long-lived access token for API access |  | Optional: \{\} <br /> |
 | `backup` _[BackupSpec](#backupspec)_ | Backup configures automatic backups using Home Assistant's built-in backup system.<br />Requires bootstrap with API token enabled. |  | Optional: \{\} <br /> |
+| `alpha` _[AlphaSpec](#alphaspec)_ | Alpha groups experimental, unstable fields. Fields here may change or be<br />removed without a deprecation notice. |  | Optional: \{\} <br /> |
 
 
 #### HomeAssistantStatus
@@ -1234,6 +1253,23 @@ _Appears in:_
 | `passwordRef` _[SecretKeySelector](#secretkeyselector)_ | PasswordRef references a Secret containing the MQTT password<br />The Secret should have a "password" key |  | Optional: \{\} <br /> |
 | `clientID` _string_ | ClientID for MQTT connection |  | Optional: \{\} <br /> |
 | `keepAlive` _integer_ | KeepAlive defines MQTT keep-alive interval in seconds | 60 | Optional: \{\} <br /> |
+
+
+#### NetworkPolicyAlphaSpec
+
+
+
+NetworkPolicyAlphaSpec configures the (alpha) NetworkPolicy created for the
+Home Assistant pod.
+
+
+
+_Appears in:_
+- [AlphaSpec](#alphaspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `enabled` _boolean_ | Enabled controls whether the operator creates a NetworkPolicy for the<br />Home Assistant pod, restricting ingress to the operator's namespace and<br />the Home Assistant namespace on the Service port. Egress is left<br />unrestricted (Home Assistant needs broad, unpredictable egress to IoT<br />devices, cloud APIs, and MQTT brokers).<br />NetworkPolicy operates on pod IPs — it does not restrict traffic<br />arriving via the host network interface. Combining this with<br />spec.hostNetwork: true gives only partial isolation.<br />Deliberately without omitempty: this field represents explicit user<br />intent, and the spec.alpha lifecycle plans to flip its default to true<br />in a later phase — omitempty would let an explicit false be dropped and<br />silently re-defaulted to true by the API server once that happens. | false | Optional: \{\} <br /> |
 
 
 #### RecorderConfig

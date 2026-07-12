@@ -2,12 +2,17 @@ name: CodeQL
 
 on:
   push:
+    branches: [main]
   pull_request:
   schedule:
     - cron: '30 1 * * 1'  # every Monday 01:30 UTC
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
 
 jobs:
   analyze:

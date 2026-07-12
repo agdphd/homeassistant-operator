@@ -9,3 +9,7 @@
 *.tmproj
 OWNERS
 OWNERS_ALIASES
+# Chart CI artifacts — not part of the installable package
+tests/
+*_test.yaml
+README.md.gotmpl

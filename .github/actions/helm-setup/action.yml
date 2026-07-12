@@ -1,0 +1,89 @@
+name: "Helm tooling setup"
+description: "Install helm, helm-docs, kubeconform, helm-unittest (and optionally k3d) for chart CI jobs."
+
+inputs:
+  helm-docs-version:
+    description: "helm-docs version"
+    required: false
+    default: "1.14.2"
+  kubeconform-version:
+    description: "kubeconform version"
+    required: false
+    default: "0.6.7"
+  helm-unittest-version:
+    description: "helm-unittest plugin version"
+    required: false
+    default: "v0.7.2"
+  yq-version:
+    description: "mikefarah yq version"
+    required: false
+    default: "v4.44.3"
+  install-k3d:
+    description: "Also install k3d (for e2e/smoke jobs)"
+    required: false
+    default: "false"
+  k3d-version:
+    description: "k3d version to install"
+    required: false
+    default: "v5.8.1"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Helm
+      uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # v4
+      with:
+        version: v3.16.4
+
+    - name: Install helm-docs
+      shell: bash
+      env:
+        HELM_DOCS_VERSION: ${{ inputs.helm-docs-version }}
+      run: |
+        set -euo pipefail
+        curl -sSL "https://github.com/norwoodj/helm-docs/releases/download/v${HELM_DOCS_VERSION}/helm-docs_${HELM_DOCS_VERSION}_Linux_x86_64.tar.gz" \
+          | tar -xz -C /tmp helm-docs
+        sudo mv /tmp/helm-docs /usr/local/bin/helm-docs
+        helm-docs --version
+
+    - name: Install kubeconform
+      shell: bash
+      env:
+        KUBECONFORM_VERSION: ${{ inputs.kubeconform-version }}
+      run: |
+        set -euo pipefail
+        curl -sSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+          | tar -xz -C /tmp kubeconform
+        sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
+        kubeconform -v
+
+    - name: Install helm-unittest plugin
+      shell: bash
+      env:
+        HELM_UNITTEST_VERSION: ${{ inputs.helm-unittest-version }}
+      run: |
+        set -euo pipefail
+        helm plugin list | grep -q unittest || \
+          helm plugin install https://github.com/helm-unittest/helm-unittest --version "${HELM_UNITTEST_VERSION}"
+
+    - name: Install yq
+      shell: bash
+      env:
+        YQ_VERSION: ${{ inputs.yq-version }}
+      run: |
+        set -euo pipefail
+        command -v yq >/dev/null 2>&1 || {
+          sudo curl -sSL -o /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          sudo chmod +x /usr/local/bin/yq
+        }
+        yq --version
+
+    - name: Install k3d
+      if: ${{ inputs.install-k3d == 'true' }}
+      shell: bash
+      env:
+        TAG: ${{ inputs.k3d-version }}
+      run: |
+        set -euo pipefail
+        curl -sS https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+        k3d version
