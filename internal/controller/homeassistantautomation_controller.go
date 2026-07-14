@@ -69,11 +69,7 @@ type HomeAssistantAutomationReconciler struct {
 // haClientFor returns a HA API client for the given HomeAssistant instance.
 // Uses NewHAClient if set (tests), otherwise the default haclient.NewClient.
 func (r *HomeAssistantAutomationReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
-	haURL := buildHomeAssistantURL(ha)
-	if r.NewHAClient != nil {
-		return r.NewHAClient(haURL)
-	}
-	return haclient.NewClient(haURL)
+	return newHAClientForHA(context.Background(), r.Client, ha, r.NewHAClient)
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantautomations,verbs=get;list;watch

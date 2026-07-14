@@ -16,6 +16,8 @@ limitations under the License.
 
 package controller
 
+import "time"
+
 // Shared constants used across multiple controllers
 
 const (
@@ -27,6 +29,12 @@ const (
 	// lastAppliedIDAnnotationKey tracks the last ID sent to HA REST API.
 	// Used to detect spec.id renames and delete the old resource from HA.
 	lastAppliedIDAnnotationKey = "ha.homeassistant.io/last-applied-id"
+
+	// nativeTLSHashAnnotationKey holds a hash of the native TLS certificate on the
+	// StatefulSet pod template. When cert-manager rotates the certificate the hash
+	// changes, triggering a rolling restart so Home Assistant picks up the new
+	// material.
+	nativeTLSHashAnnotationKey = "ha.homeassistant.io/native-tls-hash"
 
 	// Reload method names for status tracking
 	// Used by Configuration and Automation controllers
@@ -44,4 +52,39 @@ const (
 
 	// Condition reasons for ReloadReady
 	reasonTokenNotAvailable = "TokenNotAvailable"
+
+	// TLS / cert-manager integration condition types
+	conditionCertManagerAvailable = "CertManagerAvailable"
+	conditionTLSReady             = "TLSReady"
+	conditionExposureReady        = "ExposureReady"
+
+	// TLS / cert-manager condition reasons (PascalCase per K8s convention)
+	reasonCertManagerInstalled    = "CertManagerInstalled"
+	reasonCertManagerNotInstalled = "CertManagerNotInstalled"
+	reasonIssuerNotReady          = "IssuerNotReady"
+	reasonCertificateNotIssued    = "CertificateNotIssued"
+	reasonWaitingForCertManager   = "WaitingForCertManager"
+	reasonTLSReady                = "TLSReady"
+	reasonUsingProvidedSecret     = "UsingProvidedSecret"
+	reasonExposureReady           = "ExposureReady"
+
+	// TLS / cert-manager event reasons
+	eventCertManagerUnavailable = "CertManagerUnavailable"
+	eventCertificateRequested   = "CertificateRequested"
+	eventCertificateIssued      = "CertificateIssued"
+	eventCertificateFailed      = "CertificateFailed"
+	eventNativeTLSEnabled       = "NativeTLSEnabled"
+	eventNativeTLSDisabled      = "NativeTLSDisabled"
+	eventExposureConfigured     = "ExposureConfigured"
+
+	// certManagerGroup is the cert-manager API group used for detection and
+	// Certificate resources.
+	certManagerGroup   = "cert-manager.io"
+	certManagerVersion = "v1"
+	certManagerKind    = "Certificate"
+
+	// certManagerDetectionTTL bounds how often the operator re-checks whether
+	// cert-manager CRDs are installed (a cache optimization; recoverable by
+	// reconcile per constitution principle IV).
+	certManagerDetectionTTL = 60 * time.Second
 )

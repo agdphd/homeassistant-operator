@@ -19,3 +19,41 @@ networking.k8s.io/networkpolicies/list
 networking.k8s.io/networkpolicies/patch
 networking.k8s.io/networkpolicies/update
 networking.k8s.io/networkpolicies/watch
+
+# cert-manager Certificate provisioning for TLS modes (native TLS, Ingress/Gateway
+# exposure, webhook serving cert). The operator issues certificates via
+# cert-manager; it never installs cert-manager.
+cert-manager.io/certificates/create
+cert-manager.io/certificates/delete
+cert-manager.io/certificates/get
+cert-manager.io/certificates/list
+cert-manager.io/certificates/patch
+cert-manager.io/certificates/update
+cert-manager.io/certificates/watch
+
+# Ingress exposure managed by the operator (spec.ingress.enabled).
+networking.k8s.io/ingresses/create
+networking.k8s.io/ingresses/delete
+networking.k8s.io/ingresses/get
+networking.k8s.io/ingresses/list
+networking.k8s.io/ingresses/patch
+networking.k8s.io/ingresses/update
+networking.k8s.io/ingresses/watch
+
+# Gateway API exposure managed by the operator (spec.gateway.enabled): HTTPRoute
+# always, Gateway when spec.gateway.manageGateway=true. GatewayClass/controller
+# remain the platform's responsibility.
+gateway.networking.k8s.io/httproutes/create
+gateway.networking.k8s.io/httproutes/delete
+gateway.networking.k8s.io/httproutes/get
+gateway.networking.k8s.io/httproutes/list
+gateway.networking.k8s.io/httproutes/patch
+gateway.networking.k8s.io/httproutes/update
+gateway.networking.k8s.io/httproutes/watch
+gateway.networking.k8s.io/gateways/create
+gateway.networking.k8s.io/gateways/delete
+gateway.networking.k8s.io/gateways/get
+gateway.networking.k8s.io/gateways/list
+gateway.networking.k8s.io/gateways/patch
+gateway.networking.k8s.io/gateways/update
+gateway.networking.k8s.io/gateways/watch

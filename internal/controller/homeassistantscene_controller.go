@@ -60,11 +60,7 @@ type HomeAssistantSceneReconciler struct {
 
 // haClientFor returns a HA API client for the given HomeAssistant instance.
 func (r *HomeAssistantSceneReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
-	haURL := buildHomeAssistantURL(ha)
-	if r.NewHAClient != nil {
-		return r.NewHAClient(haURL)
-	}
-	return haclient.NewClient(haURL)
+	return newHAClientForHA(context.Background(), r.Client, ha, r.NewHAClient)
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscenes,verbs=get;list;watch

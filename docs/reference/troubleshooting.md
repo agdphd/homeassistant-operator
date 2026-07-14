@@ -52,3 +52,22 @@ If a CR hangs on deletion, the operator was likely removed before the CR (finali
 ```sh
 kubectl patch <resource> <name> -p '{"metadata":{"finalizers":null}}' --type=merge
 ```
+
+## TLS mode enabled but no certificate is issued
+
+Check the status conditions ([TLS guide](../user-guide/tls.md)):
+
+```sh
+kubectl get homeassistant <name> -o jsonpath='{.status.conditions}' | jq
+```
+
+- **`CertManagerAvailable=False` (`CertManagerNotInstalled`)** — cert-manager is not
+  installed. Home Assistant keeps serving over HTTP; install cert-manager and the
+  operator picks it up automatically (no restart needed).
+- **`TLSReady=False` (`CertificateNotIssued`)** — the `Certificate` exists but has not
+  been issued. Inspect it: `kubectl describe certificate <name>-native-tls` (or
+  `-ingress-tls` / `-gateway-tls`) and check the referenced `Issuer`/`ClusterIssuer`
+  is Ready.
+- **Native TLS pod not switching to HTTPS** — the pod switches only after the TLS
+  Secret exists. Confirm the Secret (`<name>-native-tls`) is populated and that the
+  StatefulSet rolled out.

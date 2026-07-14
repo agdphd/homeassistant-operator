@@ -26,6 +26,8 @@ IMG_TAG="${IMG##*:}"
 K3D_MEMORY="${HELM_E2E_MEMORY:-4g}"
 # renovate: datasource=docker depName=rancher/k3s
 K3S_VERSION="${K3S_VERSION:-v1.36.2-k3s1}"
+# renovate: datasource=github-releases depName=cert-manager/cert-manager
+CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.16.2}"
 
 for t in k3d docker helm kubectl; do hh_require "$t"; done
 [ -n "$HELM_CHART_DIR" ] || { echo "❌ HELM_CHART_DIR is empty" >&2; exit 2; }
@@ -49,7 +51,52 @@ helm install "$RELEASE" "$HELM_CHART_DIR" \
   --wait --timeout 180s
 hh_wait_ready "$NS"
 hh_assert_crds
-echo "    ✅ fresh install OK"
+# Part 1 already proves the default install (webhook off) needs no cert-manager
+# on a clean cluster — the chart never installs or requires cert-manager.
+echo "    ✅ fresh install OK (no cert-manager required)"
+
+# ---- Part 1b: webhook TLS via cert-manager -------------------------------------
+echo ""
+echo "==> PART 1b: webhook TLS via cert-manager"
+echo "    installing cert-manager ($CERT_MANAGER_VERSION)"
+kubectl apply -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml"
+kubectl wait --for=condition=Available deployment/cert-manager-webhook \
+  -n cert-manager --timeout=300s
+
+echo "    upgrading release with webhook.enabled + webhook.certManager.enabled"
+helm upgrade "$RELEASE" "$HELM_CHART_DIR" \
+  --namespace "$NS" \
+  --set image.repository="$IMG_REPO" --set image.tag="$IMG_TAG" --set image.pullPolicy=IfNotPresent \
+  --set webhook.enabled=true --set webhook.certManager.enabled=true \
+  --wait --timeout 180s
+hh_wait_ready "$NS"
+
+if kubectl get validatingwebhookconfiguration -o name | grep -q validating-webhook-configuration; then
+  echo "    ✅ ValidatingWebhookConfiguration present"
+else
+  echo "❌ webhook configuration missing after enabling webhook" >&2
+  exit 1
+fi
+
+echo "    verifying the webhook rejects an incoherent HomeAssistant"
+if kubectl -n "$NS" apply -f - <<'EOF' 2>/dev/null
+apiVersion: ha.homeassistant.io/v1
+kind: HomeAssistant
+metadata:
+  name: e2e-webhook-bad
+spec:
+  alpha:
+    tls:
+      native:
+        enabled: true
+EOF
+then
+  echo "❌ webhook accepted native TLS without issuerRef/secretName" >&2
+  exit 1
+else
+  echo "    ✅ webhook rejected the incoherent CR"
+fi
+echo "    ✅ PART 1b OK"
 
 echo "==> Tearing down fresh install to prepare the upgrade scenario"
 helm uninstall "$RELEASE" --namespace "$NS" --wait || true

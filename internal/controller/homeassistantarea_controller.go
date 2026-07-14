@@ -247,11 +247,7 @@ func (r *HomeAssistantAreaReconciler) handleDeletion(ctx context.Context, area *
 
 // haClientFor returns a haclient.Client for the given HA instance
 func (r *HomeAssistantAreaReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
-	baseURL := buildHomeAssistantURL(ha)
-	if r.NewHAClient != nil {
-		return r.NewHAClient(baseURL)
-	}
-	return haclient.NewClient(baseURL)
+	return newHAClientForHA(context.Background(), r.Client, ha, r.NewHAClient)
 }
 
 // setCondition updates the Ready condition and status

@@ -209,11 +209,7 @@ func (r *HomeAssistantLabelReconciler) handleDeletion(ctx context.Context, label
 
 // haClientFor returns a haclient.Client for the given HA instance
 func (r *HomeAssistantLabelReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
-	baseURL := buildHomeAssistantURL(ha)
-	if r.NewHAClient != nil {
-		return r.NewHAClient(baseURL)
-	}
-	return haclient.NewClient(baseURL)
+	return newHAClientForHA(context.Background(), r.Client, ha, r.NewHAClient)
 }
 
 // setCondition updates the Ready condition and status

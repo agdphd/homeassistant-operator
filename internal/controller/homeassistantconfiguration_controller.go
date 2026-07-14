@@ -546,17 +546,24 @@ func (r *HomeAssistantConfigurationReconciler) buildHomeAssistantURL(ha *hav1.Ho
 	if ha.Spec.Service != nil && ha.Spec.Service.Port != 0 {
 		port = ha.Spec.Service.Port
 	}
-	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", serviceName, ha.Namespace, port)
+	return fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", haScheme(ha), serviceName, ha.Namespace, port)
 }
 
 // performHotReload attempts to hot-reload the configuration via HA REST API
 // Retries with fixed interval to handle kubelet ConfigMap sync delay
 // Kubelet typically syncs ConfigMap volumes every 60s (syncFrequency), so we need
 // to wait for the file to be synced to the pod before hot-reload will work correctly
-func (r *HomeAssistantConfigurationReconciler) performHotReload(ctx context.Context, haURL, token string) error {
+func (r *HomeAssistantConfigurationReconciler) performHotReload(
+	ctx context.Context, ha *hav1.HomeAssistant, haURL, token string,
+) error {
 	log := logf.FromContext(ctx)
 
 	haClient := haclient.NewClient(haURL)
+	if nativeTLSActive(ha) {
+		if ca := loadNativeTLSCA(ctx, r.Client, ha); len(ca) > 0 {
+			haClient = haClient.WithRootCAs(ca)
+		}
+	}
 
 	log.Info("Waiting for kubelet to sync ConfigMap to pod")
 
@@ -738,7 +745,7 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 	}
 
 	// Attempt hot-reload
-	if err := r.performHotReload(ctx, haURL, token); err != nil {
+	if err := r.performHotReload(ctx, ha, haURL, token); err != nil {
 		// If user explicitly requested hot-reload strategy, fail instead of falling back
 		if strategy == string(hav1.ConfigurationReloadStrategyHotReload) {
 			config.Status.LastError = fmt.Sprintf("Hot-reload failed: %v", err)
@@ -1071,7 +1078,7 @@ func (r *HomeAssistantConfigurationReconciler) buildConfigContent(
 		if err := r.cleanupRecorderDBSecret(ctx, config); err != nil {
 			logf.FromContext(ctx).Error(err, "Failed to clean up recorder-db secret (best-effort)")
 		}
-		return content, nil
+		return r.applyNativeTLS(ctx, ha, content)
 	}
 
 	dbURL, fromSecretRef, err := r.resolveRecorderDB(ctx, config)
@@ -1091,5 +1098,29 @@ func (r *HomeAssistantConfigurationReconciler) buildConfigContent(
 		}
 	}
 
-	return injectRecorder(content, rec, dbURL, fromSecretRef)
+	content, err = injectRecorder(content, rec, dbURL, fromSecretRef)
+	if err != nil {
+		return "", err
+	}
+	return r.applyNativeTLS(ctx, ha, content)
+}
+
+// applyNativeTLS injects http.ssl_certificate/ssl_key into the configuration when
+// native TLS is enabled AND the TLS Secret already exists, so Home Assistant never
+// starts pointing at a certificate file that has not been provisioned yet.
+func (r *HomeAssistantConfigurationReconciler) applyNativeTLS(
+	ctx context.Context, ha *hav1.HomeAssistant, content string,
+) (string, error) {
+	if ha == nil {
+		return content, nil
+	}
+	n := nativeTLS(ha)
+	if n == nil || !n.Enabled {
+		return content, nil
+	}
+	s := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Name: nativeTLSSecretName(ha), Namespace: ha.Namespace}, s); err != nil {
+		return content, nil
+	}
+	return injectNativeTLS(content)
 }

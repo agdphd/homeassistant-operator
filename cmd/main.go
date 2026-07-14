@@ -42,6 +42,7 @@ import (
 	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 	"github.com/przemekhys/homeassistant-operator/internal/controller"
 	"github.com/przemekhys/homeassistant-operator/internal/version"
+	webhookhav1 "github.com/przemekhys/homeassistant-operator/internal/webhook/v1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -306,6 +307,14 @@ func main() {
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantArea")
 		os.Exit(1)
+	}
+	// Register webhooks unless explicitly disabled (e.g. local development without
+	// a webhook serving certificate). Enabled by default.
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		if err := webhookhav1.SetupHomeAssistantWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "HomeAssistant")
+			os.Exit(1)
+		}
 	}
 	// +kubebuilder:scaffold:builder
 

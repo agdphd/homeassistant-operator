@@ -1,0 +1,60 @@
+# Example: Home Assistant exposed via operator-managed Gateway API (spec.gateway)
+# with a cert-manager-issued TLS certificate.
+#
+# Unlike ha_v1_gateway_api.yaml (which shows manually-authored Gateway/HTTPRoute),
+# here the operator manages the routing resources: it creates the HTTPRoute (and,
+# when manageGateway=true, a Gateway with an HTTPS listener) plus a cert-manager
+# Certificate whose Secret backs the listener. GatewayClass and the gateway
+# controller remain the platform's responsibility.
+#
+# Prerequisites:
+# - Gateway API CRDs + a controller (e.g. Traefik v3)
+# - cert-manager + a ready Issuer/ClusterIssuer (referenced below)
+#
+# Attach to an existing Gateway via parentRef, OR set manageGateway: true to let
+# the operator create the Gateway (referencing an existing GatewayClass by name
+# equal to metadata.name — adjust to your environment).
+apiVersion: ha.homeassistant.io/v1
+kind: HomeAssistant
+metadata:
+  name: homeassistant-gateway-tls
+spec:
+  version: "stable"
+  timezone: "Europe/Warsaw"
+  storage:
+    size: "5Gi"
+  service:
+    type: ClusterIP
+    port: 8123
+  gateway:
+    enabled: true
+    host: ha.example.com
+    issuerRef:
+      name: letsencrypt-prod
+      kind: ClusterIssuer
+    # Attach the HTTPRoute to an existing Gateway listener:
+    parentRef:
+      name: traefik-gateway
+      namespace: gateway
+      sectionName: https
+    # ...or let the operator create a Gateway instead of parentRef:
+    # manageGateway: true
+    # secretName: my-existing-tls   # bring-your-own; overrides issuerRef
+---
+apiVersion: ha.homeassistant.io/v1
+kind: HomeAssistantConfiguration
+metadata:
+  name: homeassistant-gateway-tls-config
+spec:
+  homeAssistantRef:
+    name: homeassistant-gateway-tls
+  configuration: |
+    homeassistant:
+      name: Home
+      unit_system: metric
+    default_config:
+    http:
+      use_x_forwarded_for: true
+      trusted_proxies:
+        - 10.42.0.0/16
+        - 10.43.0.0/16

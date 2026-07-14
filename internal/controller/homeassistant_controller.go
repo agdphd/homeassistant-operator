@@ -102,6 +102,13 @@ type HomeAssistantReconciler struct {
 	// Used for debouncing to avoid rapid StatefulSet updates
 	// sync.Map is used because reconcilers run concurrently for different resources
 	lastConfigHashSync sync.Map // map[string]time.Time
+
+	// cert-manager availability detection cache (guarded by certMgrMu). This is
+	// a pure optimization — its loss is safely recovered by the next reconcile
+	// (constitution principle IV). See tls_helpers.go.
+	certMgrMu        sync.Mutex
+	certMgrAvailable bool
+	certMgrCheckedAt time.Time
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch;create;update;patch;delete
@@ -114,6 +121,12 @@ type HomeAssistantReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// TLS / cert-manager integration. Narrow verbs on specific resources — the
+// operator issues certificates and manages exposure resources; it never installs
+// cert-manager or manages GatewayClass.
+// +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes;gateways,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -198,6 +211,23 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Reconcile NetworkPolicy (alpha, opt-in via spec.alpha.networkPolicy.enabled)
 	if err := r.reconcileNetworkPolicy(ctx, ha); err != nil {
 		log.Error(err, "Failed to reconcile NetworkPolicy")
+		return r.updateStatusFailed(ctx, ha, err)
+	}
+
+	// Reconcile TLS / cert-manager integration (opt-in). Missing cert-manager is
+	// never an error: it degrades to a status condition + requeue so the rest of
+	// the reconcile (and other resources) keep working.
+	if tlsResult, err := r.reconcileTLS(ctx, ha); err != nil {
+		log.Error(err, "Failed to reconcile TLS")
+		return r.updateStatusFailed(ctx, ha, err)
+	} else if tlsResult.RequeueAfter > 0 {
+		return tlsResult, nil
+	}
+
+	// Reconcile exposure (Ingress / Gateway API). Best-effort on the cert-manager
+	// side: HTTP exposure works even without cert-manager.
+	if err := r.reconcileExposure(ctx, ha); err != nil {
+		log.Error(err, "Failed to reconcile exposure")
 		return r.updateStatusFailed(ctx, ha, err)
 	}
 
@@ -730,6 +760,32 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 		})
 	}
 
+	// Mount the native TLS Secret (cert-manager-issued or bring-your-own) when
+	// native TLS is enabled and the Secret exists. HA reads the certificate from
+	// /config/ssl via http.ssl_certificate/ssl_key (injected by the configuration
+	// controller). Gating on the Secret's existence keeps the pod from getting
+	// stuck pending on a not-yet-issued certificate.
+	nativeTLSCertHash := ""
+	if n := nativeTLS(ha); n != nil && n.Enabled {
+		tlsSecretName := nativeTLSSecretName(ha)
+		tlsSecret := &corev1.Secret{}
+		if getErr := r.Get(ctx, types.NamespacedName{Name: tlsSecretName, Namespace: ha.Namespace}, tlsSecret); getErr == nil {
+			volumes = append(volumes, corev1.Volume{
+				Name: "ha-native-tls",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{SecretName: tlsSecretName},
+				},
+			})
+			volumeMounts = append(volumeMounts, corev1.VolumeMount{
+				Name:      "ha-native-tls",
+				MountPath: "/config/ssl",
+				ReadOnly:  true,
+			})
+			// Hash the certificate so rotation triggers a rolling restart.
+			nativeTLSCertHash = calculateConfigHash(string(tlsSecret.Data["tls.crt"]))
+		}
+	}
+
 	// Preserve existing pod template annotations from current StatefulSet
 	// This is critical to avoid infinite reconciliation loops when config hash annotations exist
 	existingAnnotations := make(map[string]string)
@@ -743,6 +799,14 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 		}
 	}
 	// If StatefulSet doesn't exist (NotFound error), existingAnnotations will be empty - this is correct
+
+	// Native TLS certificate hash: set when active (rotation → rollout), removed
+	// when native TLS is disabled or the Secret is gone (so the pod reverts).
+	if nativeTLSCertHash != "" {
+		existingAnnotations[nativeTLSHashAnnotationKey] = nativeTLSCertHash
+	} else {
+		delete(existingAnnotations, nativeTLSHashAnnotationKey)
+	}
 
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
