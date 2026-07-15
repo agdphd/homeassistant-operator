@@ -241,13 +241,14 @@ func (r *HomeAssistantReconciler) ensureCertificate(
 }
 
 // deleteCertificate removes an operator-managed Certificate by name if present.
-// Best-effort: NotFound is ignored.
+// Best-effort: NotFound is ignored, and a missing cert-manager CRD (NoMatchError)
+// means there is nothing to delete.
 func (r *HomeAssistantReconciler) deleteCertificate(ctx context.Context, ha *hav1.HomeAssistant, name string) error {
 	cert := &unstructured.Unstructured{}
 	cert.SetGroupVersionKind(certificateGVK)
 	cert.SetName(name)
 	cert.SetNamespace(ha.Namespace)
-	if err := r.Delete(ctx, cert); err != nil && !apierrors.IsNotFound(err) {
+	if err := r.Delete(ctx, cert); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
 		return err
 	}
 	return nil
@@ -342,10 +343,14 @@ func (r *HomeAssistantReconciler) reconcileTLS(ctx context.Context, ha *hav1.Hom
 
 	// No cert-manager-backed TLS requested → clean up any orphaned native
 	// certificate (e.g. native TLS was just disabled) and return without noise.
+	// Only attempt cleanup when cert-manager is present — without its CRD there is
+	// nothing to delete (and no need to hit the API every reconcile).
 	if !certManagerRequired(ha) {
 		if n := nativeTLS(ha); n == nil || !n.Enabled {
-			if err := r.deleteNativeCertificate(ctx, ha); err != nil {
-				return ctrl.Result{}, err
+			if available, _ := r.certManagerAvailable(ctx); available {
+				if err := r.deleteNativeCertificate(ctx, ha); err != nil {
+					return ctrl.Result{}, err
+				}
 			}
 		}
 		return ctrl.Result{}, nil

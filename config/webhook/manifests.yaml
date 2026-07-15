@@ -11,7 +11,7 @@ webhooks:
       name: webhook-service
       namespace: system
       path: /validate-ha-homeassistant-io-v1-homeassistant
-  failurePolicy: Fail
+  failurePolicy: Ignore
   name: vhomeassistant-v1.kb.io
   rules:
   - apiGroups:

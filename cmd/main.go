@@ -189,11 +189,25 @@ func main() {
 		})
 	}
 
-	webhookServerOpts := webhook.Options{TLSOpts: webhookTLSOpts}
-	if enableWebhooks && webhookSelfManageCert {
-		webhookServerOpts.CertDir = webhookCertDir
+	// Self-managed mode: cert-controller writes the serving cert to webhookCertDir
+	// at runtime. Load it lazily per-connection (via GetCertificate) instead of a
+	// CertDir certwatcher, which would fail to start before the cert exists — the
+	// operator would crash-loop and its webhook Service would have no endpoints.
+	if enableWebhooks && webhookSelfManageCert && len(webhookCertDir) > 0 {
+		crtPath := filepath.Join(webhookCertDir, webhookCertName)
+		keyPath := filepath.Join(webhookCertDir, webhookCertKey)
+		webhookTLSOpts = append(webhookTLSOpts, func(cfg *tls.Config) {
+			cfg.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+				crt, err := tls.LoadX509KeyPair(crtPath, keyPath)
+				if err != nil {
+					return nil, err
+				}
+				return &crt, nil
+			}
+		})
 	}
-	webhookServer := webhook.NewServer(webhookServerOpts)
+
+	webhookServer := webhook.NewServer(webhook.Options{TLSOpts: webhookTLSOpts})
 
 	// Metrics endpoint is enabled in 'config/default/kustomization.yaml'. The Metrics options configure the server.
 	// More info:

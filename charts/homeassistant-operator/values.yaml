@@ -123,7 +123,8 @@ webhook:
     enabled: false
   # port is the webhook server port on the operator pod.
   port: 9443
-  # failurePolicy for the ValidatingWebhookConfiguration (Fail or Ignore). Fail
-  # rejects invalid resources; Ignore makes validation best-effort (useful if you
-  # want to avoid admission being blocked while the operator is restarting).
-  failurePolicy: Fail
+  # failurePolicy for the ValidatingWebhookConfiguration (Fail or Ignore). Ignore
+  # (default) makes validation best-effort — HomeAssistant create/update is never
+  # blocked while the webhook is unavailable (e.g. during an operator rollout).
+  # Set Fail to strictly reject invalid resources.
+  failurePolicy: Ignore

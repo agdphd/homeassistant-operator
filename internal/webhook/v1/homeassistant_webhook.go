@@ -38,7 +38,10 @@ func SetupHomeAssistantWebhookWithManager(mgr ctrl.Manager) error {
 		Complete()
 }
 
-// +kubebuilder:webhook:path=/validate-ha-homeassistant-io-v1-homeassistant,mutating=false,failurePolicy=fail,sideEffects=None,groups=ha.homeassistant.io,resources=homeassistants,verbs=create;update,versions=v1,name=vhomeassistant-v1.kb.io,admissionReviewVersions=v1
+// failurePolicy=ignore keeps a default-on webhook from blocking HomeAssistant
+// create/update while it is briefly unavailable (operator restart / rollout);
+// validation is still enforced whenever the webhook is serving.
+// +kubebuilder:webhook:path=/validate-ha-homeassistant-io-v1-homeassistant,mutating=false,failurePolicy=ignore,sideEffects=None,groups=ha.homeassistant.io,resources=homeassistants,verbs=create;update,versions=v1,name=vhomeassistant-v1.kb.io,admissionReviewVersions=v1
 
 // HomeAssistantCustomValidator validates HomeAssistant resources on admission.
 type HomeAssistantCustomValidator struct{}
