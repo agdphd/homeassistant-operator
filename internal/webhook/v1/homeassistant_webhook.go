@@ -45,15 +45,21 @@ type HomeAssistantCustomValidator struct{}
 
 var _ admission.Validator[*hav1.HomeAssistant] = &HomeAssistantCustomValidator{}
 
-func (v *HomeAssistantCustomValidator) ValidateCreate(_ context.Context, ha *hav1.HomeAssistant) (admission.Warnings, error) {
+func (v *HomeAssistantCustomValidator) ValidateCreate(
+	_ context.Context, ha *hav1.HomeAssistant,
+) (admission.Warnings, error) {
 	return validateHomeAssistant(ha)
 }
 
-func (v *HomeAssistantCustomValidator) ValidateUpdate(_ context.Context, _, newObj *hav1.HomeAssistant) (admission.Warnings, error) {
+func (v *HomeAssistantCustomValidator) ValidateUpdate(
+	_ context.Context, _, newObj *hav1.HomeAssistant,
+) (admission.Warnings, error) {
 	return validateHomeAssistant(newObj)
 }
 
-func (v *HomeAssistantCustomValidator) ValidateDelete(_ context.Context, _ *hav1.HomeAssistant) (admission.Warnings, error) {
+func (v *HomeAssistantCustomValidator) ValidateDelete(
+	_ context.Context, _ *hav1.HomeAssistant,
+) (admission.Warnings, error) {
 	return nil, nil
 }
 
@@ -85,10 +91,13 @@ func validateHomeAssistantTLS(spec *hav1.HomeAssistantSpec) (admission.Warnings,
 		errs = append(errs, validateIssuerKind("spec.alpha.tls.native.issuerRef", n.IssuerRef)...)
 	}
 
-	// Gateway exposure requires a host.
+	// Gateway exposure requires a host and an attach point.
 	if g := spec.Gateway; g != nil && g.Enabled {
 		if g.Host == "" {
 			errs = append(errs, "spec.gateway requires host when enabled")
+		}
+		if g.ParentRef == nil && !g.ManageGateway {
+			errs = append(errs, "spec.gateway requires parentRef or manageGateway when enabled")
 		}
 		if g.IssuerRef != nil && g.SecretName != "" {
 			warnings = append(warnings, "spec.gateway: secretName (bring-your-own) overrides issuerRef")

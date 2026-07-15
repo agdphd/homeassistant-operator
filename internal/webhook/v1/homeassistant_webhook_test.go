@@ -57,13 +57,23 @@ func TestValidateHomeAssistantTLS(t *testing.T) {
 			wantWarnings: 1,
 		},
 		{
-			name:     "gateway without host is rejected",
-			spec:     hav1.HomeAssistantSpec{Gateway: &hav1.GatewaySpec{Enabled: true}},
+			name: "gateway without host is rejected",
+			spec: hav1.HomeAssistantSpec{Gateway: &hav1.GatewaySpec{
+				Enabled: true, ParentRef: &hav1.GatewayParentRef{Name: "gw"},
+			}},
 			wantErrs: 1,
 		},
 		{
-			name: "gateway with host is valid",
-			spec: hav1.HomeAssistantSpec{Gateway: &hav1.GatewaySpec{Enabled: true, Host: "ha.example.com"}},
+			name: "gateway with host and parentRef is valid",
+			spec: hav1.HomeAssistantSpec{Gateway: &hav1.GatewaySpec{
+				Enabled: true, Host: "ha.example.com",
+				ParentRef: &hav1.GatewayParentRef{Name: "gw"},
+			}},
+		},
+		{
+			name:     "gateway enabled without attach point is rejected",
+			spec:     hav1.HomeAssistantSpec{Gateway: &hav1.GatewaySpec{Enabled: true, Host: "ha.example.com"}},
+			wantErrs: 1,
 		},
 		{
 			name: "ingress tls without secret or issuer is rejected",

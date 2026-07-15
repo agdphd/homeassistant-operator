@@ -87,13 +87,14 @@ spec:
 // validatingWebhookInstalled reports whether the operator's ValidatingWebhookConfiguration
 // is present on the cluster.
 func validatingWebhookInstalled() bool {
+	// Request resource names so "No resources found" is never mistaken for a hit.
 	cmd := exec.Command("kubectl", "get", "validatingwebhookconfiguration",
-		"-l", "app.kubernetes.io/name=homeassistant-operator")
+		"-l", "app.kubernetes.io/name=homeassistant-operator", "-o", "name")
 	out, err := utils.Run(cmd)
-	if err == nil && out != "" {
+	if err == nil && strings.Contains(out, "validating-webhook-configuration") {
 		return true
 	}
-	// Fall back to matching by the webhook name suffix.
+	// Fall back to matching by name suffix across all VWCs (labels may differ).
 	cmd = exec.Command("kubectl", "get", "validatingwebhookconfiguration", "-o", "name")
 	out, err = utils.Run(cmd)
 	return err == nil && strings.Contains(out, "validating-webhook-configuration")

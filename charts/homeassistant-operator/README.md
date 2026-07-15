@@ -56,6 +56,6 @@ Kubernetes: `>=1.24-0`
 | topologySpreadConstraints | list | `[]` |  |
 | watchNamespaces | list | `[]` |  |
 | webhook.certManager.enabled | bool | `false` |  |
-| webhook.enabled | bool | `false` |  |
+| webhook.enabled | bool | `true` |  |
 | webhook.failurePolicy | string | `"Fail"` |  |
 | webhook.port | int | `9443` |  |

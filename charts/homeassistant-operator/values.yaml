@@ -104,20 +104,26 @@ metricsNetworkPolicy:
   enabled: false
 
 # webhook configures the operator's validating admission webhook, which checks
-# TLS/cert-manager configuration coherence on HomeAssistant resources.
-# Off by default (opt-in): when disabled, the operator runs with ENABLE_WEBHOOKS=false
-# and no webhook resources are rendered, so installation never requires cert-manager.
+# HomeAssistant resources (currently TLS configuration coherence) at admission time.
+#
+# ENABLED BY DEFAULT (opt-out): set webhook.enabled=false to turn it off entirely
+# (the operator runs with ENABLE_WEBHOOKS=false and no webhook resources render).
+#
+# The serving certificate is **self-managed** by the operator by default — it
+# generates and rotates a self-signed certificate and injects the CA into its own
+# ValidatingWebhookConfiguration, so **no cert-manager is required**.
 webhook:
-  enabled: false
-  # certManager.enabled: when true, the webhook serving certificate is issued by
-  # cert-manager (a self-signed Issuer + Certificate are rendered) and its CA is
-  # injected into the ValidatingWebhookConfiguration via cert-manager.io/inject-ca-from.
-  # REQUIRES cert-manager installed on the cluster.
-  # When false (default), the chart generates a self-signed serving certificate and
-  # embeds its CA bundle directly — no cert-manager dependency.
+  enabled: true
+  # certManager.enabled: opt IN to have cert-manager issue the serving certificate
+  # instead of the operator self-managing it (a self-signed Issuer + Certificate are
+  # rendered and the CA is injected via cert-manager.io/inject-ca-from). REQUIRES
+  # cert-manager installed. When false (default), the operator self-manages the cert
+  # — no cert-manager dependency.
   certManager:
     enabled: false
   # port is the webhook server port on the operator pod.
   port: 9443
-  # failurePolicy for the ValidatingWebhookConfiguration (Fail or Ignore).
+  # failurePolicy for the ValidatingWebhookConfiguration (Fail or Ignore). Fail
+  # rejects invalid resources; Ignore makes validation best-effort (useful if you
+  # want to avoid admission being blocked while the operator is restarting).
   failurePolicy: Fail

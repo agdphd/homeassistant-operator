@@ -125,7 +125,12 @@ func newHAClientForHA(
 
 // issuerRefMap normalizes an IssuerReference into the map cert-manager expects,
 // applying the same defaults as the CRD (kind=Issuer, group=cert-manager.io).
+// Returns nil for a nil reference (guards against an incoherent spec that the
+// webhook would normally reject).
 func issuerRefMap(ref *hav1.IssuerReference) map[string]interface{} {
+	if ref == nil {
+		return nil
+	}
 	kind := ref.Kind
 	if kind == "" {
 		kind = "Issuer"
@@ -213,9 +218,21 @@ func (r *HomeAssistantReconciler) ensureCertificate(
 		return false, err
 	}
 
-	// Update spec on drift.
-	if current, _, _ := unstructured.NestedMap(existing.Object, "spec"); !reflect.DeepEqual(current, desired) {
-		existing.Object["spec"] = desired
+	// Update only the operator-managed fields on drift, preserving cert-manager
+	// defaults (e.g. usages, privateKey) that live alongside them in the spec.
+	spec, _, _ := unstructured.NestedMap(existing.Object, "spec")
+	if spec == nil {
+		spec = map[string]interface{}{}
+	}
+	changed := false
+	for _, key := range []string{"secretName", "dnsNames", "issuerRef"} {
+		if !reflect.DeepEqual(spec[key], desired[key]) {
+			spec[key] = desired[key]
+			changed = true
+		}
+	}
+	if changed {
+		existing.Object["spec"] = spec
 		if err := r.Update(ctx, existing); err != nil {
 			return false, err
 		}
@@ -418,7 +435,9 @@ func (r *HomeAssistantReconciler) reconcileTLS(ctx context.Context, ha *hav1.Hom
 // nativeTLSUsingProvidedSecret handles the bring-your-own native TLS case (a
 // user-provided Secret, no cert-manager). It records TLSReady and removes any
 // operator-managed certificate. Returns true when it handled the resource.
-func (r *HomeAssistantReconciler) nativeTLSUsingProvidedSecret(ctx context.Context, ha *hav1.HomeAssistant) (bool, error) {
+func (r *HomeAssistantReconciler) nativeTLSUsingProvidedSecret(
+	ctx context.Context, ha *hav1.HomeAssistant,
+) (bool, error) {
 	n := nativeTLS(ha)
 	if n == nil || !n.Enabled || n.SecretName == "" {
 		return false, nil

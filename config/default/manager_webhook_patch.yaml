@@ -14,11 +14,22 @@ spec:
             - containerPort: 9443
               name: webhook-server
               protocol: TCP
+          env:
+            # The operator self-manages the webhook serving certificate. These
+            # names must match the namePrefixed resources rendered by kustomize.
+            - name: WEBHOOK_SERVICE_NAME
+              value: homeassistant-operator-webhook-service
+            - name: WEBHOOK_SECRET_NAME
+              value: homeassistant-operator-webhook-server-cert
+            - name: WEBHOOK_CONFIG_NAME
+              value: homeassistant-operator-validating-webhook-configuration
           volumeMounts:
             - mountPath: /tmp/k8s-webhook-server/serving-certs
               name: webhook-certs
-              readOnly: true
+              readOnly: false
       volumes:
+        # Self-managed: cert-controller writes the serving certificate here and
+        # persists it to a Secret. To use cert-manager instead, replace this with a
+        # `secret` volume backed by the cert-manager-issued Secret.
         - name: webhook-certs
-          secret:
-            secretName: webhook-server-cert
+          emptyDir: {}

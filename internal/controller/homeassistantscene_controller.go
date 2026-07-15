@@ -59,8 +59,8 @@ type HomeAssistantSceneReconciler struct {
 }
 
 // haClientFor returns a HA API client for the given HomeAssistant instance.
-func (r *HomeAssistantSceneReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
-	return newHAClientForHA(context.Background(), r.Client, ha, r.NewHAClient)
+func (r *HomeAssistantSceneReconciler) haClientFor(ctx context.Context, ha *hav1.HomeAssistant) *haclient.Client {
+	return newHAClientForHA(ctx, r.Client, ha, r.NewHAClient)
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscenes,verbs=get;list;watch
@@ -100,7 +100,7 @@ func (r *HomeAssistantSceneReconciler) Reconcile(ctx context.Context, req ctrl.R
 			}
 			if ha, haErr := r.validateHomeAssistantRef(ctx, haRef, scene); haErr == nil {
 				if token, tokenErr := getAPIToken(ctx, r.Client, ha); tokenErr == nil {
-					haClient := r.haClientFor(ha)
+					haClient := r.haClientFor(ctx, ha)
 					id := scene.Spec.ID
 					if id == "" {
 						id = scene.Name
@@ -312,7 +312,7 @@ func (r *HomeAssistantSceneReconciler) reconcileSceneViaAPI(
 		id = scene.Name
 	}
 
-	haClient := r.haClientFor(ha)
+	haClient := r.haClientFor(ctx, ha)
 
 	// If spec.id was renamed, delete the old scene from HA to avoid orphans.
 	prevID := scene.Annotations[lastAppliedIDAnnotationKey]

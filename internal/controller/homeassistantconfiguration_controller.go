@@ -1120,7 +1120,11 @@ func (r *HomeAssistantConfigurationReconciler) applyNativeTLS(
 	}
 	s := &corev1.Secret{}
 	if err := r.Get(ctx, client.ObjectKey{Name: nativeTLSSecretName(ha), Namespace: ha.Namespace}, s); err != nil {
-		return content, nil
+		if errors.IsNotFound(err) {
+			// Not provisioned yet — emit the HTTP config; do not strip TLS silently.
+			return content, nil
+		}
+		return "", err
 	}
 	return injectNativeTLS(content)
 }

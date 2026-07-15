@@ -57,3 +57,12 @@ gateway.networking.k8s.io/gateways/list
 gateway.networking.k8s.io/gateways/patch
 gateway.networking.k8s.io/gateways/update
 gateway.networking.k8s.io/gateways/watch
+
+# Webhook serving-certificate self-management (cert-controller): the operator
+# injects the CA bundle into its own ValidatingWebhookConfiguration, so it needs
+# no cert-manager for the webhook.
+admissionregistration.k8s.io/validatingwebhookconfigurations/get
+admissionregistration.k8s.io/validatingwebhookconfigurations/list
+admissionregistration.k8s.io/validatingwebhookconfigurations/watch
+admissionregistration.k8s.io/validatingwebhookconfigurations/update
+admissionregistration.k8s.io/validatingwebhookconfigurations/patch

@@ -60,8 +60,11 @@ echo ""
 echo "==> PART 1b: webhook TLS via cert-manager"
 echo "    installing cert-manager ($CERT_MANAGER_VERSION)"
 kubectl apply -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml"
-kubectl wait --for=condition=Available deployment/cert-manager-webhook \
-  -n cert-manager --timeout=300s
+# Wait for all three cert-manager components so its API is actually ready before
+# the release upgrade requests a Certificate.
+for d in cert-manager cert-manager-webhook cert-manager-cainjector; do
+  kubectl wait --for=condition=Available "deployment/$d" -n cert-manager --timeout=300s
+done
 
 echo "    upgrading release with webhook.enabled + webhook.certManager.enabled"
 helm upgrade "$RELEASE" "$HELM_CHART_DIR" \

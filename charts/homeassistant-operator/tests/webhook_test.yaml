@@ -2,57 +2,36 @@ suite: validating webhook and its TLS wiring
 templates:
   - webhook.yaml
 tests:
-  - it: renders no webhook resources by default (webhook.enabled=false)
+  - it: is enabled by default (opt-out), self-managed cert, no cert-manager resources
     asserts:
       - hasDocuments:
-          count: 0
-
-  - it: self-signed variant renders Service, serving-cert Secret and webhook config
-    set:
-      webhook.enabled: true
-    asserts:
-      - hasDocuments:
-          count: 3
+          count: 2
       - isKind:
           of: Service
         documentIndex: 0
       - isKind:
-          of: Secret
-        documentIndex: 1
-      - isKind:
           of: ValidatingWebhookConfiguration
-        documentIndex: 2
+        documentIndex: 1
 
-  - it: self-signed Secret is a TLS secret with cert material
-    set:
-      webhook.enabled: true
+  - it: self-managed webhook config has no caBundle and no cert-manager annotation
     documentIndex: 1
     asserts:
       - isKind:
-          of: Secret
-      - equal:
-          path: type
-          value: kubernetes.io/tls
-      - isNotEmpty:
-          path: data["tls.crt"]
-      - isNotEmpty:
-          path: data["ca.crt"]
-
-  - it: self-signed webhook config embeds a caBundle and no cert-manager annotation
-    set:
-      webhook.enabled: true
-    documentIndex: 2
-    asserts:
-      - isKind:
           of: ValidatingWebhookConfiguration
-      - isNotEmpty:
+      - notExists:
           path: webhooks[0].clientConfig.caBundle
       - notExists:
           path: metadata.annotations["cert-manager.io/inject-ca-from"]
 
-  - it: cert-manager variant renders Service, Issuer, Certificate and webhook config
+  - it: renders nothing when disabled
     set:
-      webhook.enabled: true
+      webhook.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: cert-manager override renders Service, Issuer, Certificate and webhook config
+    set:
       webhook.certManager.enabled: true
     asserts:
       - hasDocuments:
@@ -70,25 +49,19 @@ tests:
           of: ValidatingWebhookConfiguration
         documentIndex: 3
 
-  - it: cert-manager variant injects the CA and omits caBundle
+  - it: cert-manager override injects the CA via annotation
     set:
-      webhook.enabled: true
       webhook.certManager.enabled: true
     documentIndex: 3
     asserts:
-      - isKind:
-          of: ValidatingWebhookConfiguration
       - equal:
           path: metadata.annotations["cert-manager.io/inject-ca-from"]
           value: NAMESPACE/RELEASE-NAME-homeassistant-operator-webhook-serving-cert
-      - notExists:
-          path: webhooks[0].clientConfig.caBundle
 
   - it: failurePolicy is configurable
     set:
-      webhook.enabled: true
       webhook.failurePolicy: Ignore
-    documentIndex: 2
+    documentIndex: 1
     asserts:
       - equal:
           path: webhooks[0].failurePolicy

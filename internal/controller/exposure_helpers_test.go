@@ -70,11 +70,13 @@ func ingressHA(name string, issuer bool) *hav1.HomeAssistant {
 	}
 }
 
-func getUnstructured(t *testing.T, r *HomeAssistantReconciler, gvk schema.GroupVersionKind, name, ns string) (*unstructured.Unstructured, error) {
+func getUnstructured(
+	t *testing.T, r *HomeAssistantReconciler, gvk schema.GroupVersionKind, name string,
+) (*unstructured.Unstructured, error) {
 	t.Helper()
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(gvk)
-	return u, r.Get(context.Background(), client.ObjectKey{Name: name, Namespace: ns}, u)
+	return u, r.Get(context.Background(), client.ObjectKey{Name: name, Namespace: "default"}, u)
 }
 
 // TestReconcileExposureIngress (US3): Ingress enabled with an issuerRef and
@@ -97,7 +99,7 @@ func TestReconcileExposureIngress(t *testing.T) {
 	if len(ing.Spec.TLS) != 1 || ing.Spec.TLS[0].SecretName != "home-ingress-tls" {
 		t.Fatalf("expected TLS secret home-ingress-tls, got %+v", ing.Spec.TLS)
 	}
-	if _, err := getUnstructured(t, r, certificateGVK, "home-ingress-tls", "default"); err != nil {
+	if _, err := getUnstructured(t, r, certificateGVK, "home-ingress-tls"); err != nil {
 		t.Fatalf("expected ingress Certificate created: %v", err)
 	}
 	if !meta.IsStatusConditionTrue(ha.Status.Conditions, conditionExposureReady) {
@@ -114,10 +116,11 @@ func TestReconcileExposureIngressNoCertManager(t *testing.T) {
 	if err := r.reconcileExposure(context.Background(), ha); err != nil {
 		t.Fatalf("reconcileExposure error: %v", err)
 	}
-	if err := r.Get(context.Background(), client.ObjectKey{Name: "home", Namespace: "default"}, &networkingv1.Ingress{}); err != nil {
+	err := r.Get(context.Background(), client.ObjectKey{Name: "home", Namespace: "default"}, &networkingv1.Ingress{})
+	if err != nil {
 		t.Fatalf("expected Ingress created even without cert-manager: %v", err)
 	}
-	if _, err := getUnstructured(t, r, certificateGVK, "home-ingress-tls", "default"); err == nil {
+	if _, err := getUnstructured(t, r, certificateGVK, "home-ingress-tls"); err == nil {
 		t.Fatal("expected no Certificate without cert-manager")
 	}
 }
@@ -139,7 +142,7 @@ func TestReconcileExposureGatewayRoute(t *testing.T) {
 	if err := r.reconcileExposure(context.Background(), ha); err != nil {
 		t.Fatalf("reconcileExposure error: %v", err)
 	}
-	route, err := getUnstructured(t, r, httpRouteGVK, "home", "default")
+	route, err := getUnstructured(t, r, httpRouteGVK, "home")
 	if err != nil {
 		t.Fatalf("expected HTTPRoute created: %v", err)
 	}
@@ -147,7 +150,7 @@ func TestReconcileExposureGatewayRoute(t *testing.T) {
 	if len(hostnames) != 1 || hostnames[0] != "ha.example.com" {
 		t.Fatalf("unexpected HTTPRoute hostnames: %v", hostnames)
 	}
-	if _, err := getUnstructured(t, r, certificateGVK, "home-gateway-tls", "default"); err != nil {
+	if _, err := getUnstructured(t, r, certificateGVK, "home-gateway-tls"); err != nil {
 		t.Fatalf("expected gateway Certificate created: %v", err)
 	}
 	if !meta.IsStatusConditionTrue(ha.Status.Conditions, conditionExposureReady) {
@@ -164,7 +167,8 @@ func TestReconcileExposureCleanup(t *testing.T) {
 	if err := r.reconcileExposure(context.Background(), ha); err != nil {
 		t.Fatalf("reconcileExposure error: %v", err)
 	}
-	if err := r.Get(context.Background(), client.ObjectKey{Name: "home", Namespace: "default"}, &networkingv1.Ingress{}); err == nil {
+	err := r.Get(context.Background(), client.ObjectKey{Name: "home", Namespace: "default"}, &networkingv1.Ingress{})
+	if err == nil {
 		t.Fatal("expected Ingress to be deleted when exposure disabled")
 	}
 }

@@ -55,15 +55,16 @@ func (c *Client) WithTimeout(timeout time.Duration) *Client {
 // empty bundle results in an empty trust pool (connections will fail closed
 // rather than fall back to skipping verification).
 func (c *Client) WithRootCAs(caPEM []byte) *Client {
-	pool := x509.NewCertPool()
-	if len(caPEM) > 0 {
-		pool.AppendCertsFromPEM(caPEM)
-	}
 	t, ok := c.httpClient.Transport.(*http.Transport)
 	if !ok {
-		t = &http.Transport{}
-		c.httpClient.Transport = t
+		// A wrapped/custom transport manages its own TLS — leave it untouched
+		// rather than replacing it with a bare one and dropping its settings.
+		return c
 	}
+	pool := x509.NewCertPool()
+	// A malformed or empty bundle leaves an empty pool, so verification fails
+	// closed rather than falling back to skipping it.
+	pool.AppendCertsFromPEM(caPEM)
 	if t.TLSClientConfig == nil {
 		t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	}

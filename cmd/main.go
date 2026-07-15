@@ -19,15 +19,18 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/open-policy-agent/cert-controller/pkg/rotator"
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -56,6 +59,14 @@ func init() {
 
 	utilruntime.Must(hav1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
+}
+
+// getenvOr returns the value of the environment variable key, or def when unset.
+func getenvOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
 
 // nolint:gocyclo
@@ -134,34 +145,55 @@ func main() {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
-	// Create watchers for metrics and webhooks certificates
-	var metricsCertWatcher, webhookCertWatcher *certwatcher.CertWatcher
+	// Webhook enablement (opt-out: on unless ENABLE_WEBHOOKS=false). The serving
+	// certificate is self-managed by the operator (cert-controller) unless
+	// cert-manager is selected via WEBHOOK_SELF_MANAGE_CERT=false — so the webhook
+	// needs no cert-manager by default.
+	enableWebhooks := os.Getenv("ENABLE_WEBHOOKS") != "false"
+	webhookSelfManageCert := os.Getenv("WEBHOOK_SELF_MANAGE_CERT") != "false"
+	// Self-managed webhook needs the operator namespace (to write the Secret and
+	// patch the ValidatingWebhookConfiguration). When it is unset — typically local
+	// `make run` — skip the webhook instead of failing, so out-of-cluster dev works.
+	if enableWebhooks && webhookSelfManageCert && os.Getenv("OPERATOR_NAMESPACE") == "" {
+		setupLog.Info("OPERATOR_NAMESPACE not set; disabling the validating webhook " +
+			"(set ENABLE_WEBHOOKS=false to silence, or run in-cluster)")
+		enableWebhooks = false
+	}
+	webhookCertDir := webhookCertPath
+	if enableWebhooks && webhookCertDir == "" {
+		webhookCertDir = "/tmp/k8s-webhook-server/serving-certs"
+	}
 
-	// Initial webhook TLS options
+	// Create watchers for metrics and webhook certificates.
+	var metricsCertWatcher, webhookCertWatcher *certwatcher.CertWatcher
 	webhookTLSOpts := tlsOpts
 
-	if len(webhookCertPath) > 0 {
-		setupLog.Info("Initializing webhook certificate watcher using provided certificates",
-			"webhook-cert-path", webhookCertPath, "webhook-cert-name", webhookCertName, "webhook-cert-key", webhookCertKey)
-
+	// cert-manager mode: watch the mounted serving-cert files. Self-managed mode:
+	// cert-controller writes into webhookCertDir and the webhook server loads them
+	// from CertDir, so no external watcher is needed (and the files may not exist
+	// yet at startup).
+	if enableWebhooks && !webhookSelfManageCert && len(webhookCertDir) > 0 {
+		setupLog.Info("Initializing webhook certificate watcher (cert-manager mode)",
+			"webhook-cert-path", webhookCertDir)
 		var err error
 		webhookCertWatcher, err = certwatcher.New(
-			filepath.Join(webhookCertPath, webhookCertName),
-			filepath.Join(webhookCertPath, webhookCertKey),
+			filepath.Join(webhookCertDir, webhookCertName),
+			filepath.Join(webhookCertDir, webhookCertKey),
 		)
 		if err != nil {
 			setupLog.Error(err, "Failed to initialize webhook certificate watcher")
 			os.Exit(1)
 		}
-
 		webhookTLSOpts = append(webhookTLSOpts, func(config *tls.Config) {
 			config.GetCertificate = webhookCertWatcher.GetCertificate
 		})
 	}
 
-	webhookServer := webhook.NewServer(webhook.Options{
-		TLSOpts: webhookTLSOpts,
-	})
+	webhookServerOpts := webhook.Options{TLSOpts: webhookTLSOpts}
+	if enableWebhooks && webhookSelfManageCert {
+		webhookServerOpts.CertDir = webhookCertDir
+	}
+	webhookServer := webhook.NewServer(webhookServerOpts)
 
 	// Metrics endpoint is enabled in 'config/default/kustomization.yaml'. The Metrics options configure the server.
 	// More info:
@@ -308,13 +340,47 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantArea")
 		os.Exit(1)
 	}
-	// Register webhooks unless explicitly disabled (e.g. local development without
-	// a webhook serving certificate). Enabled by default.
-	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err := webhookhav1.SetupHomeAssistantWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "unable to create webhook", "webhook", "HomeAssistant")
-			os.Exit(1)
+	// Webhook: self-provision the serving certificate (cert-controller writes a
+	// self-signed cert to a Secret + CertDir and injects the caBundle into the
+	// ValidatingWebhookConfiguration) unless cert-manager provides it. The webhook
+	// is registered only once the certificate is ready.
+	if enableWebhooks {
+		setupFinished := make(chan struct{})
+		if webhookSelfManageCert {
+			ns := os.Getenv("OPERATOR_NAMESPACE")
+			svc := getenvOr("WEBHOOK_SERVICE_NAME", "homeassistant-operator-webhook-service")
+			secretName := getenvOr("WEBHOOK_SECRET_NAME", "homeassistant-operator-webhook-server-cert")
+			vwcName := getenvOr("WEBHOOK_CONFIG_NAME", "homeassistant-operator-validating-webhook-configuration")
+			dnsName := fmt.Sprintf("%s.%s.svc", svc, ns)
+			setupLog.Info("Setting up self-managed webhook certificate rotator",
+				"secret", secretName, "dnsName", dnsName, "webhookConfig", vwcName)
+			if err := rotator.AddRotator(mgr, &rotator.CertRotator{
+				SecretKey:             types.NamespacedName{Namespace: ns, Name: secretName},
+				CertDir:               webhookCertDir,
+				CAName:                "homeassistant-operator-webhook-ca",
+				CAOrganization:        "homeassistant-operator",
+				DNSName:               dnsName,
+				ExtraDNSNames:         []string{dnsName + ".cluster.local"},
+				IsReady:               setupFinished,
+				Webhooks:              []rotator.WebhookInfo{{Name: vwcName, Type: rotator.Validating}},
+				RequireLeaderElection: false,
+			}); err != nil {
+				setupLog.Error(err, "unable to set up webhook certificate rotator")
+				os.Exit(1)
+			}
+		} else {
+			// cert-manager provides the serving cert and injects the CA — ready now.
+			close(setupFinished)
 		}
+
+		go func() {
+			<-setupFinished
+			if err := webhookhav1.SetupHomeAssistantWebhookWithManager(mgr); err != nil {
+				setupLog.Error(err, "unable to create webhook", "webhook", "HomeAssistant")
+				os.Exit(1)
+			}
+			setupLog.Info("validating webhook registered")
+		}()
 	}
 	// +kubebuilder:scaffold:builder
 

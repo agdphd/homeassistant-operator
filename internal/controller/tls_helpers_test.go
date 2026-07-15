@@ -253,7 +253,9 @@ func TestReconcileTLSAvailableSetsCondition(t *testing.T) {
 }
 
 // getCertificate fetches the operator-managed native TLS Certificate.
-func getCertificate(t *testing.T, r *HomeAssistantReconciler, ha *hav1.HomeAssistant) (*unstructured.Unstructured, error) {
+func getCertificate(
+	t *testing.T, r *HomeAssistantReconciler, ha *hav1.HomeAssistant,
+) (*unstructured.Unstructured, error) {
 	t.Helper()
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(certificateGVK)
@@ -435,6 +437,17 @@ func TestInjectNativeTLS(t *testing.T) {
 		if !strings.Contains(out, "use_x_forwarded_for: true") ||
 			!strings.Contains(out, "ssl_certificate: /config/ssl/tls.crt") {
 			t.Fatalf("unexpected output:\n%s", out)
+		}
+	})
+
+	t.Run("converts an empty/null http scalar to a mapping", func(t *testing.T) {
+		out, err := injectNativeTLS("default_config:\nhttp:\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "ssl_certificate: /config/ssl/tls.crt") ||
+			!strings.Contains(out, "ssl_key: /config/ssl/tls.key") {
+			t.Fatalf("expected ssl keys under a null http:\n%s", out)
 		}
 	})
 

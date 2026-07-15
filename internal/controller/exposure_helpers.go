@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 )
@@ -57,7 +58,12 @@ func servicePort(ha *hav1.HomeAssistant) int32 {
 // is never fatal: HTTP exposure is still created and the TLS condition reflects the
 // degradation (handled in reconcileTLS). Disabled modes are cleaned up.
 func (r *HomeAssistantReconciler) reconcileExposure(ctx context.Context, ha *hav1.HomeAssistant) error {
-	available, _ := r.certManagerAvailable(ctx)
+	available, err := r.certManagerAvailable(ctx)
+	if err != nil {
+		// Transient detection failure — treat cert-manager as unavailable (HTTP
+		// exposure still works) and log, so it is distinguishable from "absent".
+		logf.FromContext(ctx).V(1).Info("cert-manager detection failed during exposure", "error", err)
+	}
 	exposed := false
 
 	// --- Ingress ---
@@ -77,10 +83,13 @@ func (r *HomeAssistantReconciler) reconcileExposure(ctx context.Context, ha *hav
 
 	// --- Gateway API ---
 	if ha.Spec.Gateway != nil && ha.Spec.Gateway.Enabled {
-		if err := r.reconcileGatewayRoute(ctx, ha, available); err != nil {
+		routed, err := r.reconcileGatewayRoute(ctx, ha, available)
+		if err != nil {
 			return err
 		}
-		exposed = true
+		// Only count as exposed when a route was actually attached (a parentRef or
+		// managed Gateway existed) — an enabled Gateway with no attach point is not.
+		exposed = exposed || routed
 	} else {
 		if err := r.deleteExposureResource(ctx, ha, httpRouteGVK, ha.Name); err != nil {
 			return err
@@ -93,6 +102,13 @@ func (r *HomeAssistantReconciler) reconcileExposure(ctx context.Context, ha *hav
 		}
 	}
 
+	return r.updateExposureReady(ctx, ha, exposed)
+}
+
+// updateExposureReady sets ExposureReady=True when exposure resources are active,
+// and clears a previously-set condition when exposure is disabled (so a stale True
+// does not linger). It adds no condition for resources that never enabled exposure.
+func (r *HomeAssistantReconciler) updateExposureReady(ctx context.Context, ha *hav1.HomeAssistant, exposed bool) error {
 	if exposed {
 		if meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
 			Type:               conditionExposureReady,
@@ -107,13 +123,19 @@ func (r *HomeAssistantReconciler) reconcileExposure(ctx context.Context, ha *hav
 			r.Recorder.Eventf(ha, nil, corev1.EventTypeNormal, eventExposureConfigured, eventExposureConfigured,
 				"Exposure resources reconciled for %q", ha.Name)
 		}
+		return nil
+	}
+	if meta.RemoveStatusCondition(&ha.Status.Conditions, conditionExposureReady) {
+		return r.Status().Update(ctx, ha)
 	}
 	return nil
 }
 
 // reconcileIngress creates/updates the operator-managed Ingress and its
 // cert-manager Certificate (when an issuerRef is set and cert-manager is present).
-func (r *HomeAssistantReconciler) reconcileIngress(ctx context.Context, ha *hav1.HomeAssistant, cmAvailable bool) error {
+func (r *HomeAssistantReconciler) reconcileIngress(
+	ctx context.Context, ha *hav1.HomeAssistant, cmAvailable bool,
+) error {
 	in := ha.Spec.Ingress
 	host := in.Host
 
@@ -126,7 +148,8 @@ func (r *HomeAssistantReconciler) reconcileIngress(ctx context.Context, ha *hav1
 		case in.TLS.IssuerRef != nil:
 			tlsSecret = ingressTLSCertificateName(ha)
 			if cmAvailable {
-				if _, err := r.ensureCertificate(ctx, ha, ingressTLSCertificateName(ha), []string{host}, in.TLS.IssuerRef); err != nil {
+				_, err := r.ensureCertificate(ctx, ha, ingressTLSCertificateName(ha), []string{host}, in.TLS.IssuerRef)
+				if err != nil {
 					return err
 				}
 			}
@@ -170,8 +193,12 @@ func (r *HomeAssistantReconciler) deleteIngress(ctx context.Context, ha *hav1.Ho
 }
 
 // reconcileGatewayRoute creates/updates the HTTPRoute (and, when manageGateway is
-// set, a Gateway) plus the cert-manager Certificate for the listener.
-func (r *HomeAssistantReconciler) reconcileGatewayRoute(ctx context.Context, ha *hav1.HomeAssistant, cmAvailable bool) error {
+// set, a Gateway) plus the cert-manager Certificate for the listener. It returns
+// true only when a route was actually attached to a parent; an enabled Gateway
+// with neither parentRef nor manageGateway has no attach point and returns false.
+func (r *HomeAssistantReconciler) reconcileGatewayRoute(
+	ctx context.Context, ha *hav1.HomeAssistant, cmAvailable bool,
+) (bool, error) {
 	g := ha.Spec.Gateway
 
 	var tlsSecret string
@@ -180,8 +207,9 @@ func (r *HomeAssistantReconciler) reconcileGatewayRoute(ctx context.Context, ha 
 	} else if g.IssuerRef != nil {
 		tlsSecret = gatewayTLSCertificateName(ha)
 		if cmAvailable {
-			if _, err := r.ensureCertificate(ctx, ha, gatewayTLSCertificateName(ha), []string{g.Host}, g.IssuerRef); err != nil {
-				return err
+			_, err := r.ensureCertificate(ctx, ha, gatewayTLSCertificateName(ha), []string{g.Host}, g.IssuerRef)
+			if err != nil {
+				return false, err
 			}
 		}
 	}
@@ -199,13 +227,13 @@ func (r *HomeAssistantReconciler) reconcileGatewayRoute(ctx context.Context, ha 
 		}
 	case g.ManageGateway:
 		if err := r.ensureManagedGateway(ctx, ha, tlsSecret); err != nil {
-			return err
+			return false, err
 		}
 		parent["name"] = managedGatewayName(ha)
 		parent["sectionName"] = "https"
 	default:
 		// No parent to attach to — nothing to route yet.
-		return nil
+		return false, nil
 	}
 
 	route := &unstructured.Unstructured{}
@@ -225,12 +253,17 @@ func (r *HomeAssistantReconciler) reconcileGatewayRoute(ctx context.Context, ha 
 		}
 		return controllerutil.SetControllerReference(ha, route, r.Scheme)
 	})
-	return err
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ensureManagedGateway creates/updates a Gateway with an HTTPS listener when the
 // user opts into operator-managed Gateway (spec.gateway.manageGateway).
-func (r *HomeAssistantReconciler) ensureManagedGateway(ctx context.Context, ha *hav1.HomeAssistant, tlsSecret string) error {
+func (r *HomeAssistantReconciler) ensureManagedGateway(
+	ctx context.Context, ha *hav1.HomeAssistant, tlsSecret string,
+) error {
 	gw := &unstructured.Unstructured{}
 	gw.SetGroupVersionKind(gatewayGVK)
 	gw.SetName(managedGatewayName(ha))

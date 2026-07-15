@@ -4,6 +4,7 @@
 {{- $svcName := printf "%s-webhook-service" $fullname }}
 {{- $certSecret := printf "%s-webhook-server-cert" $fullname }}
 {{- $certName := printf "%s-webhook-serving-cert" $fullname }}
+{{- $vwcName := printf "%s-validating-webhook-configuration" $fullname }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -19,10 +20,10 @@ spec:
     - port: 443
       targetPort: webhook-server
       protocol: TCP
----
 {{- if .Values.webhook.certManager.enabled }}
-# cert-manager path: a self-signed Issuer issues the webhook serving certificate,
-# and cert-manager injects the CA into the ValidatingWebhookConfiguration.
+---
+# cert-manager path (opt-in): cert-manager issues the serving certificate and
+# injects the CA into the ValidatingWebhookConfiguration.
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
@@ -49,21 +50,26 @@ spec:
     name: {{ $fullname }}-selfsigned-issuer
     kind: Issuer
     group: cert-manager.io
+{{- end }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
-  name: {{ $fullname }}-validating-webhook-configuration
+  name: {{ $vwcName }}
   labels:
     {{- include "homeassistant-operator.labels" . | nindent 4 }}
+  {{- if .Values.webhook.certManager.enabled }}
   annotations:
     cert-manager.io/inject-ca-from: {{ printf "%s/%s" $ns $certName }}
+  {{- end }}
 webhooks:
   - name: vhomeassistant-v1.kb.io
     admissionReviewVersions: ["v1"]
     sideEffects: None
     failurePolicy: {{ .Values.webhook.failurePolicy }}
     clientConfig:
+      # In the default (self-managed) mode the operator injects caBundle at runtime
+      # via cert-controller; with cert-manager it is injected via the annotation above.
       service:
         name: {{ $svcName }}
         namespace: {{ $ns }}
@@ -73,61 +79,4 @@ webhooks:
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["homeassistants"]
-{{- else }}
-# Self-signed fallback: the chart generates a CA + serving certificate and embeds
-# the CA bundle inline. No cert-manager dependency. `lookup` reuses an existing
-# certificate across upgrades so it is not rotated on every `helm upgrade`.
-{{- $cn := printf "%s.%s.svc" $svcName $ns }}
-{{- $altNames := list $cn (printf "%s.%s.svc.cluster.local" $svcName $ns) }}
-{{- $existing := lookup "v1" "Secret" $ns $certSecret }}
-{{- $caCert := "" }}
-{{- $tlsCert := "" }}
-{{- $tlsKey := "" }}
-{{- if and $existing (hasKey ($existing.data | default dict) "ca.crt") }}
-{{- $caCert = index $existing.data "ca.crt" }}
-{{- $tlsCert = index $existing.data "tls.crt" }}
-{{- $tlsKey = index $existing.data "tls.key" }}
-{{- else }}
-{{- $ca := genCA "homeassistant-operator-webhook-ca" 3650 }}
-{{- $cert := genSignedCert $cn nil $altNames 3650 $ca }}
-{{- $caCert = b64enc $ca.Cert }}
-{{- $tlsCert = b64enc $cert.Cert }}
-{{- $tlsKey = b64enc $cert.Key }}
-{{- end }}
-apiVersion: v1
-kind: Secret
-metadata:
-  name: {{ $certSecret }}
-  namespace: {{ $ns }}
-  labels:
-    {{- include "homeassistant-operator.labels" . | nindent 4 }}
-type: kubernetes.io/tls
-data:
-  ca.crt: {{ $caCert }}
-  tls.crt: {{ $tlsCert }}
-  tls.key: {{ $tlsKey }}
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingWebhookConfiguration
-metadata:
-  name: {{ $fullname }}-validating-webhook-configuration
-  labels:
-    {{- include "homeassistant-operator.labels" . | nindent 4 }}
-webhooks:
-  - name: vhomeassistant-v1.kb.io
-    admissionReviewVersions: ["v1"]
-    sideEffects: None
-    failurePolicy: {{ .Values.webhook.failurePolicy }}
-    clientConfig:
-      caBundle: {{ $caCert }}
-      service:
-        name: {{ $svcName }}
-        namespace: {{ $ns }}
-        path: /validate-ha-homeassistant-io-v1-homeassistant
-    rules:
-      - apiGroups: ["ha.homeassistant.io"]
-        apiVersions: ["v1"]
-        operations: ["CREATE", "UPDATE"]
-        resources: ["homeassistants"]
-{{- end }}
 {{- end }}

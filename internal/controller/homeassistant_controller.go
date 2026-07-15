@@ -127,6 +127,9 @@ type HomeAssistantReconciler struct {
 // +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes;gateways,verbs=get;list;watch;create;update;patch;delete
+// Webhook serving certificate self-management (cert-controller): the operator
+// injects the CA bundle into its own ValidatingWebhookConfiguration.
+// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;list;watch;update;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -769,7 +772,8 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 	if n := nativeTLS(ha); n != nil && n.Enabled {
 		tlsSecretName := nativeTLSSecretName(ha)
 		tlsSecret := &corev1.Secret{}
-		if getErr := r.Get(ctx, types.NamespacedName{Name: tlsSecretName, Namespace: ha.Namespace}, tlsSecret); getErr == nil {
+		getErr := r.Get(ctx, types.NamespacedName{Name: tlsSecretName, Namespace: ha.Namespace}, tlsSecret)
+		if getErr == nil {
 			volumes = append(volumes, corev1.Volume{
 				Name: "ha-native-tls",
 				VolumeSource: corev1.VolumeSource{

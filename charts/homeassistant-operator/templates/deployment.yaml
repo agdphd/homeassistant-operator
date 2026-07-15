@@ -60,6 +60,16 @@ spec:
             - name: ENABLE_WEBHOOKS
               value: "false"
             {{- end }}
+            {{- if .Values.webhook.enabled }}
+            - name: WEBHOOK_SERVICE_NAME
+              value: {{ include "homeassistant-operator.fullname" . }}-webhook-service
+            - name: WEBHOOK_SECRET_NAME
+              value: {{ include "homeassistant-operator.fullname" . }}-webhook-server-cert
+            - name: WEBHOOK_CONFIG_NAME
+              value: {{ include "homeassistant-operator.fullname" . }}-validating-webhook-configuration
+            - name: WEBHOOK_SELF_MANAGE_CERT
+              value: {{ not .Values.webhook.certManager.enabled | quote }}
+            {{- end }}
           {{- if .Values.webhook.enabled }}
           ports:
             - name: webhook-server
@@ -86,13 +96,21 @@ spec:
           volumeMounts:
             - name: webhook-certs
               mountPath: /tmp/k8s-webhook-server/serving-certs
-              readOnly: true
+              # Writable in self-managed mode (the operator writes the cert here);
+              # read-only when cert-manager provides it via a mounted Secret.
+              readOnly: {{ .Values.webhook.certManager.enabled }}
           {{- end }}
       {{- if .Values.webhook.enabled }}
       volumes:
         - name: webhook-certs
+          {{- if .Values.webhook.certManager.enabled }}
           secret:
             secretName: {{ include "homeassistant-operator.fullname" . }}-webhook-server-cert
+          {{- else }}
+          # Self-managed: cert-controller writes the serving certificate here and
+          # persists it to a Secret; an emptyDir avoids a chicken-and-egg on the Secret.
+          emptyDir: {}
+          {{- end }}
       {{- end }}
       {{- if .Values.priorityClassName }}
       priorityClassName: {{ .Values.priorityClassName }}

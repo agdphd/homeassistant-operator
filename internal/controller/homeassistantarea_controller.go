@@ -111,7 +111,7 @@ func (r *HomeAssistantAreaReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			"API token not available", 30*time.Second)
 	}
 
-	haClient := r.haClientFor(ha)
+	haClient := r.haClientFor(ctx, ha)
 
 	// --- RESOLVE floor reference ---
 	var floorID string
@@ -237,7 +237,7 @@ func (r *HomeAssistantAreaReconciler) handleDeletion(ctx context.Context, area *
 		return
 	}
 
-	haClient := r.haClientFor(ha)
+	haClient := r.haClientFor(ctx, ha)
 	if err := r.deleteArea(ctx, haClient, token, area.Status.AreaID); err != nil {
 		log.Error(err, "Failed to delete area from HA (best-effort)", "areaID", area.Status.AreaID)
 	} else {
@@ -246,8 +246,8 @@ func (r *HomeAssistantAreaReconciler) handleDeletion(ctx context.Context, area *
 }
 
 // haClientFor returns a haclient.Client for the given HA instance
-func (r *HomeAssistantAreaReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
-	return newHAClientForHA(context.Background(), r.Client, ha, r.NewHAClient)
+func (r *HomeAssistantAreaReconciler) haClientFor(ctx context.Context, ha *hav1.HomeAssistant) *haclient.Client {
+	return newHAClientForHA(ctx, r.Client, ha, r.NewHAClient)
 }
 
 // setCondition updates the Ready condition and status
