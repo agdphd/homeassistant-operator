@@ -50,6 +50,20 @@ spec:
     name: {{ $fullname }}-selfsigned-issuer
     kind: Issuer
     group: cert-manager.io
+{{- else }}
+---
+# Self-managed path: an empty Secret that cert-controller (in the operator)
+# populates with the generated serving certificate and CA. It must pre-exist —
+# cert-controller updates it but never creates it. `data` is intentionally omitted
+# so a Helm upgrade does not wipe the certificate cert-controller wrote.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $certSecret }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "homeassistant-operator.labels" . | nindent 4 }}
+type: Opaque
 {{- end }}
 ---
 apiVersion: admissionregistration.k8s.io/v1

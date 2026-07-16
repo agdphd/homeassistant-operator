@@ -82,7 +82,9 @@ else
 fi
 
 echo "    verifying the webhook rejects an incoherent HomeAssistant"
-if kubectl -n "$NS" apply -f - <<'EOF' 2>/dev/null
+# failurePolicy is Ignore, so rejection only happens once the webhook is serving —
+# poll for up to ~60s for the reject to take effect.
+bad_manifest=$(cat <<'EOF'
 apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistant
 metadata:
@@ -93,11 +95,22 @@ spec:
       native:
         enabled: true
 EOF
-then
-  echo "❌ webhook accepted native TLS without issuerRef/secretName" >&2
-  exit 1
-else
+)
+rejected=false
+for _ in $(seq 1 30); do
+  if echo "$bad_manifest" | kubectl -n "$NS" apply -f - >/dev/null 2>&1; then
+    kubectl -n "$NS" delete homeassistant e2e-webhook-bad >/dev/null 2>&1 || true
+    sleep 2
+  else
+    rejected=true
+    break
+  fi
+done
+if [ "$rejected" = true ]; then
   echo "    ✅ webhook rejected the incoherent CR"
+else
+  echo "❌ webhook did not reject native TLS without issuerRef/secretName" >&2
+  exit 1
 fi
 echo "    ✅ PART 1b OK"
 

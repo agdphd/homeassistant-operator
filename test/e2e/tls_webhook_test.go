@@ -61,8 +61,12 @@ spec:
       native:
         enabled: true
 `, namespace)
-		err := utils.ApplyYAML(bad, namespace)
-		Expect(err).To(HaveOccurred(), "webhook should reject native TLS without issuerRef/secretName")
+		// failurePolicy is Ignore, so rejection only occurs once the webhook is
+		// actually serving — retry until it rejects (the CR is never created).
+		Eventually(func() error {
+			return utils.ApplyYAML(bad, namespace)
+		}, utils.CertIssueTimeout, utils.DefaultEventuallyPollingInterval).Should(HaveOccurred(),
+			"webhook should reject native TLS without issuerRef/secretName")
 	})
 
 	It("accepts a coherent HomeAssistant", func() {
