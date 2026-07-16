@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
@@ -29,12 +30,16 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -67,6 +72,26 @@ func getenvOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// ensureWebhookSecret creates an empty Opaque Secret for the self-managed webhook
+// serving certificate when it does not already exist. cert-controller updates this
+// Secret but never creates it, so the operator bootstraps it here — keeping it out
+// of the chart/Kustomize avoids Helm ownership conflicts and cert-manager↔self-managed
+// switch issues. A direct client is used because the manager cache is not started yet.
+func ensureWebhookSecret(mgr ctrl.Manager, namespace, name string) error {
+	c, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
+	if err != nil {
+		return err
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+		Type:       corev1.SecretTypeOpaque,
+	}
+	if err := c.Create(context.Background(), secret); err != nil && !apierrors.IsAlreadyExists(err) {
+		return err
+	}
+	return nil
 }
 
 // nolint:gocyclo
@@ -368,6 +393,11 @@ func main() {
 			dnsName := fmt.Sprintf("%s.%s.svc", svc, ns)
 			setupLog.Info("Setting up self-managed webhook certificate rotator",
 				"secret", secretName, "dnsName", dnsName, "webhookConfig", vwcName)
+			// cert-controller updates but never creates the Secret — bootstrap it.
+			if err := ensureWebhookSecret(mgr, ns, secretName); err != nil {
+				setupLog.Error(err, "unable to ensure webhook serving-cert Secret")
+				os.Exit(1)
+			}
 			if err := rotator.AddRotator(mgr, &rotator.CertRotator{
 				SecretKey:             types.NamespacedName{Namespace: ns, Name: secretName},
 				CertDir:               webhookCertDir,
