@@ -74,17 +74,21 @@ helm upgrade "$RELEASE" "$HELM_CHART_DIR" \
   --wait --timeout 180s
 hh_wait_ready "$NS"
 
-if kubectl get validatingwebhookconfiguration -o name | grep -q validating-webhook-configuration; then
+# Scope to the operator's own ValidatingWebhookConfiguration — cert-manager ships
+# its own VWC, so a cluster-wide check could false-positive on that instead.
+VWC_NAME="${RELEASE}-homeassistant-operator-validating-webhook-configuration"
+
+if kubectl get validatingwebhookconfiguration "$VWC_NAME" >/dev/null 2>&1; then
   echo "    ✅ ValidatingWebhookConfiguration present"
 else
-  echo "❌ webhook configuration missing after enabling webhook" >&2
+  echo "❌ webhook configuration '$VWC_NAME' missing after enabling webhook" >&2
   exit 1
 fi
 
 # In cert-manager mode the CA is injected by cert-manager (inject-ca-from) — assert
 # the wiring is present. The webhook's admission behaviour is covered by the Go E2E
 # suite; asserting it here on a self-managed→cert-manager transition is timing-fragile.
-if kubectl get validatingwebhookconfiguration -o yaml | grep -q "cert-manager.io/inject-ca-from"; then
+if kubectl get validatingwebhookconfiguration "$VWC_NAME" -o yaml | grep -q "cert-manager.io/inject-ca-from"; then
   echo "    ✅ cert-manager CA injection annotation present"
 else
   echo "❌ cert-manager inject-ca-from annotation missing" >&2

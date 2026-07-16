@@ -5,30 +5,16 @@ tests:
   - it: is enabled by default (opt-out), self-managed cert, no cert-manager resources
     asserts:
       - hasDocuments:
-          count: 3
+          count: 2
       - isKind:
           of: Service
         documentIndex: 0
       - isKind:
-          of: Secret
-        documentIndex: 1
-      - isKind:
           of: ValidatingWebhookConfiguration
-        documentIndex: 2
-
-  - it: self-managed renders an empty Secret for cert-controller to populate
-    documentIndex: 1
-    asserts:
-      - isKind:
-          of: Secret
-      - equal:
-          path: type
-          value: Opaque
-      - notExists:
-          path: data
+        documentIndex: 1
 
   - it: self-managed webhook config has no caBundle and no cert-manager annotation
-    documentIndex: 2
+    documentIndex: 1
     asserts:
       - isKind:
           of: ValidatingWebhookConfiguration
@@ -75,7 +61,7 @@ tests:
   - it: failurePolicy is configurable
     set:
       webhook.failurePolicy: Fail
-    documentIndex: 2
+    documentIndex: 1
     asserts:
       - equal:
           path: webhooks[0].failurePolicy

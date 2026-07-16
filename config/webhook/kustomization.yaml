@@ -1,4 +1,3 @@
 resources:
-- secret.yaml
 - manifests.yaml
 - service.yaml

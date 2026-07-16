@@ -57,5 +57,5 @@ Kubernetes: `>=1.24-0`
 | watchNamespaces | list | `[]` |  |
 | webhook.certManager.enabled | bool | `false` |  |
 | webhook.enabled | bool | `true` |  |
-| webhook.failurePolicy | string | `"Fail"` |  |
+| webhook.failurePolicy | string | `"Ignore"` |  |
 | webhook.port | int | `9443` |  |
