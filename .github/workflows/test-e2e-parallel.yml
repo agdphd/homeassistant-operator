@@ -123,9 +123,25 @@ jobs:
         if: failure()
         run: |
           echo "=== Controller Manager Logs ==="
+          # No --tail limit: this suite runs ~15 min with debug-level logging, so a
+          # tail=500 snapshot only captured the last few seconds and missed the
+          # actual failure window. Also write to a file and upload as an artifact
+          # so the full log survives even if the GH Actions UI truncates it.
           kubectl logs -n homeassistant-operator-system \
             -l control-plane=controller-manager \
-            --tail=500 || true
+            --tail=-1 --prefix | tee controller-manager.log || true
+          echo "=== Controller Manager Previous (crashed) Container Logs, if any ==="
+          kubectl logs -n homeassistant-operator-system \
+            -l control-plane=controller-manager \
+            --tail=-1 --prefix --previous 2>/dev/null | tee -a controller-manager.log || true
+
+      - name: Upload controller logs artifact on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: controller-manager-logs
+          path: controller-manager.log
+          retention-days: 7
 
       - name: Collect Kubernetes events on failure
         if: failure()
