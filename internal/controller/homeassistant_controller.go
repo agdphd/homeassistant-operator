@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -149,8 +150,13 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Set initial status if not set
 	if ha.Status.Phase == "" {
-		ha.Status.Phase = hav1.PhasePending
-		if err := r.Status().Update(ctx, ha); err != nil {
+		if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+			if h.Status.Phase != "" {
+				return false
+			}
+			h.Status.Phase = hav1.PhasePending
+			return true
+		}); err != nil {
 			log.Error(err, "Failed to update HomeAssistant status")
 			return ctrl.Result{}, err
 		}
@@ -169,18 +175,18 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"homeassistant", ha.Name,
 			"namespace", ha.Namespace,
 			"expected-haconfig", ha.Name+"-config")
-		ha.Status.Phase = hav1.PhasePending
-		ha.Status.Ready = false
-		// Update status to indicate we're waiting
-		condition := metav1.Condition{
-			Type:               conditionTypeReady,
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: ha.Generation,
-			Reason:             "WaitingForConfiguration",
-			Message:            "Waiting for HomeAssistantConfiguration to be created",
-		}
-		meta.SetStatusCondition(&ha.Status.Conditions, condition)
-		if err := r.Status().Update(ctx, ha); err != nil {
+		if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+			h.Status.Phase = hav1.PhasePending
+			h.Status.Ready = false
+			meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+				Type:               conditionTypeReady,
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: h.Generation,
+				Reason:             "WaitingForConfiguration",
+				Message:            "Waiting for HomeAssistantConfiguration to be created",
+			})
+			return true
+		}); err != nil {
 			log.Error(err, "Failed to update status")
 		}
 		return ctrl.Result{RequeueAfter: time.Second * 5}, nil
@@ -1109,6 +1115,34 @@ func (r *HomeAssistantReconciler) labelsForHomeAssistant(ha *hav1.HomeAssistant)
 	}
 }
 
+// updateHAStatusWithRetry applies mutate to ha's status and persists it via the
+// status subresource, retrying on resourceVersion conflicts by re-fetching the
+// latest object and replaying mutate against it. Child-resource creation (PVC,
+// StatefulSet, Service, ...) fires several owner-reference watch events in a
+// burst right after a HomeAssistant is created, which can trigger overlapping
+// reconciles; without this retry, the first conflict aborts the whole
+// reconcile and the status write is lost until the next trigger. mutate must
+// be idempotent (it may run more than once) and return whether it changed
+// anything; when it returns false, no write is attempted.
+func (r *HomeAssistantReconciler) updateHAStatusWithRetry(
+	ctx context.Context, ha *hav1.HomeAssistant, mutate func(*hav1.HomeAssistant) bool,
+) error {
+	key := client.ObjectKeyFromObject(ha)
+	attempted := false
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		if attempted {
+			if err := r.Get(ctx, key, ha); err != nil {
+				return err
+			}
+		}
+		attempted = true
+		if !mutate(ha) {
+			return nil
+		}
+		return r.Status().Update(ctx, ha)
+	})
+}
+
 // updateStatusFailed updates the status when reconciliation fails
 func (r *HomeAssistantReconciler) updateStatusFailed(
 	ctx context.Context,
@@ -1117,19 +1151,19 @@ func (r *HomeAssistantReconciler) updateStatusFailed(
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	ha.Status.Phase = hav1.PhaseFailed
-	ha.Status.Ready = false
-	ha.Status.ObservedGeneration = ha.Generation
-
-	meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-		Type:               conditionTypeReady,
-		Status:             metav1.ConditionFalse,
-		Reason:             "ReconciliationFailed",
-		Message:            reconcileErr.Error(),
-		ObservedGeneration: ha.Generation,
-	})
-
-	if err := r.Status().Update(ctx, ha); err != nil {
+	if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+		h.Status.Phase = hav1.PhaseFailed
+		h.Status.Ready = false
+		h.Status.ObservedGeneration = h.Generation
+		meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+			Type:               conditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "ReconciliationFailed",
+			Message:            reconcileErr.Error(),
+			ObservedGeneration: h.Generation,
+		})
+		return true
+	}); err != nil {
 		log.Error(err, "Failed to update HomeAssistant status")
 		return ctrl.Result{}, err
 	}
@@ -1154,38 +1188,40 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 	if ha.Spec.Version != "" {
 		version = ha.Spec.Version
 	}
-	ha.Status.Version = version
-	ha.Status.ObservedGeneration = ha.Generation
 
-	// Check if StatefulSet is ready
-	if sts.Status.ReadyReplicas > 0 && sts.Status.ReadyReplicas == sts.Status.Replicas {
-		ha.Status.Phase = hav1.PhaseRunning
-		ha.Status.Ready = true
+	if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+		h.Status.Version = version
+		h.Status.ObservedGeneration = h.Generation
 
-		meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-			Type:               conditionTypeReady,
-			Status:             metav1.ConditionTrue,
-			Reason:             "StatefulSetReady",
-			Message:            "Home Assistant is running",
-			ObservedGeneration: ha.Generation,
-		})
-	} else {
-		ha.Status.Phase = hav1.PhasePending
-		ha.Status.Ready = false
+		// Check if StatefulSet is ready
+		if sts.Status.ReadyReplicas > 0 && sts.Status.ReadyReplicas == sts.Status.Replicas {
+			h.Status.Phase = hav1.PhaseRunning
+			h.Status.Ready = true
 
-		meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-			Type:   conditionTypeReady,
-			Status: metav1.ConditionFalse,
-			Reason: "StatefulSetNotReady",
-			Message: fmt.Sprintf(
-				"Waiting for StatefulSet to be ready (%d/%d)",
-				sts.Status.ReadyReplicas, sts.Status.Replicas,
-			),
-			ObservedGeneration: ha.Generation,
-		})
-	}
+			meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+				Type:               conditionTypeReady,
+				Status:             metav1.ConditionTrue,
+				Reason:             "StatefulSetReady",
+				Message:            "Home Assistant is running",
+				ObservedGeneration: h.Generation,
+			})
+		} else {
+			h.Status.Phase = hav1.PhasePending
+			h.Status.Ready = false
 
-	if err := r.Status().Update(ctx, ha); err != nil {
+			meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+				Type:   conditionTypeReady,
+				Status: metav1.ConditionFalse,
+				Reason: "StatefulSetNotReady",
+				Message: fmt.Sprintf(
+					"Waiting for StatefulSet to be ready (%d/%d)",
+					sts.Status.ReadyReplicas, sts.Status.Replicas,
+				),
+				ObservedGeneration: h.Generation,
+			})
+		}
+		return true
+	}); err != nil {
 		log.Error(err, "Failed to update HomeAssistant status")
 		return ctrl.Result{}, err
 	}

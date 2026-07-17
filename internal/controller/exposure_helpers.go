@@ -110,25 +110,28 @@ func (r *HomeAssistantReconciler) reconcileExposure(ctx context.Context, ha *hav
 // does not linger). It adds no condition for resources that never enabled exposure.
 func (r *HomeAssistantReconciler) updateExposureReady(ctx context.Context, ha *hav1.HomeAssistant, exposed bool) error {
 	if exposed {
-		if meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-			Type:               conditionExposureReady,
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: ha.Generation,
-			Reason:             reasonExposureReady,
-			Message:            "Exposure resources reconciled",
-		}) {
-			if err := r.Status().Update(ctx, ha); err != nil {
-				return err
-			}
+		var changed bool
+		if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+			changed = meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+				Type:               conditionExposureReady,
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: h.Generation,
+				Reason:             reasonExposureReady,
+				Message:            "Exposure resources reconciled",
+			})
+			return changed
+		}); err != nil {
+			return err
+		}
+		if changed {
 			r.Recorder.Eventf(ha, nil, corev1.EventTypeNormal, eventExposureConfigured, eventExposureConfigured,
 				"Exposure resources reconciled for %q", ha.Name)
 		}
 		return nil
 	}
-	if meta.RemoveStatusCondition(&ha.Status.Conditions, conditionExposureReady) {
-		return r.Status().Update(ctx, ha)
-	}
-	return nil
+	return r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+		return meta.RemoveStatusCondition(&h.Status.Conditions, conditionExposureReady)
+	})
 }
 
 // reconcileIngress creates/updates the operator-managed Ingress and its

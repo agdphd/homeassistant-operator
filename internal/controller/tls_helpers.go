@@ -365,24 +365,28 @@ func (r *HomeAssistantReconciler) reconcileTLS(ctx context.Context, ha *hav1.Hom
 	}
 
 	if !available {
-		changed := meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-			Type:               conditionCertManagerAvailable,
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: ha.Generation,
-			Reason:             reasonCertManagerNotInstalled,
-			Message:            "cert-manager is not installed; TLS is inactive and Home Assistant continues over HTTP",
-		})
-		changed = meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-			Type:               conditionTLSReady,
-			Status:             metav1.ConditionUnknown,
-			ObservedGeneration: ha.Generation,
-			Reason:             reasonWaitingForCertManager,
-			Message:            "Waiting for cert-manager to become available",
-		}) || changed
+		var changed bool
+		if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+			c := meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+				Type:               conditionCertManagerAvailable,
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: h.Generation,
+				Reason:             reasonCertManagerNotInstalled,
+				Message:            "cert-manager is not installed; TLS is inactive and Home Assistant continues over HTTP",
+			})
+			c = meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+				Type:               conditionTLSReady,
+				Status:             metav1.ConditionUnknown,
+				ObservedGeneration: h.Generation,
+				Reason:             reasonWaitingForCertManager,
+				Message:            "Waiting for cert-manager to become available",
+			}) || c
+			changed = c
+			return c
+		}); err != nil {
+			return ctrl.Result{}, err
+		}
 		if changed {
-			if err := r.Status().Update(ctx, ha); err != nil {
-				return ctrl.Result{}, err
-			}
 			r.Recorder.Eventf(ha, nil, corev1.EventTypeWarning,
 				eventCertManagerUnavailable, eventCertManagerUnavailable,
 				"cert-manager not installed; requested TLS is inactive, serving HTTP")
@@ -392,49 +396,55 @@ func (r *HomeAssistantReconciler) reconcileTLS(ctx context.Context, ha *hav1.Hom
 	}
 
 	// cert-manager available: record availability, then provision per-mode.
-	changed := meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-		Type:               conditionCertManagerAvailable,
-		Status:             metav1.ConditionTrue,
-		ObservedGeneration: ha.Generation,
-		Reason:             reasonCertManagerInstalled,
-		Message:            "cert-manager is installed",
-	})
-
-	// Native TLS: ensure the certificate and reflect issuance in TLSReady.
-	// (Exposure — Ingress/Gateway — is layered on in a later phase.)
-	requeue := ctrl.Result{}
+	nativeEnabled := false
+	certReady := false
 	if n := nativeTLS(ha); n != nil && n.Enabled && n.SecretName == "" {
+		nativeEnabled = true
 		ready, err := r.ensureNativeCertificate(ctx, ha)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		if ready {
-			changed = meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-				Type:               conditionTLSReady,
-				Status:             metav1.ConditionTrue,
-				ObservedGeneration: ha.Generation,
-				Reason:             reasonTLSReady,
-				Message:            "Native TLS certificate issued by cert-manager",
-			}) || changed
-		} else {
-			changed = meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-				Type:               conditionTLSReady,
-				Status:             metav1.ConditionFalse,
-				ObservedGeneration: ha.Generation,
-				Reason:             reasonCertificateNotIssued,
-				Message:            "Waiting for cert-manager to issue the native TLS certificate",
-			}) || changed
-			// Poll until the certificate is issued.
-			requeue = ctrl.Result{RequeueAfter: 15 * time.Second}
-		}
+		certReady = ready
 	}
 
-	if changed {
-		if err := r.Status().Update(ctx, ha); err != nil {
-			return ctrl.Result{}, err
+	if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+		c := meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+			Type:               conditionCertManagerAvailable,
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: h.Generation,
+			Reason:             reasonCertManagerInstalled,
+			Message:            "cert-manager is installed",
+		})
+		if !nativeEnabled {
+			return c
 		}
+		if certReady {
+			return meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+				Type:               conditionTLSReady,
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: h.Generation,
+				Reason:             reasonTLSReady,
+				Message:            "Native TLS certificate issued by cert-manager",
+			}) || c
+		}
+		return meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+			Type:               conditionTLSReady,
+			Status:             metav1.ConditionFalse,
+			ObservedGeneration: h.Generation,
+			Reason:             reasonCertificateNotIssued,
+			Message:            "Waiting for cert-manager to issue the native TLS certificate",
+		}) || c
+	}); err != nil {
+		return ctrl.Result{}, err
 	}
-	return requeue, nil
+
+	// Native TLS: ensure the certificate and reflect issuance in TLSReady.
+	// (Exposure — Ingress/Gateway — is layered on in a later phase.)
+	if nativeEnabled && !certReady {
+		// Poll until the certificate is issued.
+		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
+	}
+	return ctrl.Result{}, nil
 }
 
 // nativeTLSUsingProvidedSecret handles the bring-your-own native TLS case (a
@@ -450,16 +460,17 @@ func (r *HomeAssistantReconciler) nativeTLSUsingProvidedSecret(
 	if err := r.deleteNativeCertificate(ctx, ha); err != nil {
 		return false, err
 	}
-	if meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-		Type:               conditionTLSReady,
-		Status:             metav1.ConditionTrue,
-		ObservedGeneration: ha.Generation,
-		Reason:             reasonUsingProvidedSecret,
-		Message:            "Native TLS uses the provided Secret " + n.SecretName,
-	}) {
-		if err := r.Status().Update(ctx, ha); err != nil {
-			return true, err
-		}
+	secretName := n.SecretName
+	if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+		return meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+			Type:               conditionTLSReady,
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: h.Generation,
+			Reason:             reasonUsingProvidedSecret,
+			Message:            "Native TLS uses the provided Secret " + secretName,
+		})
+	}); err != nil {
+		return true, err
 	}
 	return true, nil
 }

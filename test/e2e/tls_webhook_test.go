@@ -62,8 +62,16 @@ spec:
         enabled: true
 `, namespace)
 		// failurePolicy is Ignore, so rejection only occurs once the webhook is
-		// actually serving — retry until it rejects (the CR is never created).
+		// actually serving — retry until it rejects. A repeated "kubectl apply"
+		// of an unchanged manifest computes an empty client-side patch and is
+		// never sent to the API server at all (kubectl prints "unchanged" and
+		// skips the request), so it would never re-trigger admission once the
+		// first attempt slipped through during the webhook's startup window.
+		// Delete before every attempt so each one is a genuine CREATE.
 		Eventually(func() error {
+			cmd := exec.Command("kubectl", "delete", "homeassistant", "ha-bad",
+				"-n", namespace, "--ignore-not-found=true")
+			_, _ = utils.Run(cmd)
 			return utils.ApplyYAML(bad, namespace)
 		}, utils.CertIssueTimeout, utils.DefaultEventuallyPollingInterval).Should(HaveOccurred(),
 			"webhook should reject native TLS without issuerRef/secretName")
