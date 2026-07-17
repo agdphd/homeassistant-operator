@@ -96,21 +96,27 @@ spec:
           volumeMounts:
             - name: webhook-certs
               mountPath: /tmp/k8s-webhook-server/serving-certs
-              # Writable in self-managed mode (the operator writes the cert here);
-              # read-only when cert-manager provides it via a mounted Secret.
-              readOnly: {{ .Values.webhook.certManager.enabled }}
+              readOnly: true
           {{- end }}
       {{- if .Values.webhook.enabled }}
       volumes:
+        # cert-controller (self-managed) and cert-manager both write the serving
+        # certificate into a Secret via the API only — never to local files
+        # directly. The kubelet materializes the Secret's contents onto disk here,
+        # so this MUST be a Secret-backed volume (not emptyDir) in both modes:
+        # self-managed cert-controller's ensureCertsMounted() only waits for the
+        # file to appear via that sync, and on a pod restart where the Secret is
+        # already valid ("no cert refresh needed"), nothing would ever populate an
+        # emptyDir, causing the manager to fail to start on every restart.
+        # `optional: true` (self-managed only) avoids a chicken-and-egg startup
+        # failure: the operator itself creates this Secret on first boot (before
+        # the rotator/manager start), so it does not exist yet on first install.
         - name: webhook-certs
-          {{- if .Values.webhook.certManager.enabled }}
           secret:
             secretName: {{ include "homeassistant-operator.fullname" . }}-webhook-server-cert
-          {{- else }}
-          # Self-managed: cert-controller writes the serving certificate here and
-          # persists it to a Secret; an emptyDir avoids a chicken-and-egg on the Secret.
-          emptyDir: {}
-          {{- end }}
+            {{- if not .Values.webhook.certManager.enabled }}
+            optional: true
+            {{- end }}
       {{- end }}
       {{- if .Values.priorityClassName }}
       priorityClassName: {{ .Values.priorityClassName }}

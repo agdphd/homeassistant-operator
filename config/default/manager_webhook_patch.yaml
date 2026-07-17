@@ -26,10 +26,20 @@ spec:
           volumeMounts:
             - mountPath: /tmp/k8s-webhook-server/serving-certs
               name: webhook-certs
-              readOnly: false
+              readOnly: true
       volumes:
-        # Self-managed: cert-controller writes the serving certificate here and
-        # persists it to a Secret. To use cert-manager instead, replace this with a
-        # `secret` volume backed by the cert-manager-issued Secret.
+        # Self-managed: cert-controller (in the operator) writes the serving
+        # certificate into this Secret via the API — it never writes local files
+        # directly. The kubelet materializes the Secret's contents onto disk here,
+        # so this MUST be a Secret-backed volume (not emptyDir): cert-controller's
+        # ensureCertsMounted() only waits for the file to appear via that sync, and
+        # on a pod restart where the Secret is already valid ("no cert refresh
+        # needed"), nothing would ever (re)populate an emptyDir, causing the
+        # manager to fail to start ("could not mount certs") on every restart.
+        # `optional: true` avoids a chicken-and-egg startup failure: the operator
+        # itself creates this Secret on first boot (before the rotator/manager
+        # start), so it does not exist yet when the pod is first scheduled.
         - name: webhook-certs
-          emptyDir: {}
+          secret:
+            secretName: homeassistant-operator-webhook-server-cert
+            optional: true
