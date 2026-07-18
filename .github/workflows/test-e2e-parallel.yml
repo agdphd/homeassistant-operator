@@ -15,6 +15,8 @@ env:
   K3S_VERSION: v1.36.2-k3s1
   # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
   HA_VERSION: "2026.7.2"
+  # renovate: datasource=github-releases depName=cert-manager/cert-manager
+  CERT_MANAGER_VERSION: v1.21.0
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -112,6 +114,7 @@ jobs:
         env:
           K3D_CLUSTER: e2e-critical
           HA_VERSION: ${{ env.HA_VERSION }}
+          CERT_MANAGER_VERSION: ${{ env.CERT_MANAGER_VERSION }}
         run: |
           make ginkgo
           ./bin/ginkgo run \

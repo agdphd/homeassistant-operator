@@ -34,9 +34,20 @@ const (
 	prometheusOperatorURL     = "https://github.com/prometheus-operator/prometheus-operator/" +
 		"releases/download/%s/bundle.yaml"
 
-	certmanagerVersion = "v1.16.3"
-	certmanagerURLTmpl = "https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml"
+	certmanagerVersionDefault = "v1.21.0"
+	certmanagerURLTmpl        = "https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml"
 )
+
+// certmanagerVersion returns the cert-manager release to install in E2E tests.
+// Set CERT_MANAGER_VERSION in CI (kept current by Renovate via
+// .github/workflows/test-e2e-parallel.yml) to pin a specific release;
+// defaults to certmanagerVersionDefault for local runs.
+func certmanagerVersion() string {
+	if v := os.Getenv("CERT_MANAGER_VERSION"); v != "" {
+		return v
+	}
+	return certmanagerVersionDefault
+}
 
 func warnError(err error) {
 	_, _ = fmt.Fprintf(GinkgoWriter, "warning: %v\n", err)
@@ -108,7 +119,7 @@ func IsPrometheusCRDsInstalled() bool {
 
 // UninstallCertManager uninstalls the cert manager
 func UninstallCertManager() {
-	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
+	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion())
 	cmd := exec.Command("kubectl", "delete", "-f", url)
 	if _, err := Run(cmd); err != nil {
 		warnError(err)
@@ -117,7 +128,7 @@ func UninstallCertManager() {
 
 // InstallCertManager installs the cert manager bundle.
 func InstallCertManager() error {
-	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion)
+	url := fmt.Sprintf(certmanagerURLTmpl, certmanagerVersion())
 	cmd := exec.Command("kubectl", "apply", "-f", url)
 	if _, err := Run(cmd); err != nil {
 		return err
