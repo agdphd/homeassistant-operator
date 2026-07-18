@@ -162,9 +162,9 @@ jobs:
           kubectl get secret -n homeassistant-operator-system homeassistant-operator-webhook-server-cert -o json | \
             jq -r '.data // {} | to_entries[] | "\(.key): \(.value | length) bytes (base64)"' || true
           echo "=== webhook Service + Endpoints ==="
-          kubectl get svc,endpoints -n homeassistant-operator-system -l control-plane=controller-manager -o wide || true
-          echo "=== k3s server node logs (apiserver) — webhook call failures show up here ==="
-          docker logs k3d-e2e-critical-server-0 2>&1 | grep -iE "webhook|homeassistant-operator|x509|tls|admission" | tail -200 || true
+          kubectl get svc,endpoints -n homeassistant-operator-system -o wide || true
+          echo "=== apiserver admission webhook dispatch log (dispatcher.go) — every call/failure, unfiltered by volume ==="
+          docker logs k3d-e2e-critical-server-0 2>&1 | grep -E "dispatcher\.go|webhook_duration|failed calling webhook|failing open" || true
 
       - name: Collect resource status on failure
         if: failure()
