@@ -150,6 +150,22 @@ jobs:
           kubectl get events --all-namespaces \
             --sort-by=.lastTimestamp || true
 
+      - name: Collect webhook diagnostics on failure
+        if: failure()
+        run: |
+          echo "=== ValidatingWebhookConfiguration (live, incl. caBundle length) ==="
+          kubectl get validatingwebhookconfiguration -o yaml || true
+          echo "=== caBundle byte length per webhook (empty/missing means TLS trust is broken) ==="
+          kubectl get validatingwebhookconfiguration -o json | \
+            jq -r '.items[] | .metadata.name as $n | .webhooks[] | "\($n) / \(.name): caBundle len=\(.clientConfig.caBundle | length // 0)"' || true
+          echo "=== webhook-server-cert Secret (keys + data lengths only) ==="
+          kubectl get secret -n homeassistant-operator-system homeassistant-operator-webhook-server-cert -o json | \
+            jq -r '.data // {} | to_entries[] | "\(.key): \(.value | length) bytes (base64)"' || true
+          echo "=== webhook Service + Endpoints ==="
+          kubectl get svc,endpoints -n homeassistant-operator-system -l control-plane=controller-manager -o wide || true
+          echo "=== k3s server node logs (apiserver) — webhook call failures show up here ==="
+          docker logs k3d-e2e-critical-server-0 2>&1 | grep -iE "webhook|homeassistant-operator|x509|tls|admission" | tail -200 || true
+
       - name: Collect resource status on failure
         if: failure()
         run: |
