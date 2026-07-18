@@ -416,25 +416,33 @@ func (r *HomeAssistantReconciler) reconcileTLS(ctx context.Context, ha *hav1.Hom
 			Message:            "cert-manager is installed",
 		})
 		if !nativeEnabled {
+			log.V(1).Info("reconcileTLS: cert-manager condition mutate (no native TLS)",
+				"changed", c, "resourceVersion", h.ResourceVersion, "generation", h.Generation)
 			return c
 		}
 		if certReady {
-			return meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+			c = meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
 				Type:               conditionTLSReady,
 				Status:             metav1.ConditionTrue,
 				ObservedGeneration: h.Generation,
 				Reason:             reasonTLSReady,
 				Message:            "Native TLS certificate issued by cert-manager",
 			}) || c
+		} else {
+			c = meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+				Type:               conditionTLSReady,
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: h.Generation,
+				Reason:             reasonCertificateNotIssued,
+				Message:            "Waiting for cert-manager to issue the native TLS certificate",
+			}) || c
 		}
-		return meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
-			Type:               conditionTLSReady,
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: h.Generation,
-			Reason:             reasonCertificateNotIssued,
-			Message:            "Waiting for cert-manager to issue the native TLS certificate",
-		}) || c
+		log.V(1).Info("reconcileTLS: native TLS condition mutate",
+			"changed", c, "certReady", certReady, "resourceVersion", h.ResourceVersion,
+			"generation", h.Generation, "conditionsCount", len(h.Status.Conditions))
+		return c
 	}); err != nil {
+		log.Error(err, "reconcileTLS: status update failed after retry")
 		return ctrl.Result{}, err
 	}
 

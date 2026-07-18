@@ -1127,11 +1127,15 @@ func (r *HomeAssistantReconciler) labelsForHomeAssistant(ha *hav1.HomeAssistant)
 func (r *HomeAssistantReconciler) updateHAStatusWithRetry(
 	ctx context.Context, ha *hav1.HomeAssistant, mutate func(*hav1.HomeAssistant) bool,
 ) error {
+	log := logf.FromContext(ctx)
 	key := client.ObjectKeyFromObject(ha)
 	attempted := false
+	attempts := 0
 	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		attempts++
 		if attempted {
 			if err := r.Get(ctx, key, ha); err != nil {
+				log.V(1).Info("updateHAStatusWithRetry: re-fetch failed", "attempts", attempts, "error", err)
 				return err
 			}
 		}
@@ -1139,7 +1143,12 @@ func (r *HomeAssistantReconciler) updateHAStatusWithRetry(
 		if !mutate(ha) {
 			return nil
 		}
-		return r.Status().Update(ctx, ha)
+		err := r.Status().Update(ctx, ha)
+		if err != nil {
+			log.V(1).Info("updateHAStatusWithRetry: Status().Update failed",
+				"attempts", attempts, "isConflict", errors.IsConflict(err), "error", err)
+		}
+		return err
 	})
 }
 
@@ -1337,19 +1346,16 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 		return true
 	}
 
-	// Check init containers (e.g. config-init image/tag changes)
-	currentInit := current.Spec.Template.Spec.InitContainers
-	desiredInit := desired.Spec.Template.Spec.InitContainers
-	if len(currentInit) == 0 {
-		currentInit = nil
-	}
-	if len(desiredInit) == 0 {
-		desiredInit = nil
-	}
-	if !reflect.DeepEqual(currentInit, desiredInit) {
+	// Check init containers (e.g. config-init image/tag changes). Compared
+	// field-by-field like Resources/Probes above rather than via
+	// reflect.DeepEqual: the API server defaults TerminationMessagePath/Policy
+	// (and similar fields) on read-back, which a freshly built in-memory
+	// container never sets — a raw DeepEqual would report a spurious diff on
+	// every single reconcile, forever, never converging.
+	if !initContainersEqual(current.Spec.Template.Spec.InitContainers, desired.Spec.Template.Spec.InitContainers) {
 		log.V(1).Info("InitContainers differ",
-			"current", len(currentInit),
-			"desired", len(desiredInit))
+			"current", len(current.Spec.Template.Spec.InitContainers),
+			"desired", len(desired.Spec.Template.Spec.InitContainers))
 		return true
 	}
 
@@ -1368,6 +1374,35 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 	}
 
 	return false
+}
+
+// initContainersEqual compares init containers on the fields our builders
+// (buildInitContainers/buildUnbanInitContainer) actually set, ignoring fields
+// the API server defaults on read-back (TerminationMessagePath/Policy, etc.)
+// that a freshly built in-memory container never populates.
+func initContainersEqual(current, desired []corev1.Container) bool {
+	if len(current) != len(desired) {
+		return false
+	}
+	for i := range desired {
+		c, d := current[i], desired[i]
+		if c.Name != d.Name || c.Image != d.Image || c.ImagePullPolicy != d.ImagePullPolicy {
+			return false
+		}
+		if !reflect.DeepEqual(c.Command, d.Command) || !reflect.DeepEqual(c.Args, d.Args) {
+			return false
+		}
+		if !reflect.DeepEqual(c.Env, d.Env) {
+			return false
+		}
+		if !reflect.DeepEqual(c.VolumeMounts, d.VolumeMounts) {
+			return false
+		}
+		if !resourcesEqual(c.Resources, d.Resources) {
+			return false
+		}
+	}
+	return true
 }
 
 // resourcesEqual compares two ResourceRequirements

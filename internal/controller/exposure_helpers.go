@@ -110,6 +110,7 @@ func (r *HomeAssistantReconciler) reconcileExposure(ctx context.Context, ha *hav
 // does not linger). It adds no condition for resources that never enabled exposure.
 func (r *HomeAssistantReconciler) updateExposureReady(ctx context.Context, ha *hav1.HomeAssistant, exposed bool) error {
 	if exposed {
+		log := logf.FromContext(ctx)
 		var changed bool
 		if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
 			changed = meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
@@ -119,8 +120,11 @@ func (r *HomeAssistantReconciler) updateExposureReady(ctx context.Context, ha *h
 				Reason:             reasonExposureReady,
 				Message:            "Exposure resources reconciled",
 			})
+			log.V(1).Info("updateExposureReady: condition mutate",
+				"changed", changed, "resourceVersion", h.ResourceVersion, "generation", h.Generation)
 			return changed
 		}); err != nil {
+			log.Error(err, "updateExposureReady: status update failed after retry")
 			return err
 		}
 		if changed {

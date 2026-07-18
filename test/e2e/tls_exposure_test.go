@@ -113,7 +113,7 @@ spec:
 
 		By("Waiting for the HomeAssistant to report ExposureReady")
 		Eventually(func() string {
-			return utils.GetResourceStatus("homeassistant", haName, namespace,
+			return utils.GetResourceStatus("homeassistants", haName, namespace,
 				"{.status.conditions[?(@.type=='ExposureReady')].status}")
 		}, utils.CertIssueTimeout, utils.DefaultEventuallyPollingInterval).Should(Equal("True"))
 	})

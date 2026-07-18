@@ -108,7 +108,7 @@ spec:
 
 		By("Waiting for the operator to report cert-manager available")
 		Eventually(func() string {
-			return utils.GetResourceStatus("homeassistant", haName, namespace,
+			return utils.GetResourceStatus("homeassistants", haName, namespace,
 				"{.status.conditions[?(@.type=='CertManagerAvailable')].status}")
 		}, utils.CertIssueTimeout, utils.DefaultEventuallyPollingInterval).Should(Equal("True"))
 
@@ -121,7 +121,7 @@ spec:
 
 		By("Waiting for the HomeAssistant to report TLSReady")
 		Eventually(func() string {
-			return utils.GetResourceStatus("homeassistant", haName, namespace,
+			return utils.GetResourceStatus("homeassistants", haName, namespace,
 				"{.status.conditions[?(@.type=='TLSReady')].status}")
 		}, utils.CertIssueTimeout, utils.DefaultEventuallyPollingInterval).Should(Equal("True"))
 

@@ -69,7 +69,7 @@ spec:
 		// first attempt slipped through during the webhook's startup window.
 		// Delete before every attempt so each one is a genuine CREATE.
 		Eventually(func() error {
-			cmd := exec.Command("kubectl", "delete", "homeassistant", "ha-bad",
+			cmd := exec.Command("kubectl", "delete", "homeassistants", "ha-bad",
 				"-n", namespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
 			return utils.ApplyYAML(bad, namespace)
