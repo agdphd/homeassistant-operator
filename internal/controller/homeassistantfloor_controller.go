@@ -110,7 +110,7 @@ func (r *HomeAssistantFloorReconciler) Reconcile(ctx context.Context, req ctrl.R
 			"API token not available", 30*time.Second)
 	}
 
-	haClient := r.haClientFor(ha)
+	haClient := r.haClientFor(ctx, ha)
 
 	// --- LIST existing floors ---
 	existingFloors, err := r.listFloors(ctx, haClient, token)
@@ -200,7 +200,7 @@ func (r *HomeAssistantFloorReconciler) handleDeletion(ctx context.Context, floor
 		return
 	}
 
-	haClient := r.haClientFor(ha)
+	haClient := r.haClientFor(ctx, ha)
 	if err := r.deleteFloor(ctx, haClient, token, floor.Status.FloorID); err != nil {
 		log.Error(err, "Failed to delete floor from HA (best-effort)", "floorID", floor.Status.FloorID)
 	} else {
@@ -209,12 +209,8 @@ func (r *HomeAssistantFloorReconciler) handleDeletion(ctx context.Context, floor
 }
 
 // haClientFor returns a haclient.Client for the given HA instance
-func (r *HomeAssistantFloorReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
-	baseURL := buildHomeAssistantURL(ha)
-	if r.NewHAClient != nil {
-		return r.NewHAClient(baseURL)
-	}
-	return haclient.NewClient(baseURL)
+func (r *HomeAssistantFloorReconciler) haClientFor(ctx context.Context, ha *hav1.HomeAssistant) *haclient.Client {
+	return newHAClientForHA(ctx, r.Client, ha, r.NewHAClient)
 }
 
 // setCondition updates the Ready condition and status

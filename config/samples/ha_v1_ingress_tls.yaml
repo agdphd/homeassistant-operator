@@ -1,0 +1,56 @@
+# Example: Home Assistant exposed via an operator-managed Ingress with a
+# cert-manager-issued TLS certificate.
+#
+# The operator creates the Ingress and (when spec.ingress.tls.issuerRef is set and
+# cert-manager is available) a cert-manager Certificate whose Secret backs the
+# Ingress TLS. Bring-your-own: set spec.ingress.tls.secretName instead (it wins
+# over issuerRef and no Certificate is created).
+#
+# Prerequisites:
+# - an Ingress controller (e.g. Traefik, ingress-nginx)
+# - cert-manager + a ready Issuer/ClusterIssuer (referenced below)
+#
+# Without cert-manager the Ingress is still created (HTTP) and the resource reports
+# CertManagerAvailable=False — exposure never fails.
+apiVersion: ha.homeassistant.io/v1
+kind: HomeAssistant
+metadata:
+  name: homeassistant-ingress-tls
+spec:
+  version: "stable"
+  timezone: "Europe/Warsaw"
+  storage:
+    size: "5Gi"
+  service:
+    type: ClusterIP
+    port: 8123
+  ingress:
+    enabled: true
+    host: ha.example.com
+    ingressClassName: traefik
+    tls:
+      enabled: true
+      issuerRef:
+        name: letsencrypt-prod
+        kind: ClusterIssuer
+      # secretName: my-existing-tls   # bring-your-own; overrides issuerRef
+---
+apiVersion: ha.homeassistant.io/v1
+kind: HomeAssistantConfiguration
+metadata:
+  name: homeassistant-ingress-tls-config
+spec:
+  homeAssistantRef:
+    name: homeassistant-ingress-tls
+  configuration: |
+    homeassistant:
+      name: Home
+      unit_system: metric
+    default_config:
+    # Required behind a reverse proxy — cover your cluster's pod/service CIDRs.
+    # k3s defaults: pods 10.42.0.0/16, services 10.43.0.0/16
+    http:
+      use_x_forwarded_for: true
+      trusted_proxies:
+        - 10.42.0.0/16
+        - 10.43.0.0/16

@@ -40,6 +40,9 @@ spec:
           args:
             - --leader-elect
             - --health-probe-bind-address=:8081
+            {{- if .Values.webhook.enabled }}
+            - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+            {{- end }}
           env:
             - name: POD_IP
               valueFrom:
@@ -53,6 +56,26 @@ spec:
             - name: WATCH_NAMESPACES
               value: {{ .Values.watchNamespaces | join "," | quote }}
             {{- end }}
+            {{- if not .Values.webhook.enabled }}
+            - name: ENABLE_WEBHOOKS
+              value: "false"
+            {{- end }}
+            {{- if .Values.webhook.enabled }}
+            - name: WEBHOOK_SERVICE_NAME
+              value: {{ include "homeassistant-operator.fullname" . }}-webhook-service
+            - name: WEBHOOK_SECRET_NAME
+              value: {{ include "homeassistant-operator.fullname" . }}-webhook-server-cert
+            - name: WEBHOOK_CONFIG_NAME
+              value: {{ include "homeassistant-operator.fullname" . }}-validating-webhook-configuration
+            - name: WEBHOOK_SELF_MANAGE_CERT
+              value: {{ not .Values.webhook.certManager.enabled | quote }}
+            {{- end }}
+          {{- if .Values.webhook.enabled }}
+          ports:
+            - name: webhook-server
+              containerPort: {{ .Values.webhook.port }}
+              protocol: TCP
+          {{- end }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           livenessProbe:
@@ -69,6 +92,32 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.webhook.enabled }}
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+          {{- end }}
+      {{- if .Values.webhook.enabled }}
+      volumes:
+        # cert-controller (self-managed) and cert-manager both write the serving
+        # certificate into a Secret via the API only — never to local files
+        # directly. The kubelet materializes the Secret's contents onto disk here,
+        # so this MUST be a Secret-backed volume (not emptyDir) in both modes:
+        # self-managed cert-controller's ensureCertsMounted() only waits for the
+        # file to appear via that sync, and on a pod restart where the Secret is
+        # already valid ("no cert refresh needed"), nothing would ever populate an
+        # emptyDir, causing the manager to fail to start on every restart.
+        # `optional: true` (self-managed only) avoids a chicken-and-egg startup
+        # failure: the operator itself creates this Secret on first boot (before
+        # the rotator/manager start), so it does not exist yet on first install.
+        - name: webhook-certs
+          secret:
+            secretName: {{ include "homeassistant-operator.fullname" . }}-webhook-server-cert
+            {{- if not .Values.webhook.certManager.enabled }}
+            optional: true
+            {{- end }}
+      {{- end }}
       {{- if .Values.priorityClassName }}
       priorityClassName: {{ .Values.priorityClassName }}
       {{- end }}

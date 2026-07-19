@@ -16,7 +16,7 @@
   "customManagers": [
     {
       "customType": "regex",
-      "fileMatch": ["^\\.github/workflows/[^/]+\\.ya?ml$", "^Makefile$"],
+      "fileMatch": ["^\\.github/workflows/[^/]+\\.ya?ml$", "^Makefile$", "^hack/[^/]+\\.sh$"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+\\S+?\\s*(?:\\?=|[:=])\\s*[\"']?(?<currentValue>[^\"'\\s]+)"
       ]

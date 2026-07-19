@@ -1,0 +1,68 @@
+suite: validating webhook and its TLS wiring
+templates:
+  - webhook.yaml
+tests:
+  - it: is enabled by default (opt-out), self-managed cert, no cert-manager resources
+    asserts:
+      - hasDocuments:
+          count: 2
+      - isKind:
+          of: Service
+        documentIndex: 0
+      - isKind:
+          of: ValidatingWebhookConfiguration
+        documentIndex: 1
+
+  - it: self-managed webhook config has no caBundle and no cert-manager annotation
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: ValidatingWebhookConfiguration
+      - notExists:
+          path: webhooks[0].clientConfig.caBundle
+      - notExists:
+          path: metadata.annotations["cert-manager.io/inject-ca-from"]
+
+  - it: renders nothing when disabled
+    set:
+      webhook.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: cert-manager override renders Service, Issuer, Certificate and webhook config
+    set:
+      webhook.certManager.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 4
+      - isKind:
+          of: Service
+        documentIndex: 0
+      - isKind:
+          of: Issuer
+        documentIndex: 1
+      - isKind:
+          of: Certificate
+        documentIndex: 2
+      - isKind:
+          of: ValidatingWebhookConfiguration
+        documentIndex: 3
+
+  - it: cert-manager override injects the CA via annotation
+    set:
+      webhook.certManager.enabled: true
+    documentIndex: 3
+    asserts:
+      - equal:
+          path: metadata.annotations["cert-manager.io/inject-ca-from"]
+          value: NAMESPACE/RELEASE-NAME-homeassistant-operator-webhook-serving-cert
+
+  - it: failurePolicy is configurable
+    set:
+      webhook.failurePolicy: Fail
+    documentIndex: 1
+    asserts:
+      - equal:
+          path: webhooks[0].failurePolicy
+          value: Fail

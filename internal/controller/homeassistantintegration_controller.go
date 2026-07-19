@@ -69,12 +69,8 @@ type HomeAssistantIntegrationReconciler struct {
 }
 
 // haClientFor returns a HA API client for the given HomeAssistant instance.
-func (r *HomeAssistantIntegrationReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
-	haURL := buildHomeAssistantURL(ha)
-	if r.NewHAClient != nil {
-		return r.NewHAClient(haURL)
-	}
-	return haclient.NewClient(haURL)
+func (r *HomeAssistantIntegrationReconciler) haClientFor(ctx context.Context, ha *hav1.HomeAssistant) *haclient.Client {
+	return newHAClientForHA(ctx, r.Client, ha, r.NewHAClient)
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantintegrations,verbs=get;list;watch;create;update;patch;delete
@@ -137,7 +133,7 @@ func (r *HomeAssistantIntegrationReconciler) Reconcile(ctx context.Context, req 
 			errMsgTokenNotAvailable, 30*time.Second)
 	}
 
-	haClient := r.haClientFor(ha)
+	haClient := r.haClientFor(ctx, ha)
 
 	// --- RESOLVE CONFIGURATION ---
 	resolvedConfig, fp, err := r.resolveConfiguration(ctx, integration)
@@ -296,7 +292,7 @@ func (r *HomeAssistantIntegrationReconciler) handleDeletion(
 		return
 	}
 
-	haClient := r.haClientFor(ha)
+	haClient := r.haClientFor(ctx, ha)
 	if delErr := haClient.RemoveConfigEntry(ctx, token, integration.Status.EntryID); delErr != nil {
 		log.Info("Failed to remove config entry during deletion (best-effort)", "error", delErr)
 		return

@@ -55,3 +55,7 @@ Kubernetes: `>=1.24-0`
 | tolerations | list | `[]` |  |
 | topologySpreadConstraints | list | `[]` |  |
 | watchNamespaces | list | `[]` |  |
+| webhook.certManager.enabled | bool | `false` |  |
+| webhook.enabled | bool | `true` |  |
+| webhook.failurePolicy | string | `"Ignore"` |  |
+| webhook.port | int | `9443` |  |

@@ -26,6 +26,8 @@ IMG_TAG="${IMG##*:}"
 K3D_MEMORY="${HELM_E2E_MEMORY:-4g}"
 # renovate: datasource=docker depName=rancher/k3s
 K3S_VERSION="${K3S_VERSION:-v1.36.2-k3s1}"
+# renovate: datasource=github-releases depName=cert-manager/cert-manager
+CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.21.0}"
 
 for t in k3d docker helm kubectl; do hh_require "$t"; done
 [ -n "$HELM_CHART_DIR" ] || { echo "❌ HELM_CHART_DIR is empty" >&2; exit 2; }
@@ -49,7 +51,50 @@ helm install "$RELEASE" "$HELM_CHART_DIR" \
   --wait --timeout 180s
 hh_wait_ready "$NS"
 hh_assert_crds
-echo "    ✅ fresh install OK"
+# Part 1 already proves the default install (webhook off) needs no cert-manager
+# on a clean cluster — the chart never installs or requires cert-manager.
+echo "    ✅ fresh install OK (no cert-manager required)"
+
+# ---- Part 1b: webhook TLS via cert-manager -------------------------------------
+echo ""
+echo "==> PART 1b: webhook TLS via cert-manager"
+echo "    installing cert-manager ($CERT_MANAGER_VERSION)"
+kubectl apply -f "https://github.com/cert-manager/cert-manager/releases/download/${CERT_MANAGER_VERSION}/cert-manager.yaml"
+# Wait for all three cert-manager components so its API is actually ready before
+# the release upgrade requests a Certificate.
+for d in cert-manager cert-manager-webhook cert-manager-cainjector; do
+  kubectl wait --for=condition=Available "deployment/$d" -n cert-manager --timeout=300s
+done
+
+echo "    upgrading release with webhook.enabled + webhook.certManager.enabled"
+helm upgrade "$RELEASE" "$HELM_CHART_DIR" \
+  --namespace "$NS" \
+  --set image.repository="$IMG_REPO" --set image.tag="$IMG_TAG" --set image.pullPolicy=IfNotPresent \
+  --set webhook.enabled=true --set webhook.certManager.enabled=true \
+  --wait --timeout 180s
+hh_wait_ready "$NS"
+
+# Scope to the operator's own ValidatingWebhookConfiguration — cert-manager ships
+# its own VWC, so a cluster-wide check could false-positive on that instead.
+VWC_NAME="${RELEASE}-homeassistant-operator-validating-webhook-configuration"
+
+if kubectl get validatingwebhookconfiguration "$VWC_NAME" >/dev/null 2>&1; then
+  echo "    ✅ ValidatingWebhookConfiguration present"
+else
+  echo "❌ webhook configuration '$VWC_NAME' missing after enabling webhook" >&2
+  exit 1
+fi
+
+# In cert-manager mode the CA is injected by cert-manager (inject-ca-from) — assert
+# the wiring is present. The webhook's admission behaviour is covered by the Go E2E
+# suite; asserting it here on a self-managed→cert-manager transition is timing-fragile.
+if kubectl get validatingwebhookconfiguration "$VWC_NAME" -o yaml | grep -q "cert-manager.io/inject-ca-from"; then
+  echo "    ✅ cert-manager CA injection annotation present"
+else
+  echo "❌ cert-manager inject-ca-from annotation missing" >&2
+  exit 1
+fi
+echo "    ✅ PART 1b OK (cert-manager webhook wiring)"
 
 echo "==> Tearing down fresh install to prepare the upgrade scenario"
 helm uninstall "$RELEASE" --namespace "$NS" --wait || true

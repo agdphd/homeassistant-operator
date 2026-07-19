@@ -1,0 +1,49 @@
+# Example: Home Assistant serving HTTPS natively via a cert-manager certificate.
+#
+# Native TLS (alpha) terminates TLS inside Home Assistant itself on its existing
+# port (8123) — no reverse proxy required. The operator provisions a cert-manager
+# Certificate, mounts the resulting Secret into the HA pod and points HA's
+# http.ssl_certificate / ssl_key at it. It always adds the in-cluster Service FQDN
+# as a SAN so the operator can reach HA over HTTPS.
+#
+# Prerequisites:
+# - cert-manager installed on the cluster (the operator NEVER installs it)
+# - a ready Issuer/ClusterIssuer (below references a ClusterIssuer named "ca-issuer")
+#
+# If cert-manager is absent, the operator keeps HA on HTTP and reports
+# status.conditions[CertManagerAvailable]=False — it never fails.
+apiVersion: ha.homeassistant.io/v1
+kind: HomeAssistant
+metadata:
+  name: homeassistant-native-tls
+spec:
+  version: "stable"
+  timezone: "Europe/Warsaw"
+  storage:
+    size: "5Gi"
+  service:
+    type: ClusterIP
+    port: 8123
+  alpha:
+    tls:
+      native:
+        enabled: true
+        issuerRef:
+          name: ca-issuer
+          kind: ClusterIssuer
+        dnsNames:
+          - ha.example.com
+        # secretName: my-existing-tls   # bring-your-own; overrides issuerRef
+---
+apiVersion: ha.homeassistant.io/v1
+kind: HomeAssistantConfiguration
+metadata:
+  name: homeassistant-native-tls-config
+spec:
+  homeAssistantRef:
+    name: homeassistant-native-tls
+  configuration: |
+    homeassistant:
+      name: Home
+      unit_system: metric
+    default_config:

@@ -68,12 +68,8 @@ type HomeAssistantAutomationReconciler struct {
 
 // haClientFor returns a HA API client for the given HomeAssistant instance.
 // Uses NewHAClient if set (tests), otherwise the default haclient.NewClient.
-func (r *HomeAssistantAutomationReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
-	haURL := buildHomeAssistantURL(ha)
-	if r.NewHAClient != nil {
-		return r.NewHAClient(haURL)
-	}
-	return haclient.NewClient(haURL)
+func (r *HomeAssistantAutomationReconciler) haClientFor(ctx context.Context, ha *hav1.HomeAssistant) *haclient.Client {
+	return newHAClientForHA(ctx, r.Client, ha, r.NewHAClient)
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantautomations,verbs=get;list;watch
@@ -116,7 +112,7 @@ func (r *HomeAssistantAutomationReconciler) Reconcile(ctx context.Context, req c
 			}
 			if ha, haErr := r.validateHomeAssistantRef(ctx, haRef, automation); haErr == nil {
 				if token, tokenErr := getAPIToken(ctx, r.Client, ha); tokenErr == nil {
-					haClient := r.haClientFor(ha)
+					haClient := r.haClientFor(ctx, ha)
 					id := automation.Spec.ID
 					if id == "" {
 						id = automation.Name
@@ -368,7 +364,7 @@ func (r *HomeAssistantAutomationReconciler) reconcileAutomationViaAPI(
 		id = automation.Name
 	}
 
-	haClient := r.haClientFor(ha)
+	haClient := r.haClientFor(ctx, ha)
 
 	// If spec.id was renamed, delete the old automation from HA to avoid orphans.
 	prevID := automation.Annotations[lastAppliedIDAnnotationKey]

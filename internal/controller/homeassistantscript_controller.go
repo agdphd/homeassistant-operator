@@ -60,12 +60,8 @@ type HomeAssistantScriptReconciler struct {
 }
 
 // haClientFor returns a HA API client for the given HomeAssistant instance.
-func (r *HomeAssistantScriptReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
-	haURL := buildHomeAssistantURL(ha)
-	if r.NewHAClient != nil {
-		return r.NewHAClient(haURL)
-	}
-	return haclient.NewClient(haURL)
+func (r *HomeAssistantScriptReconciler) haClientFor(ctx context.Context, ha *hav1.HomeAssistant) *haclient.Client {
+	return newHAClientForHA(ctx, r.Client, ha, r.NewHAClient)
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantscripts,verbs=get;list;watch
@@ -106,7 +102,7 @@ func (r *HomeAssistantScriptReconciler) Reconcile(ctx context.Context, req ctrl.
 			}
 			if ha, haErr := r.validateHomeAssistantRef(ctx, haRef, script); haErr == nil {
 				if token, tokenErr := getAPIToken(ctx, r.Client, ha); tokenErr == nil {
-					haClient := r.haClientFor(ha)
+					haClient := r.haClientFor(ctx, ha)
 					id := script.Spec.ID
 					if id == "" {
 						id = script.Name
@@ -327,7 +323,7 @@ func (r *HomeAssistantScriptReconciler) reconcileScriptViaAPI(
 		id = script.Name
 	}
 
-	haClient := r.haClientFor(ha)
+	haClient := r.haClientFor(ctx, ha)
 
 	// If spec.id was renamed, delete the old script from HA to avoid orphans.
 	prevID := script.Annotations[lastAppliedIDAnnotationKey]

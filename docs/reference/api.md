@@ -48,6 +48,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `networkPolicy` _[NetworkPolicyAlphaSpec](#networkpolicyalphaspec)_ | NetworkPolicy controls whether the operator creates a NetworkPolicy<br />restricting ingress to the Home Assistant pod. |  | Optional: \{\} <br /> |
+| `tls` _[TLSAlphaSpec](#tlsalphaspec)_ | TLS groups experimental TLS integration with cert-manager. Native TLS<br />changes the Home Assistant pod networking/config, so it starts in<br />spec.alpha until it stabilizes. |  | Optional: \{\} <br /> |
 
 
 #### AutomationAction
@@ -230,6 +231,48 @@ _Appears in:_
 | `name` _string_ | Name of the Secret |  |  |
 | `usernameKey` _string_ | UsernameKey is the key in the Secret containing the username | username | Optional: \{\} <br /> |
 | `passwordKey` _string_ | PasswordKey is the key in the Secret containing the password | password | Optional: \{\} <br /> |
+
+
+#### GatewayParentRef
+
+
+
+GatewayParentRef references an existing Gateway listener.
+
+
+
+_Appears in:_
+- [GatewaySpec](#gatewayspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name of the existing Gateway. |  |  |
+| `namespace` _string_ | Namespace of the Gateway. When different from the HA namespace, the user<br />must provide a ReferenceGrant. |  | Optional: \{\} <br /> |
+| `sectionName` _string_ | SectionName is the listener name (e.g. "https"). |  | Optional: \{\} <br /> |
+
+
+#### GatewaySpec
+
+
+
+GatewaySpec configures operator-managed Gateway API exposure for HA. Managing
+Gateway API routing resources (sibling to the HA pod) is a stable opt-in — it
+does not change the Home Assistant pod's networking or security context, so it
+lives at the top level rather than under spec.alpha.
+
+
+
+_Appears in:_
+- [HomeAssistantSpec](#homeassistantspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `enabled` _boolean_ | Enabled turns on operator management of Gateway API routing (HTTPRoute,<br />and optionally a Gateway). | false | Optional: \{\} <br /> |
+| `host` _string_ | Host is the hostname for the route and certificate. |  | Optional: \{\} <br /> |
+| `issuerRef` _[IssuerReference](#issuerreference)_ | IssuerRef references an existing cert-manager Issuer/ClusterIssuer. When<br />set (and cert-manager available), the operator issues a certificate for<br />the listener. |  | Optional: \{\} <br /> |
+| `secretName` _string_ | SecretName references a bring-your-own TLS Secret for the listener.<br />Takes precedence over IssuerRef. |  | Optional: \{\} <br /> |
+| `parentRef` _[GatewayParentRef](#gatewayparentref)_ | ParentRef references an existing Gateway/listener to attach the HTTPRoute<br />to. When empty and ManageGateway is true, the operator creates a Gateway. |  | Optional: \{\} <br /> |
+| `manageGateway` _boolean_ | ManageGateway controls whether the operator also creates a Gateway<br />resource (not just the HTTPRoute). GatewayClass and the gateway controller<br />remain the platform's responsibility. | false | Optional: \{\} <br /> |
 
 
 #### HTTPConfig
@@ -1071,6 +1114,7 @@ _Appears in:_
 | `resources` _[ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#resourcerequirements-v1-core)_ | Resources defines CPU and memory requests/limits |  | Optional: \{\} <br /> |
 | `service` _[ServiceSpec](#servicespec)_ | Service configuration for exposing Home Assistant |  | Optional: \{\} <br /> |
 | `ingress` _[IngressSpec](#ingressspec)_ | Ingress configuration for external access |  | Optional: \{\} <br /> |
+| `gateway` _[GatewaySpec](#gatewayspec)_ | Gateway configures operator-managed Gateway API exposure (HTTPRoute, and<br />optionally a Gateway) for Home Assistant, with optional cert-manager TLS. |  | Optional: \{\} <br /> |
 | `timezone` _string_ | Timezone for the Home Assistant instance (e.g., "Europe/Warsaw") | UTC | Optional: \{\} <br /> |
 | `secretsFrom` _[SecretReference](#secretreference)_ | SecretsFrom references a Secret containing secrets.yaml<br />The Secret should have a key "secrets.yaml" with the HA secrets |  | Optional: \{\} <br /> |
 | `hostNetwork` _boolean_ | HostNetwork enables host networking for the Home Assistant pod.<br />When true, the pod uses the host's network namespace, enabling discovery<br />of IoT devices via mDNS, SSDP, and DHCP on the local network. |  | Optional: \{\} <br /> |
@@ -1139,7 +1183,8 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `enabled` _boolean_ | Enabled controls whether TLS is enabled | false | Optional: \{\} <br /> |
-| `secretName` _string_ | SecretName containing the TLS certificate. If empty, cert-manager annotation should be used. |  | Optional: \{\} <br /> |
+| `secretName` _string_ | SecretName containing the TLS certificate. When set, it is used as-is<br />(bring-your-own) and takes precedence over IssuerRef. |  | Optional: \{\} <br /> |
+| `issuerRef` _[IssuerReference](#issuerreference)_ | IssuerRef references an existing cert-manager Issuer/ClusterIssuer. When<br />set and cert-manager is available, the operator creates a Certificate for<br />the Ingress TLS Secret. Ignored when SecretName is provided. |  | Optional: \{\} <br /> |
 
 
 #### InitContainerSpec
@@ -1194,6 +1239,27 @@ _Appears in:_
 | `value` _string_ | Value is a plain text configuration value sent as a string to the Config Flow API. |  | Optional: \{\} <br /> |
 | `jsonValue` _string_ | JSONValue is a JSON-encoded value that will be parsed and sent as a native JSON<br />object to the Config Flow API. Use this for fields that expect a dictionary or<br />array (e.g. location: '\{"latitude": 54.17, "longitude": 18.55\}'). |  | Optional: \{\} <br /> |
 | `secretKeyRef` _[IntegrationSecretKeyRef](#integrationsecretkeyref)_ | SecretKeyRef references a key in a Kubernetes Secret |  | Optional: \{\} <br /> |
+
+
+#### IssuerReference
+
+
+
+IssuerReference references a cert-manager Issuer or ClusterIssuer. The
+operator only references issuers — it never creates application issuers.
+
+
+
+_Appears in:_
+- [GatewaySpec](#gatewayspec)
+- [IngressTLSSpec](#ingresstlsspec)
+- [NativeTLSAlphaSpec](#nativetlsalphaspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name of the Issuer/ClusterIssuer. |  |  |
+| `kind` _string_ | Kind of the issuer. | Issuer | Enum: [Issuer ClusterIssuer] <br />Optional: \{\} <br /> |
+| `group` _string_ | Group of the issuer API. | cert-manager.io | Optional: \{\} <br /> |
 
 
 #### LocationConfig
@@ -1253,6 +1319,25 @@ _Appears in:_
 | `passwordRef` _[SecretKeySelector](#secretkeyselector)_ | PasswordRef references a Secret containing the MQTT password<br />The Secret should have a "password" key |  | Optional: \{\} <br /> |
 | `clientID` _string_ | ClientID for MQTT connection |  | Optional: \{\} <br /> |
 | `keepAlive` _integer_ | KeepAlive defines MQTT keep-alive interval in seconds | 60 | Optional: \{\} <br /> |
+
+
+#### NativeTLSAlphaSpec
+
+
+
+NativeTLSAlphaSpec configures native TLS termination inside Home Assistant.
+
+
+
+_Appears in:_
+- [TLSAlphaSpec](#tlsalphaspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `enabled` _boolean_ | Enabled turns on native TLS. Home Assistant serves HTTPS on its existing<br />port (8123); the Service port is unchanged. Requires cert-manager to be<br />installed (or a bring-your-own SecretName). When cert-manager is absent,<br />the operator reports a status condition and keeps serving HTTP.<br />Deliberately without omitempty (see NetworkPolicyAlphaSpec.Enabled). | false | Optional: \{\} <br /> |
+| `issuerRef` _[IssuerReference](#issuerreference)_ | IssuerRef references an existing cert-manager Issuer/ClusterIssuer used to<br />issue the certificate. Required unless SecretName (bring-your-own) is set. |  | Optional: \{\} <br /> |
+| `dnsNames` _string array_ | DNSNames are additional SANs for the certificate. The operator always adds<br />the in-cluster Service FQDN so it can trust HA over HTTPS. |  | Optional: \{\} <br /> |
+| `secretName` _string_ | SecretName references a user-provided TLS Secret (bring-your-own). When<br />set, the operator does not create a cert-manager Certificate and this<br />Secret takes precedence over IssuerRef. |  | Optional: \{\} <br /> |
 
 
 #### NetworkPolicyAlphaSpec
@@ -1444,3 +1529,19 @@ _Appears in:_
 | `accessMode` _[PersistentVolumeAccessMode](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#persistentvolumeaccessmode-v1-core)_ | AccessMode for the PVC | ReadWriteOnce | Optional: \{\} <br /> |
 | `retainPVC` _boolean_ | RetainPVC controls whether the PVC survives deletion of the HomeAssistant CR.<br />When true, no ownerReference is set on the PVC — it will not be garbage-collected<br />when the CR is deleted (e.g. by FluxCD reconciliation), preventing accidental data loss.<br />When false (default), the PVC is owned by the CR and deleted together with it. | false | Optional: \{\} <br /> |
 | `initContainer` _[InitContainerSpec](#initcontainerspec)_ | InitContainer configures the init container that pre-creates required YAML files<br />(automations.yaml, scenes.yaml, scripts.yaml) on the PVC before Home Assistant starts.<br />This prevents HA from entering recovery mode when the !include directives are present<br />but the files do not yet exist. |  | Optional: \{\} <br /> |
+
+
+#### TLSAlphaSpec
+
+
+
+TLSAlphaSpec groups the (alpha) TLS integration modes backed by cert-manager.
+
+
+
+_Appears in:_
+- [AlphaSpec](#alphaspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `native` _[NativeTLSAlphaSpec](#nativetlsalphaspec)_ | Native enables Home Assistant to serve HTTPS natively (TLS terminated in<br />HA itself on the same port), using a certificate issued by cert-manager. |  | Optional: \{\} <br /> |
