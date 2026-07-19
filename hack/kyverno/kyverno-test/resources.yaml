@@ -1,0 +1,15 @@
+# Test resources for the `kyverno test` fixture (see kyverno-test.yaml).
+#
+# unsigned-pod references a digest that was never signed by this project's
+# release workflow — verification MUST fail. This is deterministic and stable
+# over time (the digest below is not a real published tag), unlike testing
+# against a real image reference, which would eventually become signed for
+# every future release and stop exercising the "reject" path.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unsigned-pod
+spec:
+  containers:
+    - name: operator
+      image: ghcr.io/przemekhys/homeassistant-operator@sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
