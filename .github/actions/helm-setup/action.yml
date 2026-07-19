@@ -64,6 +64,7 @@ runs:
       run: |
         set -euo pipefail
         helm plugin list | grep -q unittest || \
+          helm plugin install https://github.com/helm-unittest/helm-unittest --version "${HELM_UNITTEST_VERSION}" --verify=false 2>/dev/null || \
           helm plugin install https://github.com/helm-unittest/helm-unittest --version "${HELM_UNITTEST_VERSION}"
 
     - name: Install yq
