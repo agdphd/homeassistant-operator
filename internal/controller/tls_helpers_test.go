@@ -335,7 +335,11 @@ func TestReconcileTLSNativeBYO(t *testing.T) {
 			Native: &hav1.NativeTLSAlphaSpec{Enabled: true, SecretName: "my-tls"},
 		}}},
 	}
-	r := newTLSTestReconciler(t, false, ha) // cert-manager absent — must not matter
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-tls", Namespace: "default"},
+		Data:       map[string][]byte{"tls.crt": []byte("cert"), "tls.key": []byte("key")},
+	}
+	r := newTLSTestReconciler(t, false, ha, secret) // cert-manager absent — must not matter
 
 	if _, err := r.reconcileTLS(context.Background(), ha); err != nil {
 		t.Fatalf("reconcileTLS error: %v", err)
@@ -346,6 +350,26 @@ func TestReconcileTLSNativeBYO(t *testing.T) {
 	}
 	if _, err := getCertificate(t, r, ha); err == nil {
 		t.Fatal("expected no operator-managed Certificate for bring-your-own secret")
+	}
+}
+
+// TestReconcileTLSNativeBYOMissingSecret: a bring-your-own Secret that doesn't
+// exist (or lacks tls.crt/tls.key) must not report TLSReady=True.
+func TestReconcileTLSNativeBYOMissingSecret(t *testing.T) {
+	ha := &hav1.HomeAssistant{
+		ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default"},
+		Spec: hav1.HomeAssistantSpec{Alpha: &hav1.AlphaSpec{TLS: &hav1.TLSAlphaSpec{
+			Native: &hav1.NativeTLSAlphaSpec{Enabled: true, SecretName: "my-tls"},
+		}}},
+	}
+	r := newTLSTestReconciler(t, false, ha) // Secret "my-tls" does not exist
+
+	if _, err := r.reconcileTLS(context.Background(), ha); err != nil {
+		t.Fatalf("reconcileTLS error: %v", err)
+	}
+	tlsCond := meta.FindStatusCondition(ha.Status.Conditions, conditionTLSReady)
+	if tlsCond == nil || tlsCond.Status != metav1.ConditionFalse || tlsCond.Reason != reasonProvidedSecretInvalid {
+		t.Fatalf("expected TLSReady=False/%s, got %+v", reasonProvidedSecretInvalid, tlsCond)
 	}
 }
 

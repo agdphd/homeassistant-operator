@@ -79,11 +79,17 @@ func DeleteNamespace(namespace string) error {
 // ForceDeleteNamespace forcefully deletes a namespace by removing all finalizers.
 // This should only be used as a last resort when normal deletion hangs.
 func ForceDeleteNamespace(namespace string) error {
-	// First, try to remove finalizers from all resources in the namespace
+	// First, try to remove finalizers from all resources in the namespace.
+	// Includes PVCs (kubernetes.io/pvc-protection only clears once the consuming
+	// pod is fully gone, which can outlast a short test timeout) and cert-manager
+	// Certificate/CertificateRequest (present in every TLS test namespace) —
+	// without these, the namespace can sit in Terminating past --timeout=30s.
 	resourceTypes := []string{
 		"homeassistants", "homeassistantconfigurations",
 		"homeassistantsecrets", "homeassistantautomations",
 		"homeassistantscenes", "homeassistantscripts",
+		"persistentvolumeclaims",
+		"certificates.cert-manager.io", "certificaterequests.cert-manager.io",
 	}
 
 	for _, resourceType := range resourceTypes {
@@ -112,8 +118,9 @@ func ForceDeleteNamespace(namespace string) error {
 		"--type", "json", "-p", `[{"op":"remove","path":"/spec/finalizers"}]`)
 	_, _ = patchCmd.CombinedOutput() // Ignore errors
 
-	// Final delete attempt with short timeout
-	deleteCmd := exec.Command("kubectl", "delete", "ns", namespace, "--ignore-not-found=true", "--timeout=30s")
+	// Final delete attempt. 60s (not 30s): even after stripping finalizers above,
+	// GC/etcd cleanup under CI load has been observed to occasionally exceed 30s.
+	deleteCmd := exec.Command("kubectl", "delete", "ns", namespace, "--ignore-not-found=true", "--timeout=60s")
 	_, err := Run(deleteCmd)
 	return err
 }

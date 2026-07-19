@@ -225,12 +225,13 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Reconcile TLS / cert-manager integration (opt-in). Missing cert-manager is
 	// never an error: it degrades to a status condition + requeue so the rest of
-	// the reconcile (and other resources) keep working.
-	if tlsResult, err := r.reconcileTLS(ctx, ha); err != nil {
+	// the reconcile (and other resources) keep working. The requeue itself is
+	// deferred until after reconcileExposure so HTTP-only exposure still gets
+	// reconciled while TLS is waiting (e.g. for cert-manager to appear).
+	tlsResult, err := r.reconcileTLS(ctx, ha)
+	if err != nil {
 		log.Error(err, "Failed to reconcile TLS")
 		return r.updateStatusFailed(ctx, ha, err)
-	} else if tlsResult.RequeueAfter > 0 {
-		return tlsResult, nil
 	}
 
 	// Reconcile exposure (Ingress / Gateway API). Best-effort on the cert-manager
@@ -238,6 +239,10 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.reconcileExposure(ctx, ha); err != nil {
 		log.Error(err, "Failed to reconcile exposure")
 		return r.updateStatusFailed(ctx, ha, err)
+	}
+
+	if tlsResult.RequeueAfter > 0 {
+		return tlsResult, nil
 	}
 
 	// Reconcile Bootstrap - let bootstrap controller decide when HA is ready
@@ -818,6 +823,14 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 		delete(existingAnnotations, nativeTLSHashAnnotationKey)
 	}
 
+	// Probes must speak whatever scheme HA is actually serving: once native TLS
+	// is active, HA listens with HTTPS on the same port, and a plain-HTTP probe
+	// would just see a TLS handshake and fail the pod.
+	probeScheme := corev1.URISchemeHTTP
+	if nativeTLSActive(ha) {
+		probeScheme = corev1.URISchemeHTTPS
+	}
+
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ha.Name,
@@ -861,7 +874,7 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 									HTTPGet: &corev1.HTTPGetAction{
 										Path:   "/",
 										Port:   intstr.FromInt(defaultPort),
-										Scheme: corev1.URISchemeHTTP,
+										Scheme: probeScheme,
 									},
 								},
 								InitialDelaySeconds: 30,
@@ -875,7 +888,7 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 									HTTPGet: &corev1.HTTPGetAction{
 										Path:   "/",
 										Port:   intstr.FromInt(defaultPort),
-										Scheme: corev1.URISchemeHTTP,
+										Scheme: probeScheme,
 									},
 								},
 								InitialDelaySeconds: 10,
@@ -1278,6 +1291,22 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 	if currentHash != desiredHash {
 		log.V(1).Info("Config hash differs",
 			"current", currentHash, "desired", desiredHash)
+		return true
+	}
+
+	// Compare native-tls-hash annotation: catches certificate rotation, TLS
+	// disablement, or Secret removal even when the volume count is unchanged
+	// (same Secret name, new/removed content).
+	currentTLSHash, desiredTLSHash := "", ""
+	if currentAnnotations != nil {
+		currentTLSHash = currentAnnotations[nativeTLSHashAnnotationKey]
+	}
+	if desiredAnnotations != nil {
+		desiredTLSHash = desiredAnnotations[nativeTLSHashAnnotationKey]
+	}
+	if currentTLSHash != desiredTLSHash {
+		log.V(1).Info("Native TLS hash differs",
+			"current", currentTLSHash, "desired", desiredTLSHash)
 		return true
 	}
 

@@ -10,9 +10,15 @@ TLS certificates for three independent use cases:
 !!! info "cert-manager is an optional, external dependency"
     Neither the operator nor its Helm chart ever installs cert-manager. You install
     it (and provide an `Issuer`/`ClusterIssuer`) yourself. If cert-manager is **not**
-    present, the operator keeps running normally: any TLS mode you enabled simply
-    stays inactive and the resource reports a status condition — nothing fails or
-    loops. A cert-manager installed *after* the operator is picked up automatically.
+    present, native TLS and Ingress/API Gateway reconciliation degrade gracefully:
+    the corresponding mode simply stays inactive and the resource reports a status
+    condition — nothing fails or loops. A cert-manager installed *after* the
+    operator is picked up automatically.
+
+    This graceful degradation does **not** cover the webhook's cert-manager
+    override (`--set webhook.certManager.enabled=true`): that path renders an
+    `Issuer`/`Certificate` directly via Helm, which requires the cert-manager CRDs
+    to exist at install time. Only enable it when cert-manager is already installed.
 
 ## Prerequisites
 
@@ -170,10 +176,11 @@ helm upgrade ha-operator ... \
     cert-manager override only when cert-manager is installed.
 
 !!! tip "Availability of a default-on webhook"
-    With `failurePolicy: Fail` (the default), `HomeAssistant` create/update calls
-    are rejected while the webhook is unavailable (e.g. during an operator restart).
-    Set `--set webhook.failurePolicy=Ignore` to make validation best-effort, or
-    disable the webhook entirely.
+    With `failurePolicy: Ignore` (the default), `HomeAssistant` create/update calls
+    are admitted best-effort while the webhook is unavailable (e.g. during an
+    operator restart) — validation simply doesn't run for that call. Set
+    `--set webhook.failurePolicy=Fail` to reject calls instead while the webhook is
+    down, or disable the webhook entirely.
 
 ## Status conditions
 

@@ -66,6 +66,7 @@ const (
 	reasonWaitingForCertManager   = "WaitingForCertManager"
 	reasonTLSReady                = "TLSReady"
 	reasonUsingProvidedSecret     = "UsingProvidedSecret"
+	reasonProvidedSecretInvalid   = "ProvidedSecretInvalid"
 	reasonExposureReady           = "ExposureReady"
 
 	// TLS / cert-manager event reasons

@@ -73,7 +73,8 @@ spec:
 				"-n", namespace, "--ignore-not-found=true")
 			_, _ = utils.Run(cmd)
 			return utils.ApplyYAML(bad, namespace)
-		}, utils.CertIssueTimeout, utils.DefaultEventuallyPollingInterval).Should(HaveOccurred(),
+		}, utils.CertIssueTimeout, utils.DefaultEventuallyPollingInterval).Should(
+			MatchError(ContainSubstring("requires issuerRef or secretName")),
 			"webhook should reject native TLS without issuerRef/secretName")
 	})
 

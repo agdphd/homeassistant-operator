@@ -236,6 +236,10 @@ func (r *HomeAssistantReconciler) ensureCertificate(
 		if err := r.Update(ctx, existing); err != nil {
 			return false, err
 		}
+		// existing.status reflects the pre-change certificate and cert-manager has
+		// not yet reacted to the spec update — reporting it ready here would be a
+		// stale false positive. Report not-ready; the next reconcile re-fetches.
+		return false, nil
 	}
 	return certificateReady(existing), nil
 }
@@ -465,10 +469,28 @@ func (r *HomeAssistantReconciler) nativeTLSUsingProvidedSecret(
 	if n == nil || !n.Enabled || n.SecretName == "" {
 		return false, nil
 	}
+	secretName := n.SecretName
+
+	secret := &corev1.Secret{}
+	getErr := r.Get(ctx, client.ObjectKey{Name: secretName, Namespace: ha.Namespace}, secret)
+	if getErr != nil || len(secret.Data["tls.crt"]) == 0 || len(secret.Data["tls.key"]) == 0 {
+		if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+			return meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+				Type:               conditionTLSReady,
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: h.Generation,
+				Reason:             reasonProvidedSecretInvalid,
+				Message:            "Secret " + secretName + " is missing or does not contain tls.crt/tls.key",
+			})
+		}); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+
 	if err := r.deleteNativeCertificate(ctx, ha); err != nil {
 		return false, err
 	}
-	secretName := n.SecretName
 	if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
 		return meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
 			Type:               conditionTLSReady,
