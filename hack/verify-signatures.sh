@@ -42,7 +42,7 @@ CHART_DIGEST="$(crane digest "${CHART_REF#oci://}:${VERSION#v}")"
 cosign verify \
   --certificate-identity-regexp "$IDENTITY_REGEXP" \
   --certificate-oidc-issuer "$ISSUER" \
-  "${CHART_REF}@${CHART_DIGEST}"
+  "${CHART_REF#oci://}@${CHART_DIGEST}"
 
 echo "==> Verifying checksums.txt bundle from the ${VERSION} GitHub Release"
 WORKDIR="$(mktemp -d)"

@@ -139,8 +139,13 @@ cosign verify \
   --certificate-identity-regexp \
     'https://github.com/przemekhys/homeassistant-operator/\.github/workflows/release\.yml@refs/tags/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  oci://ghcr.io/przemekhys/charts/homeassistant-operator@<chart-digest>
+  ghcr.io/przemekhys/charts/homeassistant-operator@<chart-digest>
 ```
+
+!!! note "No `oci://` prefix here"
+    That scheme is Helm-specific syntax for `helm install`/`push`. `cosign`
+    expects a bare `registry/repo@digest` — passing `oci://...` makes it try to
+    resolve `oci` itself as a registry hostname and fail.
 
 This check is independent of Kyverno and of any cluster — it works anywhere
 `cosign` can reach the OCI registry, for example as a preflight step in a GitOps
