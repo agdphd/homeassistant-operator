@@ -83,6 +83,7 @@ nav:
     - Backup: user-guide/backup.md
     - Security (Pod Security Standards): user-guide/security.md
     - TLS (cert-manager): user-guide/tls.md
+    - Signed Releases: user-guide/signed-releases.md
     - Upgrade: user-guide/upgrade.md
   - Ecosystem Guides:
     - Overview: ecosystem/index.md

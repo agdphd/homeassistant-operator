@@ -11,6 +11,10 @@ A Kubernetes operator for deploying and managing [Home Assistant](https://www.ho
 
 **[Full documentation →](https://przemekhys.github.io/homeassistant-operator/)**
 
+Release artifacts (container image, Helm chart) are keylessly signed — see
+[Signed Releases](https://przemekhys.github.io/homeassistant-operator/user-guide/signed-releases/)
+to verify them or enforce verification in your cluster with Kyverno.
+
 ## Quick Start
 
 ```sh
