@@ -120,6 +120,7 @@ jobs:
   e2e-k3d:
     name: fresh install + upgrade (k3d)
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # historical runs finish in 3-5 min; catches a hang instead of running to GitHub's 360min default
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:

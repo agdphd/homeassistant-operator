@@ -172,12 +172,15 @@ jobs:
 
       # Keyless, same identity as the container image (see build-and-push). Signs
       # the pushed OCI artifact's own digest — cosign treats a Helm chart OCI
-      # artifact the same as a container image for signing purposes.
+      # artifact the same as a container image for signing purposes. CHART_REF
+      # carries the "oci://" scheme Helm needs; cosign's image reference parser
+      # has no such scheme and misreads "oci" as a registry hostname, so it must
+      # be stripped here.
       - name: Sign Helm chart
         env:
           CHART_REF: ${{ steps.chart.outputs.ref }}
           CHART_DIGEST: ${{ steps.chart.outputs.digest }}
-        run: cosign sign --yes "${CHART_REF}@${CHART_DIGEST}"
+        run: cosign sign --yes "${CHART_REF#oci://}@${CHART_DIGEST}"
 
   publish-release-assets:
     needs: [build-and-push, helm-publish]
@@ -284,6 +287,8 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${IMAGE}@${IMAGE_DIGEST}"
 
+      # CHART_REF carries the "oci://" scheme (needed by Helm); cosign has no
+      # such scheme and misreads "oci" as a hostname, so strip it here too.
       - name: Verify Helm chart signature
         env:
           IDENTITY_REGEXP: https://github.com/${{ github.repository }}/\.github/workflows/release\.yml@refs/tags/.*
@@ -293,7 +298,7 @@ jobs:
           cosign verify \
             --certificate-identity-regexp "$IDENTITY_REGEXP" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "${CHART_REF}@${CHART_DIGEST}"
+            "${CHART_REF#oci://}@${CHART_DIGEST}"
 
       - name: Verify checksums manifest signature
         env:
