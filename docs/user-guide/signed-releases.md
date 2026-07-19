@@ -44,8 +44,7 @@ digests transitively in one check):
 ```bash
 gh release download v1.2.0 -p 'checksums.txt*'
 cosign verify-blob \
-  --certificate checksums.txt.pem \
-  --signature checksums.txt.sig \
+  --bundle checksums.txt.bundle \
   --certificate-identity-regexp \
     'https://github.com/przemekhys/homeassistant-operator/\.github/workflows/release\.yml@refs/tags/.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \

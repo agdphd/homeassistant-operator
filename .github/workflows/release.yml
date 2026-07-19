@@ -216,11 +216,13 @@ jobs:
           ${CHART_DIGEST}  helm-chart       ${CHART_REF}
           EOF
 
+      # cosign >=3.0 dropped --output-signature/--output-certificate for
+      # sign-blob in favor of a single --bundle file (signature + certificate +
+      # Rekor entry together).
       - name: Sign checksums manifest
         run: |
           cosign sign-blob --yes \
-            --output-signature checksums.txt.sig \
-            --output-certificate checksums.txt.pem \
+            --bundle checksums.txt.bundle \
             checksums.txt
 
       # Tags previously produced no GitHub Release object at all; this job
@@ -235,14 +237,14 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           REPO="${{ github.repository }}"
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            gh release upload "$TAG" checksums.txt checksums.txt.sig checksums.txt.pem \
+            gh release upload "$TAG" checksums.txt checksums.txt.bundle \
               --repo "$REPO" --clobber
           else
             gh release create "$TAG" \
               --repo "$REPO" \
               --title "$TAG" \
               --generate-notes \
-              checksums.txt checksums.txt.sig checksums.txt.pem
+              checksums.txt checksums.txt.bundle
           fi
 
   smoke-oci:
@@ -308,8 +310,7 @@ jobs:
           gh release download "${GITHUB_REF_NAME}" --repo "${{ github.repository }}" \
             -p 'checksums.txt*' --clobber
           cosign verify-blob \
-            --certificate checksums.txt.pem \
-            --signature checksums.txt.sig \
+            --bundle checksums.txt.bundle \
             --certificate-identity-regexp "$IDENTITY_REGEXP" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             checksums.txt

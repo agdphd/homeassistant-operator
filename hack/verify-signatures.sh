@@ -49,8 +49,7 @@ WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 gh release download "$VERSION" --repo "$REPO" -p 'checksums.txt*' --dir "$WORKDIR"
 cosign verify-blob \
-  --certificate "$WORKDIR/checksums.txt.pem" \
-  --signature "$WORKDIR/checksums.txt.sig" \
+  --bundle "$WORKDIR/checksums.txt.bundle" \
   --certificate-identity-regexp "$IDENTITY_REGEXP" \
   --certificate-oidc-issuer "$ISSUER" \
   "$WORKDIR/checksums.txt"
