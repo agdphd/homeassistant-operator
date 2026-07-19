@@ -11,6 +11,10 @@ A Kubernetes operator for deploying and managing [Home Assistant](https://www.ho
 
 **[Full documentation →](https://przemekhys.github.io/homeassistant-operator/)**
 
+Release artifacts (container image, Helm chart) are keylessly signed — see
+[Signed Releases](https://przemekhys.github.io/homeassistant-operator/user-guide/signed-releases/)
+to verify them or enforce verification in your cluster with Kyverno.
+
 ## Quick Start
 
 ```sh
@@ -30,6 +34,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) or the [contributing guide](https://przem
 - [Home Assistant](https://www.home-assistant.io/) - The amazing home automation platform
 - [Operator SDK](https://sdk.operatorframework.io/) - Framework for building Kubernetes operators
 - [Kubebuilder](https://book.kubebuilder.io/) - SDK for building Kubernetes APIs
+- [cert-controller](https://github.com/open-policy-agent/cert-controller) (OPA) - Self-managed rotation of the webhook serving certificate, so the operator needs no cert-manager
 
 ## License
 

@@ -110,7 +110,7 @@ func (r *HomeAssistantLabelReconciler) Reconcile(ctx context.Context, req ctrl.R
 			"API token not available", 30*time.Second)
 	}
 
-	haClient := r.haClientFor(ha)
+	haClient := r.haClientFor(ctx, ha)
 
 	// --- LIST existing labels ---
 	existingLabels, err := r.listLabels(ctx, haClient, token)
@@ -199,7 +199,7 @@ func (r *HomeAssistantLabelReconciler) handleDeletion(ctx context.Context, label
 		return
 	}
 
-	haClient := r.haClientFor(ha)
+	haClient := r.haClientFor(ctx, ha)
 	if err := r.deleteLabel(ctx, haClient, token, label.Status.LabelID); err != nil {
 		log.Error(err, "Failed to delete label from HA (best-effort)", "labelID", label.Status.LabelID)
 	} else {
@@ -208,12 +208,8 @@ func (r *HomeAssistantLabelReconciler) handleDeletion(ctx context.Context, label
 }
 
 // haClientFor returns a haclient.Client for the given HA instance
-func (r *HomeAssistantLabelReconciler) haClientFor(ha *hav1.HomeAssistant) *haclient.Client {
-	baseURL := buildHomeAssistantURL(ha)
-	if r.NewHAClient != nil {
-		return r.NewHAClient(baseURL)
-	}
-	return haclient.NewClient(baseURL)
+func (r *HomeAssistantLabelReconciler) haClientFor(ctx context.Context, ha *hav1.HomeAssistant) *haclient.Client {
+	return newHAClientForHA(ctx, r.Client, ha, r.NewHAClient)
 }
 
 // setCondition updates the Ready condition and status

@@ -50,6 +50,11 @@ type HomeAssistantSpec struct {
 	// +optional
 	Ingress *IngressSpec `json:"ingress,omitempty"`
 
+	// Gateway configures operator-managed Gateway API exposure (HTTPRoute, and
+	// optionally a Gateway) for Home Assistant, with optional cert-manager TLS.
+	// +optional
+	Gateway *GatewaySpec `json:"gateway,omitempty"`
+
 	// Timezone for the Home Assistant instance (e.g., "Europe/Warsaw")
 	// +kubebuilder:default="UTC"
 	// +optional
@@ -91,6 +96,121 @@ type AlphaSpec struct {
 	// restricting ingress to the Home Assistant pod.
 	// +optional
 	NetworkPolicy *NetworkPolicyAlphaSpec `json:"networkPolicy,omitempty"`
+
+	// TLS groups experimental TLS integration with cert-manager. Native TLS
+	// changes the Home Assistant pod networking/config, so it starts in
+	// spec.alpha until it stabilizes.
+	// +optional
+	TLS *TLSAlphaSpec `json:"tls,omitempty"`
+}
+
+// TLSAlphaSpec groups the (alpha) TLS integration modes backed by cert-manager.
+type TLSAlphaSpec struct {
+	// Native enables Home Assistant to serve HTTPS natively (TLS terminated in
+	// HA itself on the same port), using a certificate issued by cert-manager.
+	// +optional
+	Native *NativeTLSAlphaSpec `json:"native,omitempty"`
+}
+
+// NativeTLSAlphaSpec configures native TLS termination inside Home Assistant.
+type NativeTLSAlphaSpec struct {
+	// Enabled turns on native TLS. Home Assistant serves HTTPS on its existing
+	// port (8123); the Service port is unchanged. Requires cert-manager to be
+	// installed (or a bring-your-own SecretName). When cert-manager is absent,
+	// the operator reports a status condition and keeps serving HTTP.
+	//
+	// Deliberately without omitempty (see NetworkPolicyAlphaSpec.Enabled).
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled"`
+
+	// IssuerRef references an existing cert-manager Issuer/ClusterIssuer used to
+	// issue the certificate. Required unless SecretName (bring-your-own) is set.
+	// +optional
+	IssuerRef *IssuerReference `json:"issuerRef,omitempty"`
+
+	// DNSNames are additional SANs for the certificate. The operator always adds
+	// the in-cluster Service FQDN so it can trust HA over HTTPS.
+	// +optional
+	DNSNames []string `json:"dnsNames,omitempty"`
+
+	// SecretName references a user-provided TLS Secret (bring-your-own). When
+	// set, the operator does not create a cert-manager Certificate and this
+	// Secret takes precedence over IssuerRef.
+	// +optional
+	SecretName string `json:"secretName,omitempty"`
+}
+
+// GatewaySpec configures operator-managed Gateway API exposure for HA. Managing
+// Gateway API routing resources (sibling to the HA pod) is a stable opt-in — it
+// does not change the Home Assistant pod's networking or security context, so it
+// lives at the top level rather than under spec.alpha.
+type GatewaySpec struct {
+	// Enabled turns on operator management of Gateway API routing (HTTPRoute,
+	// and optionally a Gateway).
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled"`
+
+	// Host is the hostname for the route and certificate.
+	// +optional
+	Host string `json:"host,omitempty"`
+
+	// IssuerRef references an existing cert-manager Issuer/ClusterIssuer. When
+	// set (and cert-manager available), the operator issues a certificate for
+	// the listener.
+	// +optional
+	IssuerRef *IssuerReference `json:"issuerRef,omitempty"`
+
+	// SecretName references a bring-your-own TLS Secret for the listener.
+	// Takes precedence over IssuerRef.
+	// +optional
+	SecretName string `json:"secretName,omitempty"`
+
+	// ParentRef references an existing Gateway/listener to attach the HTTPRoute
+	// to. When empty and ManageGateway is true, the operator creates a Gateway.
+	// +optional
+	ParentRef *GatewayParentRef `json:"parentRef,omitempty"`
+
+	// ManageGateway controls whether the operator also creates a Gateway
+	// resource (not just the HTTPRoute). GatewayClass and the gateway controller
+	// remain the platform's responsibility.
+	// +kubebuilder:default=false
+	// +optional
+	ManageGateway bool `json:"manageGateway,omitempty"`
+}
+
+// GatewayParentRef references an existing Gateway listener.
+type GatewayParentRef struct {
+	// Name of the existing Gateway.
+	Name string `json:"name"`
+
+	// Namespace of the Gateway. When different from the HA namespace, the user
+	// must provide a ReferenceGrant.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// SectionName is the listener name (e.g. "https").
+	// +optional
+	SectionName string `json:"sectionName,omitempty"`
+}
+
+// IssuerReference references a cert-manager Issuer or ClusterIssuer. The
+// operator only references issuers — it never creates application issuers.
+type IssuerReference struct {
+	// Name of the Issuer/ClusterIssuer.
+	Name string `json:"name"`
+
+	// Kind of the issuer.
+	// +kubebuilder:validation:Enum=Issuer;ClusterIssuer
+	// +kubebuilder:default=Issuer
+	// +optional
+	Kind string `json:"kind,omitempty"`
+
+	// Group of the issuer API.
+	// +kubebuilder:default="cert-manager.io"
+	// +optional
+	Group string `json:"group,omitempty"`
 }
 
 // NetworkPolicyAlphaSpec configures the (alpha) NetworkPolicy created for the
@@ -364,9 +484,16 @@ type IngressTLSSpec struct {
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 
-	// SecretName containing the TLS certificate. If empty, cert-manager annotation should be used.
+	// SecretName containing the TLS certificate. When set, it is used as-is
+	// (bring-your-own) and takes precedence over IssuerRef.
 	// +optional
 	SecretName string `json:"secretName,omitempty"`
+
+	// IssuerRef references an existing cert-manager Issuer/ClusterIssuer. When
+	// set and cert-manager is available, the operator creates a Certificate for
+	// the Ingress TLS Secret. Ignored when SecretName is provided.
+	// +optional
+	IssuerRef *IssuerReference `json:"issuerRef,omitempty"`
 }
 
 // HomeAssistantStatus defines the observed state of HomeAssistant.

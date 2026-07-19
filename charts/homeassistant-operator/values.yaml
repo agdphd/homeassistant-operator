@@ -102,3 +102,29 @@ watchNamespaces: []
 # which instead protects the Home Assistant pod itself.
 metricsNetworkPolicy:
   enabled: false
+
+# webhook configures the operator's validating admission webhook, which checks
+# HomeAssistant resources (currently TLS configuration coherence) at admission time.
+#
+# ENABLED BY DEFAULT (opt-out): set webhook.enabled=false to turn it off entirely
+# (the operator runs with ENABLE_WEBHOOKS=false and no webhook resources render).
+#
+# The serving certificate is **self-managed** by the operator by default — it
+# generates and rotates a self-signed certificate and injects the CA into its own
+# ValidatingWebhookConfiguration, so **no cert-manager is required**.
+webhook:
+  enabled: true
+  # certManager.enabled: opt IN to have cert-manager issue the serving certificate
+  # instead of the operator self-managing it (a self-signed Issuer + Certificate are
+  # rendered and the CA is injected via cert-manager.io/inject-ca-from). REQUIRES
+  # cert-manager installed. When false (default), the operator self-manages the cert
+  # — no cert-manager dependency.
+  certManager:
+    enabled: false
+  # port is the webhook server port on the operator pod.
+  port: 9443
+  # failurePolicy for the ValidatingWebhookConfiguration (Fail or Ignore). Ignore
+  # (default) makes validation best-effort — HomeAssistant create/update is never
+  # blocked while the webhook is unavailable (e.g. during an operator rollout).
+  # Set Fail to strictly reject invalid resources.
+  failurePolicy: Ignore

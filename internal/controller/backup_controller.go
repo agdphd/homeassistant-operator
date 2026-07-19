@@ -75,14 +75,8 @@ func (r *HomeAssistantReconciler) reconcileBackupConfig(
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	// Build HA client
-	haURL := buildHomeAssistantURL(ha)
-	var haClient *haclient.Client
-	if r.NewHAClient != nil {
-		haClient = r.NewHAClient(haURL)
-	} else {
-		haClient = haclient.NewClient(haURL)
-	}
+	// Build HA client (scheme + CA trust honor native TLS)
+	haClient := newHAClientForHA(ctx, r.Client, ha, r.NewHAClient)
 
 	// Get current backup config from HA
 	currentConfig, err := haClient.GetBackupConfig(ctx, token)

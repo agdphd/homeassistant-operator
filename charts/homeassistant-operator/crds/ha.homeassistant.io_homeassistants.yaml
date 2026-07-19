@@ -82,6 +82,64 @@ spec:
                           silently re-defaulted to true by the API server once that happens.
                         type: boolean
                     type: object
+                  tls:
+                    description: |-
+                      TLS groups experimental TLS integration with cert-manager. Native TLS
+                      changes the Home Assistant pod networking/config, so it starts in
+                      spec.alpha until it stabilizes.
+                    properties:
+                      native:
+                        description: |-
+                          Native enables Home Assistant to serve HTTPS natively (TLS terminated in
+                          HA itself on the same port), using a certificate issued by cert-manager.
+                        properties:
+                          dnsNames:
+                            description: |-
+                              DNSNames are additional SANs for the certificate. The operator always adds
+                              the in-cluster Service FQDN so it can trust HA over HTTPS.
+                            items:
+                              type: string
+                            type: array
+                          enabled:
+                            default: false
+                            description: |-
+                              Enabled turns on native TLS. Home Assistant serves HTTPS on its existing
+                              port (8123); the Service port is unchanged. Requires cert-manager to be
+                              installed (or a bring-your-own SecretName). When cert-manager is absent,
+                              the operator reports a status condition and keeps serving HTTP.
+
+                              Deliberately without omitempty (see NetworkPolicyAlphaSpec.Enabled).
+                            type: boolean
+                          issuerRef:
+                            description: |-
+                              IssuerRef references an existing cert-manager Issuer/ClusterIssuer used to
+                              issue the certificate. Required unless SecretName (bring-your-own) is set.
+                            properties:
+                              group:
+                                default: cert-manager.io
+                                description: Group of the issuer API.
+                                type: string
+                              kind:
+                                default: Issuer
+                                description: Kind of the issuer.
+                                enum:
+                                - Issuer
+                                - ClusterIssuer
+                                type: string
+                              name:
+                                description: Name of the Issuer/ClusterIssuer.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          secretName:
+                            description: |-
+                              SecretName references a user-provided TLS Secret (bring-your-own). When
+                              set, the operator does not create a cert-manager Certificate and this
+                              Secret takes precedence over IssuerRef.
+                            type: string
+                        type: object
+                    type: object
                 type: object
               backup:
                 description: |-
@@ -241,6 +299,75 @@ spec:
                       created during onboarding
                     type: string
                 type: object
+              gateway:
+                description: |-
+                  Gateway configures operator-managed Gateway API exposure (HTTPRoute, and
+                  optionally a Gateway) for Home Assistant, with optional cert-manager TLS.
+                properties:
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled turns on operator management of Gateway API routing (HTTPRoute,
+                      and optionally a Gateway).
+                    type: boolean
+                  host:
+                    description: Host is the hostname for the route and certificate.
+                    type: string
+                  issuerRef:
+                    description: |-
+                      IssuerRef references an existing cert-manager Issuer/ClusterIssuer. When
+                      set (and cert-manager available), the operator issues a certificate for
+                      the listener.
+                    properties:
+                      group:
+                        default: cert-manager.io
+                        description: Group of the issuer API.
+                        type: string
+                      kind:
+                        default: Issuer
+                        description: Kind of the issuer.
+                        enum:
+                        - Issuer
+                        - ClusterIssuer
+                        type: string
+                      name:
+                        description: Name of the Issuer/ClusterIssuer.
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  manageGateway:
+                    default: false
+                    description: |-
+                      ManageGateway controls whether the operator also creates a Gateway
+                      resource (not just the HTTPRoute). GatewayClass and the gateway controller
+                      remain the platform's responsibility.
+                    type: boolean
+                  parentRef:
+                    description: |-
+                      ParentRef references an existing Gateway/listener to attach the HTTPRoute
+                      to. When empty and ManageGateway is true, the operator creates a Gateway.
+                    properties:
+                      name:
+                        description: Name of the existing Gateway.
+                        type: string
+                      namespace:
+                        description: |-
+                          Namespace of the Gateway. When different from the HA namespace, the user
+                          must provide a ReferenceGrant.
+                        type: string
+                      sectionName:
+                        description: SectionName is the listener name (e.g. "https").
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  secretName:
+                    description: |-
+                      SecretName references a bring-your-own TLS Secret for the listener.
+                      Takes precedence over IssuerRef.
+                    type: string
+                type: object
               hostNetwork:
                 description: |-
                   HostNetwork enables host networking for the Home Assistant pod.
@@ -277,9 +404,33 @@ spec:
                         default: false
                         description: Enabled controls whether TLS is enabled
                         type: boolean
+                      issuerRef:
+                        description: |-
+                          IssuerRef references an existing cert-manager Issuer/ClusterIssuer. When
+                          set and cert-manager is available, the operator creates a Certificate for
+                          the Ingress TLS Secret. Ignored when SecretName is provided.
+                        properties:
+                          group:
+                            default: cert-manager.io
+                            description: Group of the issuer API.
+                            type: string
+                          kind:
+                            default: Issuer
+                            description: Kind of the issuer.
+                            enum:
+                            - Issuer
+                            - ClusterIssuer
+                            type: string
+                          name:
+                            description: Name of the Issuer/ClusterIssuer.
+                            type: string
+                        required:
+                        - name
+                        type: object
                       secretName:
-                        description: SecretName containing the TLS certificate. If
-                          empty, cert-manager annotation should be used.
+                        description: |-
+                          SecretName containing the TLS certificate. When set, it is used as-is
+                          (bring-your-own) and takes precedence over IssuerRef.
                         type: string
                     type: object
                 type: object

@@ -67,3 +67,34 @@ jobs:
           echo "  - Kustomize: config/manager/manager.yaml (PSA namespace labels + securityContext)"
           echo "  - Helm: charts/homeassistant-operator/templates/namespace.yaml, deployment.yaml, values.yaml"
           exit 1
+
+  kyverno-policy-test:
+    name: Sample Kyverno Policy Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      # go install fails for this module: its go.mod carries replace directives,
+      # which Go's module resolver refuses to honor for a non-main module — so
+      # the prebuilt release binary is installed directly instead, verified
+      # against the release's published checksums.txt.
+      - name: Install Kyverno CLI
+        run: |
+          # renovate: datasource=github-releases depName=kyverno/kyverno
+          KYVERNO_CLI_VERSION="v1.18.2"
+          ASSET="kyverno-cli_${KYVERNO_CLI_VERSION}_linux_x86_64.tar.gz"
+          BASE_URL="https://github.com/kyverno/kyverno/releases/download/${KYVERNO_CLI_VERSION}"
+          curl -sSLO "${BASE_URL}/${ASSET}"
+          curl -sSLO "${BASE_URL}/checksums.txt"
+          grep " ${ASSET}\$" checksums.txt | sha256sum -c -
+          tar xzf "${ASSET}" kyverno
+          chmod +x kyverno
+          echo "${PWD}" >> "$GITHUB_PATH"
+
+      - name: Test sample verification policy
+        run: kyverno test hack/kyverno/kyverno-test/

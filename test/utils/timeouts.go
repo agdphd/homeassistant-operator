@@ -67,4 +67,9 @@ const (
 	// ControllerPodReadyTimeout is the timeout for waiting for the operator
 	// controller-manager pod to become ready during test setup.
 	ControllerPodReadyTimeout = 2 * time.Minute
+
+	// CertIssueTimeout is the timeout for a cert-manager Certificate to become
+	// Ready (Secret populated) in TLS E2E tests. Self-signed/CA issuers are fast;
+	// ACME issuers can be much slower and should override this locally.
+	CertIssueTimeout = 2 * time.Minute
 )

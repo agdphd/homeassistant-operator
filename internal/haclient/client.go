@@ -3,6 +3,8 @@ package haclient
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,6 +46,29 @@ func NewClient(baseURL string) *Client {
 // WithTimeout sets a custom timeout for the HTTP client
 func (c *Client) WithTimeout(timeout time.Duration) *Client {
 	c.httpClient.Timeout = timeout
+	return c
+}
+
+// WithRootCAs configures the client to trust the given PEM-encoded CA bundle when
+// connecting to Home Assistant over HTTPS (used for native TLS). Certificate
+// verification is always enabled — InsecureSkipVerify is never set. Passing an
+// empty bundle results in an empty trust pool (connections will fail closed
+// rather than fall back to skipping verification).
+func (c *Client) WithRootCAs(caPEM []byte) *Client {
+	t, ok := c.httpClient.Transport.(*http.Transport)
+	if !ok {
+		// A wrapped/custom transport manages its own TLS — leave it untouched
+		// rather than replacing it with a bare one and dropping its settings.
+		return c
+	}
+	pool := x509.NewCertPool()
+	// A malformed or empty bundle leaves an empty pool, so verification fails
+	// closed rather than falling back to skipping it.
+	pool.AppendCertsFromPEM(caPEM)
+	if t.TLSClientConfig == nil {
+		t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	t.TLSClientConfig.RootCAs = pool
 	return c
 }
 

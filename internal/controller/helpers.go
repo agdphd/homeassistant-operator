@@ -113,7 +113,7 @@ func buildHomeAssistantURL(ha *hav1.HomeAssistant) string {
 	if ha.Spec.Service != nil && ha.Spec.Service.Port != 0 {
 		port = int(ha.Spec.Service.Port)
 	}
-	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", serviceName, ha.Namespace, port)
+	return fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", haScheme(ha), serviceName, ha.Namespace, port)
 }
 
 // getAPIToken retrieves the Home Assistant API token from Secret.

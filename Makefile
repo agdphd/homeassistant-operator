@@ -233,6 +233,22 @@ security-check: ## Run govulncheck to scan for vulnerabilities
 verify-pss: kustomize ## Verify operator manifests satisfy the "restricted" Pod Security Standard
 	@KUSTOMIZE=$(KUSTOMIZE) ./hack/verify-pss.sh
 
+# Severity levels reported by security-scan-manifests. Report-only for now.
+TRIVY_SEVERITY ?= MEDIUM,HIGH,CRITICAL
+
+.PHONY: security-scan-manifests
+security-scan-manifests: kustomize ## Scan rendered Kustomize + Helm manifests for misconfigurations (report-only)
+	@command -v $(TRIVY) >/dev/null 2>&1 || { echo "❌ trivy not found — install from https://github.com/aquasecurity/trivy"; exit 1; }
+	@echo "==> Scanning Kustomize render (config/default)"
+	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \
+		$(KUSTOMIZE) build config/default > "$$tmp/manifests.yaml"; \
+		$(TRIVY) config --exit-code 0 --severity $(TRIVY_SEVERITY) "$$tmp"
+	@echo "==> Scanning Helm chart (charts/homeassistant-operator, default values)"
+	@$(TRIVY) config --exit-code 0 --severity $(TRIVY_SEVERITY) \
+		--skip-dirs charts/homeassistant-operator/crds \
+		--skip-dirs charts/homeassistant-operator/tests \
+		charts/homeassistant-operator
+
 .PHONY: dupl-check
 dupl-check: ## Check for duplicate code (excluding tests and generated files)
 	@echo "Checking for code duplication..."
@@ -424,6 +440,7 @@ ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 GINKGO ?= $(LOCALBIN)/ginkgo
 CRD_REF_DOCS ?= $(LOCALBIN)/crd-ref-docs
+TRIVY ?= trivy
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.6.0

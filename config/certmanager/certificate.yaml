@@ -1,0 +1,25 @@
+# Self-signed Issuer + serving Certificate for the validating webhook. The DNS
+# names are filled from the webhook Service via replacements in
+# config/default/kustomization.yaml, and cert-manager injects the CA into the
+# ValidatingWebhookConfiguration. cert-manager must be installed to use this path.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned-issuer
+  namespace: system
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: serving-cert
+  namespace: system
+spec:
+  dnsNames:
+  - SERVICE_NAME.SERVICE_NAMESPACE.svc
+  - SERVICE_NAME.SERVICE_NAMESPACE.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: selfsigned-issuer
+  secretName: webhook-server-cert

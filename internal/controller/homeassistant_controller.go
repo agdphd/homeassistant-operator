@@ -36,6 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -102,6 +103,13 @@ type HomeAssistantReconciler struct {
 	// Used for debouncing to avoid rapid StatefulSet updates
 	// sync.Map is used because reconcilers run concurrently for different resources
 	lastConfigHashSync sync.Map // map[string]time.Time
+
+	// cert-manager availability detection cache (guarded by certMgrMu). This is
+	// a pure optimization — its loss is safely recovered by the next reconcile
+	// (constitution principle IV). See tls_helpers.go.
+	certMgrMu        sync.Mutex
+	certMgrAvailable bool
+	certMgrCheckedAt time.Time
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch;create;update;patch;delete
@@ -114,6 +122,15 @@ type HomeAssistantReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// TLS / cert-manager integration. Narrow verbs on specific resources — the
+// operator issues certificates and manages exposure resources; it never installs
+// cert-manager or manages GatewayClass.
+// +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes;gateways,verbs=get;list;watch;create;update;patch;delete
+// Webhook serving certificate self-management (cert-controller): the operator
+// injects the CA bundle into its own ValidatingWebhookConfiguration.
+// +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;list;watch;update;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -133,8 +150,13 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Set initial status if not set
 	if ha.Status.Phase == "" {
-		ha.Status.Phase = hav1.PhasePending
-		if err := r.Status().Update(ctx, ha); err != nil {
+		if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+			if h.Status.Phase != "" {
+				return false
+			}
+			h.Status.Phase = hav1.PhasePending
+			return true
+		}); err != nil {
 			log.Error(err, "Failed to update HomeAssistant status")
 			return ctrl.Result{}, err
 		}
@@ -153,18 +175,18 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"homeassistant", ha.Name,
 			"namespace", ha.Namespace,
 			"expected-haconfig", ha.Name+"-config")
-		ha.Status.Phase = hav1.PhasePending
-		ha.Status.Ready = false
-		// Update status to indicate we're waiting
-		condition := metav1.Condition{
-			Type:               conditionTypeReady,
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: ha.Generation,
-			Reason:             "WaitingForConfiguration",
-			Message:            "Waiting for HomeAssistantConfiguration to be created",
-		}
-		meta.SetStatusCondition(&ha.Status.Conditions, condition)
-		if err := r.Status().Update(ctx, ha); err != nil {
+		if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+			h.Status.Phase = hav1.PhasePending
+			h.Status.Ready = false
+			meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+				Type:               conditionTypeReady,
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: h.Generation,
+				Reason:             "WaitingForConfiguration",
+				Message:            "Waiting for HomeAssistantConfiguration to be created",
+			})
+			return true
+		}); err != nil {
 			log.Error(err, "Failed to update status")
 		}
 		return ctrl.Result{RequeueAfter: time.Second * 5}, nil
@@ -199,6 +221,28 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.reconcileNetworkPolicy(ctx, ha); err != nil {
 		log.Error(err, "Failed to reconcile NetworkPolicy")
 		return r.updateStatusFailed(ctx, ha, err)
+	}
+
+	// Reconcile TLS / cert-manager integration (opt-in). Missing cert-manager is
+	// never an error: it degrades to a status condition + requeue so the rest of
+	// the reconcile (and other resources) keep working. The requeue itself is
+	// deferred until after reconcileExposure so HTTP-only exposure still gets
+	// reconciled while TLS is waiting (e.g. for cert-manager to appear).
+	tlsResult, err := r.reconcileTLS(ctx, ha)
+	if err != nil {
+		log.Error(err, "Failed to reconcile TLS")
+		return r.updateStatusFailed(ctx, ha, err)
+	}
+
+	// Reconcile exposure (Ingress / Gateway API). Best-effort on the cert-manager
+	// side: HTTP exposure works even without cert-manager.
+	if err := r.reconcileExposure(ctx, ha); err != nil {
+		log.Error(err, "Failed to reconcile exposure")
+		return r.updateStatusFailed(ctx, ha, err)
+	}
+
+	if tlsResult.RequeueAfter > 0 {
+		return tlsResult, nil
 	}
 
 	// Reconcile Bootstrap - let bootstrap controller decide when HA is ready
@@ -730,6 +774,33 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 		})
 	}
 
+	// Mount the native TLS Secret (cert-manager-issued or bring-your-own) when
+	// native TLS is enabled and the Secret exists. HA reads the certificate from
+	// /config/ssl via http.ssl_certificate/ssl_key (injected by the configuration
+	// controller). Gating on the Secret's existence keeps the pod from getting
+	// stuck pending on a not-yet-issued certificate.
+	nativeTLSCertHash := ""
+	if n := nativeTLS(ha); n != nil && n.Enabled {
+		tlsSecretName := nativeTLSSecretName(ha)
+		tlsSecret := &corev1.Secret{}
+		getErr := r.Get(ctx, types.NamespacedName{Name: tlsSecretName, Namespace: ha.Namespace}, tlsSecret)
+		if getErr == nil {
+			volumes = append(volumes, corev1.Volume{
+				Name: "ha-native-tls",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{SecretName: tlsSecretName},
+				},
+			})
+			volumeMounts = append(volumeMounts, corev1.VolumeMount{
+				Name:      "ha-native-tls",
+				MountPath: "/config/ssl",
+				ReadOnly:  true,
+			})
+			// Hash the certificate so rotation triggers a rolling restart.
+			nativeTLSCertHash = calculateConfigHash(string(tlsSecret.Data["tls.crt"]))
+		}
+	}
+
 	// Preserve existing pod template annotations from current StatefulSet
 	// This is critical to avoid infinite reconciliation loops when config hash annotations exist
 	existingAnnotations := make(map[string]string)
@@ -743,6 +814,22 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 		}
 	}
 	// If StatefulSet doesn't exist (NotFound error), existingAnnotations will be empty - this is correct
+
+	// Native TLS certificate hash: set when active (rotation → rollout), removed
+	// when native TLS is disabled or the Secret is gone (so the pod reverts).
+	if nativeTLSCertHash != "" {
+		existingAnnotations[nativeTLSHashAnnotationKey] = nativeTLSCertHash
+	} else {
+		delete(existingAnnotations, nativeTLSHashAnnotationKey)
+	}
+
+	// Probes must speak whatever scheme HA is actually serving: once native TLS
+	// is active, HA listens with HTTPS on the same port, and a plain-HTTP probe
+	// would just see a TLS handshake and fail the pod.
+	probeScheme := corev1.URISchemeHTTP
+	if nativeTLSActive(ha) {
+		probeScheme = corev1.URISchemeHTTPS
+	}
 
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -787,7 +874,7 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 									HTTPGet: &corev1.HTTPGetAction{
 										Path:   "/",
 										Port:   intstr.FromInt(defaultPort),
-										Scheme: corev1.URISchemeHTTP,
+										Scheme: probeScheme,
 									},
 								},
 								InitialDelaySeconds: 30,
@@ -801,7 +888,7 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 									HTTPGet: &corev1.HTTPGetAction{
 										Path:   "/",
 										Port:   intstr.FromInt(defaultPort),
-										Scheme: corev1.URISchemeHTTP,
+										Scheme: probeScheme,
 									},
 								},
 								InitialDelaySeconds: 10,
@@ -1041,6 +1128,43 @@ func (r *HomeAssistantReconciler) labelsForHomeAssistant(ha *hav1.HomeAssistant)
 	}
 }
 
+// updateHAStatusWithRetry applies mutate to ha's status and persists it via the
+// status subresource, retrying on resourceVersion conflicts by re-fetching the
+// latest object and replaying mutate against it. Child-resource creation (PVC,
+// StatefulSet, Service, ...) fires several owner-reference watch events in a
+// burst right after a HomeAssistant is created, which can trigger overlapping
+// reconciles; without this retry, the first conflict aborts the whole
+// reconcile and the status write is lost until the next trigger. mutate must
+// be idempotent (it may run more than once) and return whether it changed
+// anything; when it returns false, no write is attempted.
+func (r *HomeAssistantReconciler) updateHAStatusWithRetry(
+	ctx context.Context, ha *hav1.HomeAssistant, mutate func(*hav1.HomeAssistant) bool,
+) error {
+	log := logf.FromContext(ctx)
+	key := client.ObjectKeyFromObject(ha)
+	attempted := false
+	attempts := 0
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		attempts++
+		if attempted {
+			if err := r.Get(ctx, key, ha); err != nil {
+				log.V(1).Info("updateHAStatusWithRetry: re-fetch failed", "attempts", attempts, "error", err)
+				return err
+			}
+		}
+		attempted = true
+		if !mutate(ha) {
+			return nil
+		}
+		err := r.Status().Update(ctx, ha)
+		if err != nil {
+			log.V(1).Info("updateHAStatusWithRetry: Status().Update failed",
+				"attempts", attempts, "isConflict", errors.IsConflict(err), "error", err)
+		}
+		return err
+	})
+}
+
 // updateStatusFailed updates the status when reconciliation fails
 func (r *HomeAssistantReconciler) updateStatusFailed(
 	ctx context.Context,
@@ -1049,19 +1173,19 @@ func (r *HomeAssistantReconciler) updateStatusFailed(
 ) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	ha.Status.Phase = hav1.PhaseFailed
-	ha.Status.Ready = false
-	ha.Status.ObservedGeneration = ha.Generation
-
-	meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-		Type:               conditionTypeReady,
-		Status:             metav1.ConditionFalse,
-		Reason:             "ReconciliationFailed",
-		Message:            reconcileErr.Error(),
-		ObservedGeneration: ha.Generation,
-	})
-
-	if err := r.Status().Update(ctx, ha); err != nil {
+	if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+		h.Status.Phase = hav1.PhaseFailed
+		h.Status.Ready = false
+		h.Status.ObservedGeneration = h.Generation
+		meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+			Type:               conditionTypeReady,
+			Status:             metav1.ConditionFalse,
+			Reason:             "ReconciliationFailed",
+			Message:            reconcileErr.Error(),
+			ObservedGeneration: h.Generation,
+		})
+		return true
+	}); err != nil {
 		log.Error(err, "Failed to update HomeAssistant status")
 		return ctrl.Result{}, err
 	}
@@ -1086,38 +1210,40 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 	if ha.Spec.Version != "" {
 		version = ha.Spec.Version
 	}
-	ha.Status.Version = version
-	ha.Status.ObservedGeneration = ha.Generation
 
-	// Check if StatefulSet is ready
-	if sts.Status.ReadyReplicas > 0 && sts.Status.ReadyReplicas == sts.Status.Replicas {
-		ha.Status.Phase = hav1.PhaseRunning
-		ha.Status.Ready = true
+	if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+		h.Status.Version = version
+		h.Status.ObservedGeneration = h.Generation
 
-		meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-			Type:               conditionTypeReady,
-			Status:             metav1.ConditionTrue,
-			Reason:             "StatefulSetReady",
-			Message:            "Home Assistant is running",
-			ObservedGeneration: ha.Generation,
-		})
-	} else {
-		ha.Status.Phase = hav1.PhasePending
-		ha.Status.Ready = false
+		// Check if StatefulSet is ready
+		if sts.Status.ReadyReplicas > 0 && sts.Status.ReadyReplicas == sts.Status.Replicas {
+			h.Status.Phase = hav1.PhaseRunning
+			h.Status.Ready = true
 
-		meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-			Type:   conditionTypeReady,
-			Status: metav1.ConditionFalse,
-			Reason: "StatefulSetNotReady",
-			Message: fmt.Sprintf(
-				"Waiting for StatefulSet to be ready (%d/%d)",
-				sts.Status.ReadyReplicas, sts.Status.Replicas,
-			),
-			ObservedGeneration: ha.Generation,
-		})
-	}
+			meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+				Type:               conditionTypeReady,
+				Status:             metav1.ConditionTrue,
+				Reason:             "StatefulSetReady",
+				Message:            "Home Assistant is running",
+				ObservedGeneration: h.Generation,
+			})
+		} else {
+			h.Status.Phase = hav1.PhasePending
+			h.Status.Ready = false
 
-	if err := r.Status().Update(ctx, ha); err != nil {
+			meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+				Type:   conditionTypeReady,
+				Status: metav1.ConditionFalse,
+				Reason: "StatefulSetNotReady",
+				Message: fmt.Sprintf(
+					"Waiting for StatefulSet to be ready (%d/%d)",
+					sts.Status.ReadyReplicas, sts.Status.Replicas,
+				),
+				ObservedGeneration: h.Generation,
+			})
+		}
+		return true
+	}); err != nil {
 		log.Error(err, "Failed to update HomeAssistant status")
 		return ctrl.Result{}, err
 	}
@@ -1165,6 +1291,22 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 	if currentHash != desiredHash {
 		log.V(1).Info("Config hash differs",
 			"current", currentHash, "desired", desiredHash)
+		return true
+	}
+
+	// Compare native-tls-hash annotation: catches certificate rotation, TLS
+	// disablement, or Secret removal even when the volume count is unchanged
+	// (same Secret name, new/removed content).
+	currentTLSHash, desiredTLSHash := "", ""
+	if currentAnnotations != nil {
+		currentTLSHash = currentAnnotations[nativeTLSHashAnnotationKey]
+	}
+	if desiredAnnotations != nil {
+		desiredTLSHash = desiredAnnotations[nativeTLSHashAnnotationKey]
+	}
+	if currentTLSHash != desiredTLSHash {
+		log.V(1).Info("Native TLS hash differs",
+			"current", currentTLSHash, "desired", desiredTLSHash)
 		return true
 	}
 
@@ -1233,19 +1375,16 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 		return true
 	}
 
-	// Check init containers (e.g. config-init image/tag changes)
-	currentInit := current.Spec.Template.Spec.InitContainers
-	desiredInit := desired.Spec.Template.Spec.InitContainers
-	if len(currentInit) == 0 {
-		currentInit = nil
-	}
-	if len(desiredInit) == 0 {
-		desiredInit = nil
-	}
-	if !reflect.DeepEqual(currentInit, desiredInit) {
+	// Check init containers (e.g. config-init image/tag changes). Compared
+	// field-by-field like Resources/Probes above rather than via
+	// reflect.DeepEqual: the API server defaults TerminationMessagePath/Policy
+	// (and similar fields) on read-back, which a freshly built in-memory
+	// container never sets — a raw DeepEqual would report a spurious diff on
+	// every single reconcile, forever, never converging.
+	if !initContainersEqual(current.Spec.Template.Spec.InitContainers, desired.Spec.Template.Spec.InitContainers) {
 		log.V(1).Info("InitContainers differ",
-			"current", len(currentInit),
-			"desired", len(desiredInit))
+			"current", len(current.Spec.Template.Spec.InitContainers),
+			"desired", len(desired.Spec.Template.Spec.InitContainers))
 		return true
 	}
 
@@ -1264,6 +1403,35 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 	}
 
 	return false
+}
+
+// initContainersEqual compares init containers on the fields our builders
+// (buildInitContainers/buildUnbanInitContainer) actually set, ignoring fields
+// the API server defaults on read-back (TerminationMessagePath/Policy, etc.)
+// that a freshly built in-memory container never populates.
+func initContainersEqual(current, desired []corev1.Container) bool {
+	if len(current) != len(desired) {
+		return false
+	}
+	for i := range desired {
+		c, d := current[i], desired[i]
+		if c.Name != d.Name || c.Image != d.Image || c.ImagePullPolicy != d.ImagePullPolicy {
+			return false
+		}
+		if !reflect.DeepEqual(c.Command, d.Command) || !reflect.DeepEqual(c.Args, d.Args) {
+			return false
+		}
+		if !reflect.DeepEqual(c.Env, d.Env) {
+			return false
+		}
+		if !reflect.DeepEqual(c.VolumeMounts, d.VolumeMounts) {
+			return false
+		}
+		if !resourcesEqual(c.Resources, d.Resources) {
+			return false
+		}
+	}
+	return true
 }
 
 // resourcesEqual compares two ResourceRequirements

@@ -15,6 +15,8 @@ env:
   K3S_VERSION: v1.36.2-k3s1
   # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
   HA_VERSION: "2026.7.2"
+  # renovate: datasource=github-releases depName=cert-manager/cert-manager
+  CERT_MANAGER_VERSION: v1.21.0
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -112,6 +114,7 @@ jobs:
         env:
           K3D_CLUSTER: e2e-critical
           HA_VERSION: ${{ env.HA_VERSION }}
+          CERT_MANAGER_VERSION: ${{ env.CERT_MANAGER_VERSION }}
         run: |
           make ginkgo
           ./bin/ginkgo run \
@@ -123,9 +126,25 @@ jobs:
         if: failure()
         run: |
           echo "=== Controller Manager Logs ==="
+          # No --tail limit: this suite runs ~15 min with debug-level logging, so a
+          # tail=500 snapshot only captured the last few seconds and missed the
+          # actual failure window. Also write to a file and upload as an artifact
+          # so the full log survives even if the GH Actions UI truncates it.
           kubectl logs -n homeassistant-operator-system \
             -l control-plane=controller-manager \
-            --tail=500 || true
+            --tail=-1 --prefix | tee controller-manager.log || true
+          echo "=== Controller Manager Previous (crashed) Container Logs, if any ==="
+          kubectl logs -n homeassistant-operator-system \
+            -l control-plane=controller-manager \
+            --tail=-1 --prefix --previous 2>/dev/null | tee -a controller-manager.log || true
+
+      - name: Upload controller logs artifact on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: controller-manager-logs
+          path: controller-manager.log
+          retention-days: 7
 
       - name: Collect Kubernetes events on failure
         if: failure()
@@ -133,6 +152,22 @@ jobs:
           echo "=== Kubernetes Events ==="
           kubectl get events --all-namespaces \
             --sort-by=.lastTimestamp || true
+
+      - name: Collect webhook diagnostics on failure
+        if: failure()
+        run: |
+          echo "=== ValidatingWebhookConfiguration (live, incl. caBundle length) ==="
+          kubectl get validatingwebhookconfiguration -o yaml || true
+          echo "=== caBundle byte length per webhook (empty/missing means TLS trust is broken) ==="
+          kubectl get validatingwebhookconfiguration -o json | \
+            jq -r '.items[] | .metadata.name as $n | .webhooks[] | "\($n) / \(.name): caBundle len=\(.clientConfig.caBundle | length // 0)"' || true
+          echo "=== webhook-server-cert Secret (keys + data lengths only) ==="
+          kubectl get secret -n homeassistant-operator-system homeassistant-operator-webhook-server-cert -o json | \
+            jq -r '.data // {} | to_entries[] | "\(.key): \(.value | length) bytes (base64)"' || true
+          echo "=== webhook Service + Endpoints ==="
+          kubectl get svc,endpoints -n homeassistant-operator-system -o wide || true
+          echo "=== apiserver admission webhook dispatch log (dispatcher.go) — every call/failure, unfiltered by volume ==="
+          docker logs k3d-e2e-critical-server-0 2>&1 | grep -E "dispatcher\.go|webhook_duration|failed calling webhook|failing open" || true
 
       - name: Collect resource status on failure
         if: failure()

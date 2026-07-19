@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-manager
+  namespace: system
+spec:
+  template:
+    spec:
+      containers:
+        - name: manager
+          args:
+            - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+          ports:
+            - containerPort: 9443
+              name: webhook-server
+              protocol: TCP
+          env:
+            # The operator self-manages the webhook serving certificate. These
+            # names must match the namePrefixed resources rendered by kustomize.
+            - name: WEBHOOK_SERVICE_NAME
+              value: homeassistant-operator-webhook-service
+            - name: WEBHOOK_SECRET_NAME
+              value: homeassistant-operator-webhook-server-cert
+            - name: WEBHOOK_CONFIG_NAME
+              value: homeassistant-operator-validating-webhook-configuration
+          volumeMounts:
+            - mountPath: /tmp/k8s-webhook-server/serving-certs
+              name: webhook-certs
+              readOnly: true
+      volumes:
+        # Self-managed: cert-controller (in the operator) writes the serving
+        # certificate into this Secret via the API — it never writes local files
+        # directly. The kubelet materializes the Secret's contents onto disk here,
+        # so this MUST be a Secret-backed volume (not emptyDir): cert-controller's
+        # ensureCertsMounted() only waits for the file to appear via that sync, and
+        # on a pod restart where the Secret is already valid ("no cert refresh
+        # needed"), nothing would ever (re)populate an emptyDir, causing the
+        # manager to fail to start ("could not mount certs") on every restart.
+        # `optional: true` avoids a chicken-and-egg startup failure: the operator
+        # itself creates this Secret on first boot (before the rotator/manager
+        # start), so it does not exist yet when the pod is first scheduled.
+        - name: webhook-certs
+          secret:
+            secretName: homeassistant-operator-webhook-server-cert
+            optional: true
