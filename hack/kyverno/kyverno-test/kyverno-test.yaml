@@ -1,0 +1,27 @@
+# Run with: kyverno test hack/kyverno/kyverno-test/
+#
+# Only the negative case (reject an unsigned/nonexistent digest) is covered
+# here — it is deterministic and does not depend on any real published
+# artifact, so it stays stable regardless of when it runs.
+#
+# The positive case (admit a genuinely-signed image) is NOT included as a
+# static fixture: verifyImages needs a real Rekor/registry lookup, and no
+# image is signed by this project until its own release pipeline has run at
+# least once. That path is exercised for real in
+# specs/003-signed-releases/quickstart.md Scenario 4 against an actual
+# published release, not here.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: verify-homeassistant-operator-image-test
+policies:
+  - ../verify-homeassistant-operator-image.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: verify-homeassistant-operator-image
+    rule: verify-signature
+    resources:
+      - unsigned-pod
+    kind: Pod
+    result: fail

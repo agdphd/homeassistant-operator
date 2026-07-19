@@ -1,0 +1,50 @@
+# Sample Kyverno ClusterPolicy for verifying homeassistant-operator images.
+#
+# Validated against Kyverno >= 1.9 (classic kyverno.io/v1 ClusterPolicy API).
+# This file is the source docs/user-guide/signed-releases.md embeds and quotes
+# from — keep both in sync if this file changes.
+#
+# Scope: verifies the operator CONTAINER IMAGE only. Kyverno's verifyImages rule
+# operates on images referenced by Pod specs at admission time; it has no hook
+# into `helm install`/`upgrade`, so it cannot and does not verify the Helm chart
+# OCI artifact. Verify the chart with `cosign verify` directly (see the doc page
+# or hack/verify-signatures.sh).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-homeassistant-operator-image
+  annotations:
+    policies.kyverno.io/title: Verify homeassistant-operator image signature
+    policies.kyverno.io/category: Software Supply Chain
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Requires that any ghcr.io/przemekhys/homeassistant-operator image was signed
+      by the project's own GitHub Actions release workflow (keyless Sigstore
+      signing), rejecting unsigned or tampered images at admission time.
+spec:
+  # Start new adoptions with Audit (log-only) before switching to Enforce.
+  validationFailureAction: Enforce
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: verify-signature
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/przemekhys/homeassistant-operator*"
+          attestors:
+            - count: 1
+              entries:
+                # If this workflow's file path or trigger ref pattern ever
+                # changes (e.g. release.yml renamed/moved), update issuer/subject
+                # here AND in docs/user-guide/signed-releases.md in the same
+                # change — a stale subject here would silently stop matching new
+                # releases instead of failing loudly.
+                - keyless:
+                    issuer: "https://token.actions.githubusercontent.com"
+                    subject: "https://github.com/przemekhys/homeassistant-operator/.github/workflows/release.yml@refs/tags/*"
+                    rekor:
+                      url: https://rekor.sigstore.dev
