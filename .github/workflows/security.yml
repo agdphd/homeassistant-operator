@@ -71,9 +71,13 @@ jobs:
   kyverno-policy-test:
     name: Sample Kyverno Policy Test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
       # go install fails for this module: its go.mod carries replace directives,
       # which Go's module resolver refuses to honor for a non-main module — so
