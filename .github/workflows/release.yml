@@ -225,9 +225,15 @@ jobs:
             --bundle checksums.txt.bundle \
             checksums.txt
 
-      # Tags previously produced no GitHub Release object at all; this job
-      # creates one solely as the carrier for the signed checksums bundle
-      # (idempotent: upload/overwrite if a retry finds it already exists). A
+      # Expected flow: push the tag, then (while earlier jobs are still
+      # running) draft a release for that tag in the GitHub UI — title,
+      # notes, prerelease/latest, discussion — and save it as a DRAFT
+      # (never publish it directly). A draft isn't subject to the
+      # immutable-releases restriction, so this job just attaches the
+      # checksums assets to it and publishes — everything set in the UI
+      # survives untouched. This is a race against the earlier jobs; if the
+      # draft isn't there yet, or the release was published directly instead
+      # of left as a draft, fall back accordingly (see branches below). A
       # failure here fails the job the normal GitHub Actions way — no silent
       # unsigned/partial release.
       - name: Publish GitHub Release with signed checksums
@@ -236,14 +242,54 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME}"
           REPO="${{ github.repository }}"
+
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            gh release upload "$TAG" checksums.txt checksums.txt.bundle \
-              --repo "$REPO" --clobber
+            IS_DRAFT="$(gh release view "$TAG" --repo "$REPO" --json isDraft -q .isDraft)"
+            if [ "$IS_DRAFT" = "true" ]; then
+              # Expected path: draft created via the UI, nothing else to do
+              # but attach assets and publish.
+              gh release upload "$TAG" checksums.txt checksums.txt.bundle --repo "$REPO"
+              gh release edit "$TAG" --repo "$REPO" --draft=false
+            else
+              # Published directly instead of left as a draft. Can't attach
+              # assets to an immutable release, so rebuild it: preserve the
+              # title/notes/prerelease flag (the only fields recoverable
+              # from an already-published release; "latest" and discussion
+              # links, if set, are lost here and cannot be reapplied after
+              # publish either).
+              EXISTING_NAME="$(gh release view "$TAG" --repo "$REPO" --json name -q .name)"
+              EXISTING_BODY="$(gh release view "$TAG" --repo "$REPO" --json body -q .body)"
+              EXISTING_PRERELEASE="$(gh release view "$TAG" --repo "$REPO" --json isPrerelease -q .isPrerelease)"
+              gh release delete "$TAG" --repo "$REPO" --yes
+              TITLE="$TAG"
+              [ -n "$EXISTING_NAME" ] && TITLE="$EXISTING_NAME"
+              NOTES_ARGS=(--generate-notes)
+              [ -n "$EXISTING_BODY" ] && NOTES_ARGS=(--notes "$EXISTING_BODY")
+              PRERELEASE_ARGS=()
+              [ "$EXISTING_PRERELEASE" = "true" ] && PRERELEASE_ARGS=(--prerelease)
+              gh release create "$TAG" \
+                --repo "$REPO" \
+                --title "$TITLE" \
+                "${NOTES_ARGS[@]}" \
+                "${PRERELEASE_ARGS[@]}" \
+                --draft \
+                checksums.txt checksums.txt.bundle
+              gh release edit "$TAG" --repo "$REPO" --draft=false
+            fi
           else
+            # No draft made yet (lost the race, or skipped it for a quick
+            # release) — create fresh. Auto-detect prerelease from the tag's
+            # semver prerelease identifier since there's no draft to read it
+            # from, and it cannot be set after the fact.
+            PRERELEASE_ARGS=()
+            if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+- ]]; then
+              PRERELEASE_ARGS=(--prerelease)
+            fi
             gh release create "$TAG" \
               --repo "$REPO" \
               --title "$TAG" \
               --generate-notes \
+              "${PRERELEASE_ARGS[@]}" \
               checksums.txt checksums.txt.bundle
           fi
 
