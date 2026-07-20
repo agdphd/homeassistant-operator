@@ -3,7 +3,7 @@
 # checks (docs/user-guide/signed-releases.md, CI's smoke-oci job).
 #
 # Verifies, for one published version tag: the container image signature, the
-# Helm chart OCI artifact signature, and the signed checksums.txt bundle
+# Helm chart OCI artifact signature, and the signed checksums.txt.sigstore.json
 # attached to the GitHub Release — all keyless (Sigstore/cosign), pinned to
 # this repository's own release workflow identity.
 #
@@ -49,7 +49,7 @@ WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 gh release download "$VERSION" --repo "$REPO" -p 'checksums.txt*' --dir "$WORKDIR"
 cosign verify-blob \
-  --bundle "$WORKDIR/checksums.txt.bundle" \
+  --bundle "$WORKDIR/checksums.txt.sigstore.json" \
   --certificate-identity-regexp "$IDENTITY_REGEXP" \
   --certificate-oidc-issuer "$ISSUER" \
   "$WORKDIR/checksums.txt"
