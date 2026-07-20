@@ -106,13 +106,20 @@ jobs:
       # key for the maintainer to store or rotate. Signs the manifest-list
       # digest (steps.build.outputs.digest), never a mutable tag, so
       # verification holds regardless of which architecture is pulled.
+      #
+      # --registry-referrers-mode=legacy: ghcr.io supports the OCI 1.1
+      # Referrers API, so cosign's default stores the signature there only.
+      # Kyverno's classic ClusterPolicy verifyImages (confirmed against
+      # v1.18.2) cannot discover a referrers-only signature and reports "no
+      # signatures found" even though `cosign verify` succeeds — so force the
+      # legacy sha256-<digest>.sig tag convention that it does understand.
       - name: Sign container image
         env:
           IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           IMAGE="$(echo "$IMAGE_REF" | tr '[:upper:]' '[:lower:]')"
-          cosign sign --yes "${IMAGE}@${IMAGE_DIGEST}"
+          cosign sign --yes --registry-referrers-mode=legacy "${IMAGE}@${IMAGE_DIGEST}"
 
   helm-publish:
     needs: build-and-push
@@ -222,7 +229,7 @@ jobs:
       - name: Sign checksums manifest
         run: |
           cosign sign-blob --yes \
-            --bundle checksums.txt.bundle \
+            --bundle checksums.txt.sigstore.json \
             checksums.txt
 
       # Expected flow: push the tag, then (while earlier jobs are still
@@ -247,7 +254,7 @@ jobs:
             if [ "$IS_DRAFT" = "true" ]; then
               # Expected path: draft created via the UI, nothing else to do
               # but attach assets and publish.
-              gh release upload "$TAG" checksums.txt checksums.txt.bundle --repo "$REPO"
+              gh release upload "$TAG" checksums.txt checksums.txt.sigstore.json --repo "$REPO"
               gh release edit "$TAG" --repo "$REPO" --draft=false
             else
               # Published directly instead of left as a draft. Do NOT try to
@@ -279,7 +286,7 @@ jobs:
               --title "$TAG" \
               --generate-notes \
               "${PRERELEASE_ARGS[@]}" \
-              checksums.txt checksums.txt.bundle
+              checksums.txt checksums.txt.sigstore.json
           fi
 
   smoke-oci:
@@ -345,7 +352,7 @@ jobs:
           gh release download "${GITHUB_REF_NAME}" --repo "${{ github.repository }}" \
             -p 'checksums.txt*' --clobber
           cosign verify-blob \
-            --bundle checksums.txt.bundle \
+            --bundle checksums.txt.sigstore.json \
             --certificate-identity-regexp "$IDENTITY_REGEXP" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             checksums.txt
