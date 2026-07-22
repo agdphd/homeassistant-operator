@@ -68,26 +68,30 @@ Operator image reference.
 {{- end }}
 
 {{/*
-Webhook resource names.
-
-.fullname is already truncated to 63 chars (the Kubernetes Service DNS-label
-limit), but appending a suffix afterwards can push the result back over that
-limit for long release names/namespaces. Truncate again after concatenation,
-and share these definitions between webhook.yaml and deployment.yaml so the
+Webhook resource names, shared between webhook.yaml and deployment.yaml so the
 operator always looks up the exact same names Helm actually rendered.
+
+Only the Service name is capped at 63 chars: unlike Secret, the cert-manager
+Certificate/Issuer CRDs, and ValidatingWebhookConfiguration (all validated as a
+generic 253-char DNS subdomain), a Kubernetes Service name is validated as a
+63-char DNS-1035 label, since it becomes a DNS label in the cluster
+(<service>.<namespace>.svc). .fullname is already truncated to 63, but
+appending a suffix afterwards can push the Service name back over that limit
+for long release names/namespaces, so it is truncated again after
+concatenation.
 */}}
 {{- define "homeassistant-operator.webhookServiceName" -}}
 {{- printf "%s-webhook-service" (include "homeassistant-operator.fullname" .) | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{- define "homeassistant-operator.webhookCertSecretName" -}}
-{{- printf "%s-webhook-server-cert" (include "homeassistant-operator.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-webhook-server-cert" (include "homeassistant-operator.fullname" .) }}
 {{- end }}
 
 {{- define "homeassistant-operator.webhookCertificateName" -}}
-{{- printf "%s-webhook-serving-cert" (include "homeassistant-operator.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-webhook-serving-cert" (include "homeassistant-operator.fullname" .) }}
 {{- end }}
 
 {{- define "homeassistant-operator.validatingWebhookConfigurationName" -}}
-{{- printf "%s-validating-webhook-configuration" (include "homeassistant-operator.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-validating-webhook-configuration" (include "homeassistant-operator.fullname" .) }}
 {{- end }}
