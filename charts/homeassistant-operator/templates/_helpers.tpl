@@ -66,3 +66,28 @@ Operator image reference.
 {{- $tag := .Values.image.tag | default .Chart.AppVersion }}
 {{- printf "%s:%s" .Values.image.repository $tag }}
 {{- end }}
+
+{{/*
+Webhook resource names.
+
+.fullname is already truncated to 63 chars (the Kubernetes Service DNS-label
+limit), but appending a suffix afterwards can push the result back over that
+limit for long release names/namespaces. Truncate again after concatenation,
+and share these definitions between webhook.yaml and deployment.yaml so the
+operator always looks up the exact same names Helm actually rendered.
+*/}}
+{{- define "homeassistant-operator.webhookServiceName" -}}
+{{- printf "%s-webhook-service" (include "homeassistant-operator.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "homeassistant-operator.webhookCertSecretName" -}}
+{{- printf "%s-webhook-server-cert" (include "homeassistant-operator.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "homeassistant-operator.webhookCertificateName" -}}
+{{- printf "%s-webhook-serving-cert" (include "homeassistant-operator.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "homeassistant-operator.validatingWebhookConfigurationName" -}}
+{{- printf "%s-validating-webhook-configuration" (include "homeassistant-operator.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}

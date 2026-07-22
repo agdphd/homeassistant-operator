@@ -106,20 +106,13 @@ jobs:
       # key for the maintainer to store or rotate. Signs the manifest-list
       # digest (steps.build.outputs.digest), never a mutable tag, so
       # verification holds regardless of which architecture is pulled.
-      #
-      # --registry-referrers-mode=legacy: ghcr.io supports the OCI 1.1
-      # Referrers API, so cosign's default stores the signature there only.
-      # Kyverno's classic ClusterPolicy verifyImages (confirmed against
-      # v1.18.2) cannot discover a referrers-only signature and reports "no
-      # signatures found" even though `cosign verify` succeeds — so force the
-      # legacy sha256-<digest>.sig tag convention that it does understand.
       - name: Sign container image
         env:
           IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           IMAGE="$(echo "$IMAGE_REF" | tr '[:upper:]' '[:lower:]')"
-          cosign sign --yes --registry-referrers-mode=legacy "${IMAGE}@${IMAGE_DIGEST}"
+          cosign sign --yes "${IMAGE}@${IMAGE_DIGEST}"
 
   helm-publish:
     needs: build-and-push

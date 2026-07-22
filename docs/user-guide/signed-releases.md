@@ -141,25 +141,7 @@ cosign verify \
   ghcr.io/przemekhys/charts/homeassistant-operator@<chart-digest>
 ```
 
-!!! note "No `oci://` prefix here"
-    That scheme is Helm-specific syntax for `helm install`/`push`. `cosign`
-    expects a bare `registry/repo@digest` — passing `oci://...` makes it try to
-    resolve `oci` itself as a registry hostname and fail.
 
 This check is independent of Kyverno and of any cluster — it works anywhere
 `cosign` can reach the OCI registry, for example as a preflight step in a GitOps
 pipeline before `helm install`/`upgrade` ever runs.
-
-## Scope and limitations
-
-!!! warning "Kyverno enforcement covers the container image only"
-    Kyverno's `verifyImages` rule operates on images referenced by Pod specs at
-    admission time — it has no hook into `helm install`/`upgrade`, so it cannot and
-    does not verify the Helm chart OCI artifact. Verify the chart manually with the
-    command above.
-
-!!! info "The default installation is unaffected"
-    Whether or not Kyverno is present, or whether you verify anything at all,
-    `helm install`/`upgrade` of this chart works exactly as before this feature
-    shipped. Signature verification is entirely opt-in — nothing here is required
-    for the operator to run.

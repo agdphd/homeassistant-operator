@@ -66,3 +66,14 @@ tests:
       - equal:
           path: webhooks[0].failurePolicy
           value: Fail
+
+  - it: webhook Service name stays within the 63-char DNS-label limit for long release names
+    release:
+      name: a-very-long-release-name-for-testing-long-names
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Service
+      - matchRegex:
+          path: metadata.name
+          pattern: "^.{1,63}$"

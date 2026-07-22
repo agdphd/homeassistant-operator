@@ -62,11 +62,11 @@ spec:
             {{- end }}
             {{- if .Values.webhook.enabled }}
             - name: WEBHOOK_SERVICE_NAME
-              value: {{ include "homeassistant-operator.fullname" . }}-webhook-service
+              value: {{ include "homeassistant-operator.webhookServiceName" . }}
             - name: WEBHOOK_SECRET_NAME
-              value: {{ include "homeassistant-operator.fullname" . }}-webhook-server-cert
+              value: {{ include "homeassistant-operator.webhookCertSecretName" . }}
             - name: WEBHOOK_CONFIG_NAME
-              value: {{ include "homeassistant-operator.fullname" . }}-validating-webhook-configuration
+              value: {{ include "homeassistant-operator.validatingWebhookConfigurationName" . }}
             - name: WEBHOOK_SELF_MANAGE_CERT
               value: {{ not .Values.webhook.certManager.enabled | quote }}
             {{- end }}
@@ -113,7 +113,7 @@ spec:
         # the rotator/manager start), so it does not exist yet on first install.
         - name: webhook-certs
           secret:
-            secretName: {{ include "homeassistant-operator.fullname" . }}-webhook-server-cert
+            secretName: {{ include "homeassistant-operator.webhookCertSecretName" . }}
             {{- if not .Values.webhook.certManager.enabled }}
             optional: true
             {{- end }}
