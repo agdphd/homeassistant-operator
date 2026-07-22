@@ -1,10 +1,10 @@
 {{- if .Values.webhook.enabled }}
 {{- $fullname := include "homeassistant-operator.fullname" . }}
 {{- $ns := .Release.Namespace }}
-{{- $svcName := printf "%s-webhook-service" $fullname }}
-{{- $certSecret := printf "%s-webhook-server-cert" $fullname }}
-{{- $certName := printf "%s-webhook-serving-cert" $fullname }}
-{{- $vwcName := printf "%s-validating-webhook-configuration" $fullname }}
+{{- $svcName := include "homeassistant-operator.webhookServiceName" . }}
+{{- $certSecret := include "homeassistant-operator.webhookCertSecretName" . }}
+{{- $certName := include "homeassistant-operator.webhookCertificateName" . }}
+{{- $vwcName := include "homeassistant-operator.validatingWebhookConfigurationName" . }}
 apiVersion: v1
 kind: Service
 metadata:

@@ -66,3 +66,42 @@ tests:
       - equal:
           path: webhooks[0].failurePolicy
           value: Fail
+
+  - it: webhook Service name stays within the 63-char DNS-label limit for long release names
+    release:
+      name: a-very-long-release-name-for-testing-long-names
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: Service
+      - matchRegex:
+          path: metadata.name
+          pattern: "^.{1,63}$"
+
+  - it: long release name still produces a Service name that Certificate and webhook config agree on (cert-manager mode)
+    set:
+      webhook.certManager.enabled: true
+    release:
+      name: a-very-long-release-name-for-testing-long-names
+    asserts:
+      - documentIndex: 0
+        isKind:
+            of: Service
+      - documentIndex: 0
+        equal:
+            path: metadata.name
+            value: a-very-long-release-name-for-testing-long-names-homeassistant-o
+      - documentIndex: 2
+        isKind:
+            of: Certificate
+      - documentIndex: 2
+        equal:
+            path: spec.dnsNames[0]
+            value: a-very-long-release-name-for-testing-long-names-homeassistant-o.NAMESPACE.svc
+      - documentIndex: 3
+        isKind:
+            of: ValidatingWebhookConfiguration
+      - documentIndex: 3
+        equal:
+            path: webhooks[0].clientConfig.service.name
+            value: a-very-long-release-name-for-testing-long-names-homeassistant-o
