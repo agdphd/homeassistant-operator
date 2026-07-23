@@ -1,0 +1,68 @@
+{{- /*
+The self-managed webhook serving certificate (cert-controller) always creates/updates a
+Secret in the operator's own namespace and patches the cluster-scoped
+ValidatingWebhookConfiguration to inject its CA bundle — regardless of which namespaces
+are being watched for HomeAssistant CRs via watchNamespaces. When watchNamespaces is set,
+the broad manager-role ClusterRoleBinding is intentionally not created (least-privilege
+mode, see clusterrolebinding.yaml) and the operator's own namespace is not automatically
+part of watchNamespaces (see values.yaml) — so without these two narrowly scoped bindings
+the ServiceAccount cannot create the Secret and the operator crash-loops on startup.
+Skipped when cert-manager provides the serving certificate instead
+(webhook.certManager.enabled): cert-manager's own cainjector manages the Secret and CA
+injection using its own ServiceAccount, not this one.
+*/}}
+{{- if and .Values.webhook.enabled (not .Values.webhook.certManager.enabled) (not (empty .Values.watchNamespaces)) }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "homeassistant-operator.fullname" . }}-webhook-cert-role
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "homeassistant-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get", "list", "watch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "homeassistant-operator.fullname" . }}-webhook-cert-rolebinding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "homeassistant-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "homeassistant-operator.fullname" . }}-webhook-cert-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "homeassistant-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "homeassistant-operator.fullname" . }}-webhook-cert-clusterrole
+  labels:
+    {{- include "homeassistant-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "homeassistant-operator.fullname" . }}-webhook-cert-clusterrolebinding
+  labels:
+    {{- include "homeassistant-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "homeassistant-operator.fullname" . }}-webhook-cert-clusterrole
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "homeassistant-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

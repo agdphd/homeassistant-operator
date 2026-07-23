@@ -137,6 +137,7 @@ func main() {
 	// WATCH_NAMESPACES: comma-separated list of namespaces to watch.
 	// When empty, operator watches all namespaces (requires ClusterRoleBinding).
 	// When set, operator watches only listed namespaces (RoleBindings per namespace sufficient).
+	operatorNamespace := os.Getenv("OPERATOR_NAMESPACE")
 	var defaultNamespaces map[string]cache.Config
 	if watchNS := os.Getenv("WATCH_NAMESPACES"); watchNS != "" {
 		defaultNamespaces = make(map[string]cache.Config)
@@ -149,6 +150,13 @@ func main() {
 			setupLog.Error(nil, "WATCH_NAMESPACES is set but contains no valid namespace "+
 				"entries after trimming; refusing to start with empty scope")
 			os.Exit(1)
+		}
+		// The self-managed webhook serving-cert Secret (and its ValidatingWebhookConfiguration
+		// CA injection) always lives in the operator's own namespace, regardless of which
+		// namespaces are watched for HomeAssistant CRs — without this, cert-controller's
+		// informer for that Secret is never started even when RBAC allows the access.
+		if operatorNamespace != "" {
+			defaultNamespaces[operatorNamespace] = cache.Config{}
 		}
 		setupLog.Info("watching specific namespaces", "namespaces", watchNS)
 	} else {
@@ -179,7 +187,7 @@ func main() {
 	// Self-managed webhook needs the operator namespace (to write the Secret and
 	// patch the ValidatingWebhookConfiguration). When it is unset — typically local
 	// `make run` — skip the webhook instead of failing, so out-of-cluster dev works.
-	if enableWebhooks && webhookSelfManageCert && os.Getenv("OPERATOR_NAMESPACE") == "" {
+	if enableWebhooks && webhookSelfManageCert && operatorNamespace == "" {
 		setupLog.Info("OPERATOR_NAMESPACE not set; disabling the validating webhook " +
 			"(set ENABLE_WEBHOOKS=false to silence, or run in-cluster)")
 		enableWebhooks = false
@@ -386,7 +394,7 @@ func main() {
 	if enableWebhooks {
 		setupFinished := make(chan struct{})
 		if webhookSelfManageCert {
-			ns := os.Getenv("OPERATOR_NAMESPACE")
+			ns := operatorNamespace
 			svc := getenvOr("WEBHOOK_SERVICE_NAME", "homeassistant-operator-webhook-service")
 			secretName := getenvOr("WEBHOOK_SECRET_NAME", "homeassistant-operator-webhook-server-cert")
 			vwcName := getenvOr("WEBHOOK_CONFIG_NAME", "homeassistant-operator-validating-webhook-configuration")
