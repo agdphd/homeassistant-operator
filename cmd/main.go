@@ -137,6 +137,7 @@ func main() {
 	// WATCH_NAMESPACES: comma-separated list of namespaces to watch.
 	// When empty, operator watches all namespaces (requires ClusterRoleBinding).
 	// When set, operator watches only listed namespaces (RoleBindings per namespace sufficient).
+	operatorNamespace := os.Getenv("OPERATOR_NAMESPACE")
 	var defaultNamespaces map[string]cache.Config
 	if watchNS := os.Getenv("WATCH_NAMESPACES"); watchNS != "" {
 		defaultNamespaces = make(map[string]cache.Config)
@@ -153,6 +154,25 @@ func main() {
 		setupLog.Info("watching specific namespaces", "namespaces", watchNS)
 	} else {
 		setupLog.Info("watching all namespaces (set WATCH_NAMESPACES to restrict)")
+	}
+
+	// The self-managed webhook serving-cert Secret (and its ValidatingWebhookConfiguration
+	// CA injection) always lives in the operator's own namespace, regardless of which
+	// namespaces are watched for HomeAssistant CRs. Scope this to a Secret-only ByObject
+	// override rather than adding it to defaultNamespaces, which would broaden the cache
+	// to every namespaced type (StatefulSets, ConfigMaps, HA CRDs, ...) in that namespace.
+	var cacheByObject map[client.Object]cache.ByObject
+	if defaultNamespaces != nil && operatorNamespace != "" {
+		if _, ok := defaultNamespaces[operatorNamespace]; !ok {
+			secretNamespaces := make(map[string]cache.Config, len(defaultNamespaces)+1)
+			for ns, cfg := range defaultNamespaces {
+				secretNamespaces[ns] = cfg
+			}
+			secretNamespaces[operatorNamespace] = cache.Config{}
+			cacheByObject = map[client.Object]cache.ByObject{
+				&corev1.Secret{}: {Namespaces: secretNamespaces},
+			}
+		}
 	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
@@ -179,7 +199,7 @@ func main() {
 	// Self-managed webhook needs the operator namespace (to write the Secret and
 	// patch the ValidatingWebhookConfiguration). When it is unset — typically local
 	// `make run` — skip the webhook instead of failing, so out-of-cluster dev works.
-	if enableWebhooks && webhookSelfManageCert && os.Getenv("OPERATOR_NAMESPACE") == "" {
+	if enableWebhooks && webhookSelfManageCert && operatorNamespace == "" {
 		setupLog.Info("OPERATOR_NAMESPACE not set; disabling the validating webhook " +
 			"(set ENABLE_WEBHOOKS=false to silence, or run in-cluster)")
 		enableWebhooks = false
@@ -286,7 +306,7 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "a26346d9.homeassistant.io",
-		Cache:                  cache.Options{DefaultNamespaces: defaultNamespaces},
+		Cache:                  cache.Options{DefaultNamespaces: defaultNamespaces, ByObject: cacheByObject},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -386,7 +406,7 @@ func main() {
 	if enableWebhooks {
 		setupFinished := make(chan struct{})
 		if webhookSelfManageCert {
-			ns := os.Getenv("OPERATOR_NAMESPACE")
+			ns := operatorNamespace
 			svc := getenvOr("WEBHOOK_SERVICE_NAME", "homeassistant-operator-webhook-service")
 			secretName := getenvOr("WEBHOOK_SECRET_NAME", "homeassistant-operator-webhook-server-cert")
 			vwcName := getenvOr("WEBHOOK_CONFIG_NAME", "homeassistant-operator-validating-webhook-configuration")

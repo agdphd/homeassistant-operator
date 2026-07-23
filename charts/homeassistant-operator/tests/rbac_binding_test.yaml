@@ -50,3 +50,93 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: "watchNamespaces contains a blank entry — each item must be a non-empty namespace name"
+
+  - it: grants the operator's own namespace webhook-cert RBAC when watchNamespaces excludes it (self-managed cert, default)
+    templates:
+      - webhook-rbac.yaml
+    set:
+      watchNamespaces:
+        - homeassistant
+    asserts:
+      - hasDocuments:
+          count: 4
+      - documentIndex: 0
+        isKind:
+            of: Role
+      - documentIndex: 0
+        equal:
+            path: metadata.namespace
+            value: NAMESPACE
+      - documentIndex: 0
+        equal:
+            path: rules[0]
+            value:
+              apiGroups: [""]
+              resources: ["secrets"]
+              verbs: ["create", "get", "list", "watch", "update"]
+      - documentIndex: 1
+        isKind:
+            of: RoleBinding
+      - documentIndex: 1
+        equal:
+            path: roleRef
+            value:
+              apiGroup: rbac.authorization.k8s.io
+              kind: Role
+              name: RELEASE-NAME-homeassistant-operator-webhook-cert-role
+      - documentIndex: 1
+        equal:
+            path: subjects[0]
+            value:
+              kind: ServiceAccount
+              name: RELEASE-NAME-homeassistant-operator
+              namespace: NAMESPACE
+      - documentIndex: 2
+        isKind:
+            of: ClusterRole
+      - documentIndex: 2
+        equal:
+            path: rules[0]
+            value:
+              apiGroups: ["admissionregistration.k8s.io"]
+              resources: ["validatingwebhookconfigurations"]
+              verbs: ["get", "list", "watch", "update", "patch"]
+      - documentIndex: 3
+        isKind:
+            of: ClusterRoleBinding
+      - documentIndex: 3
+        equal:
+            path: roleRef
+            value:
+              apiGroup: rbac.authorization.k8s.io
+              kind: ClusterRole
+              name: RELEASE-NAME-homeassistant-operator-webhook-cert-clusterrole
+
+  - it: skips webhook-cert RBAC when watchNamespaces is empty (ClusterRoleBinding already covers it)
+    templates:
+      - webhook-rbac.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: skips webhook-cert RBAC when cert-manager provides the serving certificate
+    templates:
+      - webhook-rbac.yaml
+    set:
+      watchNamespaces:
+        - homeassistant
+      webhook.certManager.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: skips webhook-cert RBAC when the webhook is disabled
+    templates:
+      - webhook-rbac.yaml
+    set:
+      watchNamespaces:
+        - homeassistant
+      webhook.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
