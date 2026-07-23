@@ -151,16 +151,28 @@ func main() {
 				"entries after trimming; refusing to start with empty scope")
 			os.Exit(1)
 		}
-		// The self-managed webhook serving-cert Secret (and its ValidatingWebhookConfiguration
-		// CA injection) always lives in the operator's own namespace, regardless of which
-		// namespaces are watched for HomeAssistant CRs — without this, cert-controller's
-		// informer for that Secret is never started even when RBAC allows the access.
-		if operatorNamespace != "" {
-			defaultNamespaces[operatorNamespace] = cache.Config{}
-		}
 		setupLog.Info("watching specific namespaces", "namespaces", watchNS)
 	} else {
 		setupLog.Info("watching all namespaces (set WATCH_NAMESPACES to restrict)")
+	}
+
+	// The self-managed webhook serving-cert Secret (and its ValidatingWebhookConfiguration
+	// CA injection) always lives in the operator's own namespace, regardless of which
+	// namespaces are watched for HomeAssistant CRs. Scope this to a Secret-only ByObject
+	// override rather than adding it to defaultNamespaces, which would broaden the cache
+	// to every namespaced type (StatefulSets, ConfigMaps, HA CRDs, ...) in that namespace.
+	var cacheByObject map[client.Object]cache.ByObject
+	if defaultNamespaces != nil && operatorNamespace != "" {
+		if _, ok := defaultNamespaces[operatorNamespace]; !ok {
+			secretNamespaces := make(map[string]cache.Config, len(defaultNamespaces)+1)
+			for ns, cfg := range defaultNamespaces {
+				secretNamespaces[ns] = cfg
+			}
+			secretNamespaces[operatorNamespace] = cache.Config{}
+			cacheByObject = map[client.Object]cache.ByObject{
+				&corev1.Secret{}: {Namespaces: secretNamespaces},
+			}
+		}
 	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
@@ -294,7 +306,7 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "a26346d9.homeassistant.io",
-		Cache:                  cache.Options{DefaultNamespaces: defaultNamespaces},
+		Cache:                  cache.Options{DefaultNamespaces: defaultNamespaces, ByObject: cacheByObject},
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly

@@ -67,15 +67,50 @@ tests:
         equal:
             path: metadata.namespace
             value: NAMESPACE
+      - documentIndex: 0
+        equal:
+            path: rules[0]
+            value:
+              apiGroups: [""]
+              resources: ["secrets"]
+              verbs: ["create", "get", "list", "watch", "update"]
       - documentIndex: 1
         isKind:
             of: RoleBinding
+      - documentIndex: 1
+        equal:
+            path: roleRef
+            value:
+              apiGroup: rbac.authorization.k8s.io
+              kind: Role
+              name: RELEASE-NAME-homeassistant-operator-webhook-cert-role
+      - documentIndex: 1
+        equal:
+            path: subjects[0]
+            value:
+              kind: ServiceAccount
+              name: RELEASE-NAME-homeassistant-operator
+              namespace: NAMESPACE
       - documentIndex: 2
         isKind:
             of: ClusterRole
+      - documentIndex: 2
+        equal:
+            path: rules[0]
+            value:
+              apiGroups: ["admissionregistration.k8s.io"]
+              resources: ["validatingwebhookconfigurations"]
+              verbs: ["get", "list", "watch", "update", "patch"]
       - documentIndex: 3
         isKind:
             of: ClusterRoleBinding
+      - documentIndex: 3
+        equal:
+            path: roleRef
+            value:
+              apiGroup: rbac.authorization.k8s.io
+              kind: ClusterRole
+              name: RELEASE-NAME-homeassistant-operator-webhook-cert-clusterrole
 
   - it: skips webhook-cert RBAC when watchNamespaces is empty (ClusterRoleBinding already covers it)
     templates:
