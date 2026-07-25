@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.2.0] - 2026-07-24
+
 ### Added
 
 - **Helm chart is now generated from a single source of truth** — the chart's static parts (all 10 CRDs and the operator RBAC rules) are generated from the authoritative Kustomize sources under `config/` via `make helm-sync`, so the Helm and Kustomize install paths can no longer physically drift. New CI gates (`make helm-verify`) block a PR that leaves the chart out of sync (`verify-chart-sync`), that lets the two render paths diverge on RBAC / securityContext / PSA labels (`verify-equivalence`), or that broadens the operator's RBAC versus the previous release without an explicit justification in `hack/rbac-allowlist.txt` (`verify-rbac-upgrade`, enforcing the minimal-RBAC principle).
@@ -364,7 +366,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Primary: k3s on Raspberry Pi 4/5 (ARM64)
 - Also supported: Any Kubernetes cluster (AMD64/ARM64)
 
-[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v1.2.0...HEAD
+[v1.2.0]: https://github.com/przemekhys/homeassistant-operator/compare/v1.1.0...v1.2.0
 [v1.1.0]: https://github.com/przemekhys/homeassistant-operator/compare/v1.0.1...v1.1.0
 [v1.0.1]: https://github.com/przemekhys/homeassistant-operator/compare/v1.0.0...v1.0.1
 [v1.0.0]: https://github.com/przemekhys/homeassistant-operator/compare/v0.10.1...v1.0.0
