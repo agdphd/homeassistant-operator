@@ -831,6 +831,64 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 		probeScheme = corev1.URISchemeHTTPS
 	}
 
+	// Community repository sidecar: only injected when at least one
+	// HomeAssistantCommunityRepository actually targets this instance — the stable
+	// HomeAssistant CRD carries no footprint from this alpha feature unless it is
+	// in use.
+	containers := []corev1.Container{
+		{
+			Name:            "home-assistant",
+			Image:           fmt.Sprintf("%s:%s", image, version),
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Ports: []corev1.ContainerPort{
+				{
+					Name:          "http",
+					ContainerPort: defaultPort,
+					Protocol:      corev1.ProtocolTCP,
+				},
+			},
+			Env: []corev1.EnvVar{
+				{
+					Name:  "TZ",
+					Value: timezone,
+				},
+			},
+			VolumeMounts: volumeMounts,
+			LivenessProbe: &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{
+						Path:   "/",
+						Port:   intstr.FromInt(defaultPort),
+						Scheme: probeScheme,
+					},
+				},
+				InitialDelaySeconds: 30,
+				PeriodSeconds:       10,
+				TimeoutSeconds:      5,
+				SuccessThreshold:    1,
+				FailureThreshold:    3,
+			},
+			ReadinessProbe: &corev1.Probe{
+				ProbeHandler: corev1.ProbeHandler{
+					HTTPGet: &corev1.HTTPGetAction{
+						Path:   "/",
+						Port:   intstr.FromInt(defaultPort),
+						Scheme: probeScheme,
+					},
+				},
+				InitialDelaySeconds: 10,
+				PeriodSeconds:       5,
+				TimeoutSeconds:      3,
+				SuccessThreshold:    1,
+				FailureThreshold:    3,
+			},
+		},
+	}
+	if hasCommunityRepositories(ctx, r.Client, ha) {
+		containers = append(containers, r.buildCommunityRepositorySidecar(ha))
+		volumes = append(volumes, buildCommunityRepositoryConfigMapVolume(ha))
+	}
+
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      ha.Name,
@@ -849,57 +907,9 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 					Annotations: existingAnnotations,
 				},
 				Spec: corev1.PodSpec{
-					InitContainers: r.buildInitContainers(ha),
-					Containers: []corev1.Container{
-						{
-							Name:            "home-assistant",
-							Image:           fmt.Sprintf("%s:%s", image, version),
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							Ports: []corev1.ContainerPort{
-								{
-									Name:          "http",
-									ContainerPort: defaultPort,
-									Protocol:      corev1.ProtocolTCP,
-								},
-							},
-							Env: []corev1.EnvVar{
-								{
-									Name:  "TZ",
-									Value: timezone,
-								},
-							},
-							VolumeMounts: volumeMounts,
-							LivenessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{
-									HTTPGet: &corev1.HTTPGetAction{
-										Path:   "/",
-										Port:   intstr.FromInt(defaultPort),
-										Scheme: probeScheme,
-									},
-								},
-								InitialDelaySeconds: 30,
-								PeriodSeconds:       10,
-								TimeoutSeconds:      5,
-								SuccessThreshold:    1,
-								FailureThreshold:    3,
-							},
-							ReadinessProbe: &corev1.Probe{
-								ProbeHandler: corev1.ProbeHandler{
-									HTTPGet: &corev1.HTTPGetAction{
-										Path:   "/",
-										Port:   intstr.FromInt(defaultPort),
-										Scheme: probeScheme,
-									},
-								},
-								InitialDelaySeconds: 10,
-								PeriodSeconds:       5,
-								TimeoutSeconds:      3,
-								SuccessThreshold:    1,
-								FailureThreshold:    3,
-							},
-						},
-					},
-					Volumes: volumes,
+					InitContainers: r.buildInitContainers(ctx, ha),
+					Containers:     containers,
+					Volumes:        volumes,
 				},
 			},
 		},
@@ -1260,14 +1270,17 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 	log := logf.Log.WithName("needsUpdate")
 
-	// Ensure containers exist
-	if len(current.Spec.Template.Spec.Containers) == 0 || len(desired.Spec.Template.Spec.Containers) == 0 {
-		if len(current.Spec.Template.Spec.Containers) != len(desired.Spec.Template.Spec.Containers) {
-			log.V(1).Info("Container count differs",
-				"current", len(current.Spec.Template.Spec.Containers),
-				"desired", len(desired.Spec.Template.Spec.Containers))
-			return true
-		}
+	// Ensure containers exist, and catch a changed container count up front (e.g.
+	// the community-repository sidecar being added/removed) — the field-by-field
+	// comparisons below only ever look at Containers[0] plus any extra containers
+	// past it, so a bare count mismatch would otherwise slip through undetected.
+	if len(current.Spec.Template.Spec.Containers) != len(desired.Spec.Template.Spec.Containers) {
+		log.V(1).Info("Container count differs",
+			"current", len(current.Spec.Template.Spec.Containers),
+			"desired", len(desired.Spec.Template.Spec.Containers))
+		return true
+	}
+	if len(desired.Spec.Template.Spec.Containers) == 0 {
 		return false
 	}
 
@@ -1385,6 +1398,16 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 		log.V(1).Info("InitContainers differ",
 			"current", len(current.Spec.Template.Spec.InitContainers),
 			"desired", len(desired.Spec.Template.Spec.InitContainers))
+		return true
+	}
+
+	// Check any containers beyond the main "home-assistant" one (currently just
+	// the optional community-repository sidecar). The count check above already
+	// catches it being added/removed; this catches its image/command/env/mounts
+	// changing in place. initContainersEqual's comparison isn't init-container
+	// specific — it just compares corev1.Container fields our builders set.
+	if !initContainersEqual(current.Spec.Template.Spec.Containers[1:], desired.Spec.Template.Spec.Containers[1:]) {
+		log.V(1).Info("Additional containers (e.g. community-repository sidecar) differ")
 		return true
 	}
 
@@ -1574,8 +1597,11 @@ func (r *HomeAssistantReconciler) findHomeAssistantForConfigMap(
 }
 
 // buildInitContainers returns the init containers for the Home Assistant pod.
-// Order matters: config-init runs first, then unban-operator-ip (if POD_IP is set).
-func (r *HomeAssistantReconciler) buildInitContainers(ha *hav1.HomeAssistant) []corev1.Container {
+// Order matters: config-init runs first, then unban-operator-ip (if POD_IP is set),
+// then community-repository-init (if any HomeAssistantCommunityRepository targets
+// this instance — the "integration" category needs its files in place before HA's
+// Python process starts importing components).
+func (r *HomeAssistantReconciler) buildInitContainers(ctx context.Context, ha *hav1.HomeAssistant) []corev1.Container {
 	repo := defaultInitRepository
 	img := defaultInitImage
 	tag := defaultInitTag
@@ -1618,6 +1644,10 @@ func (r *HomeAssistantReconciler) buildInitContainers(ha *hav1.HomeAssistant) []
 
 	if os.Getenv("POD_IP") != "" {
 		containers = append(containers, r.buildUnbanInitContainer(ha))
+	}
+
+	if hasCommunityRepositories(ctx, r.Client, ha) {
+		containers = append(containers, r.buildCommunityRepositoryInitContainer(ha))
 	}
 
 	return containers

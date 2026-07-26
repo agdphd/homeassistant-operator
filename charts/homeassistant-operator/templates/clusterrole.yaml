@@ -107,6 +107,7 @@ rules:
   resources:
     - homeassistantareas
     - homeassistantautomations
+    - homeassistantcommunityrepositories
     - homeassistantconfigurations
     - homeassistantfloors
     - homeassistantintegrations
@@ -127,6 +128,7 @@ rules:
   resources:
     - homeassistantareas/finalizers
     - homeassistantautomations/finalizers
+    - homeassistantcommunityrepositories/finalizers
     - homeassistantconfigurations/finalizers
     - homeassistantfloors/finalizers
     - homeassistantintegrations/finalizers
@@ -142,6 +144,7 @@ rules:
   resources:
     - homeassistantareas/status
     - homeassistantautomations/status
+    - homeassistantcommunityrepositories/status
     - homeassistantconfigurations/status
     - homeassistantfloors/status
     - homeassistantintegrations/status

@@ -48,6 +48,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
+	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
+	"github.com/przemekhys/homeassistant-operator/internal/communityrepo"
 	"github.com/przemekhys/homeassistant-operator/internal/controller"
 	"github.com/przemekhys/homeassistant-operator/internal/version"
 	webhookhav1 "github.com/przemekhys/homeassistant-operator/internal/webhook/v1"
@@ -63,6 +65,7 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(hav1.AddToScheme(scheme))
+	utilruntime.Must(hav1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -154,6 +157,16 @@ func main() {
 		setupLog.Info("watching specific namespaces", "namespaces", watchNS)
 	} else {
 		setupLog.Info("watching all namespaces (set WATCH_NAMESPACES to restrict)")
+	}
+
+	// COMMUNITY_REPOSITORY_CODELOAD_BASE_URL: redirects the HomeAssistantCommunityRepository
+	// controller's GitHub tarball fetch (and the matching env var passed to the
+	// generated init-container/sidecar) away from the real codeload.github.com.
+	// Production deployments never set this; it exists solely so E2E tests can
+	// point it at an in-cluster fixture server.
+	if codeloadBaseURL := os.Getenv("COMMUNITY_REPOSITORY_CODELOAD_BASE_URL"); codeloadBaseURL != "" {
+		communityrepo.CodeloadBaseURL = codeloadBaseURL
+		setupLog.Info("overriding community repository codeload base URL (test-only)", "url", codeloadBaseURL)
 	}
 
 	// The self-managed webhook serving-cert Secret (and its ValidatingWebhookConfiguration
@@ -397,6 +410,14 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantArea")
+		os.Exit(1)
+	}
+	if err := (&controller.HomeAssistantCommunityRepositoryReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorder("homeassistantcommunityrepository-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HomeAssistantCommunityRepository")
 		os.Exit(1)
 	}
 	// Webhook: self-provision the serving certificate (cert-controller writes a

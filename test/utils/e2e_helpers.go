@@ -88,6 +88,7 @@ func ForceDeleteNamespace(namespace string) error {
 		"homeassistants", "homeassistantconfigurations",
 		"homeassistantsecrets", "homeassistantautomations",
 		"homeassistantscenes", "homeassistantscripts",
+		"homeassistantcommunityrepositories",
 		"persistentvolumeclaims",
 		"certificates.cert-manager.io", "certificaterequests.cert-manager.io",
 	}
