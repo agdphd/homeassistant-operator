@@ -1994,6 +1994,15 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}
 			Expect(names).To(ContainElement("unban-operator-ip"))
 			Expect(names).To(ContainElement("config-init"))
+
+			for _, c := range containers {
+				if c.Name == "config-init" {
+					Expect(c.Args).To(HaveLen(1))
+					Expect(c.Args[0]).To(ContainSubstring("mkdir -p /config/python_scripts"),
+						"python_script's own setup() never registers its reload service if "+
+							"this directory is missing at HA's first boot")
+				}
+			}
 		})
 
 		It("should NOT include unban-operator-ip init-container when POD_IP is empty", func() {

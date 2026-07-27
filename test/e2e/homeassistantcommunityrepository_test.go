@@ -393,16 +393,20 @@ spec:
 				"-n", "homeassistant-operator-system", "-c", "manager",
 				"COMMUNITY_REPOSITORY_CODELOAD_BASE_URL="+origCodeloadEnv)
 		}
-		_, _ = utils.Run(cmd)
+		_, envErr := utils.Run(cmd)
 
 		By("Waiting for the operator to finish rolling out with the restored env var")
 		rolloutCmd := exec.Command("kubectl", "rollout", "status",
 			"deployment/homeassistant-operator-controller-manager",
 			"-n", "homeassistant-operator-system", "--timeout=60s")
-		_, _ = utils.Run(rolloutCmd)
+		_, rolloutErr := utils.Run(rolloutCmd)
 
 		By("Deleting test namespace: " + namespace)
 		_ = utils.DeleteNamespace(namespace)
+
+		Expect(envErr).NotTo(HaveOccurred(), "failed to restore the operator's codeload base URL env var")
+		Expect(rolloutErr).NotTo(HaveOccurred(),
+			"operator did not finish rolling out after the env var was restored")
 	})
 
 	It("installs an integration-category repository, restarting the HA pod",

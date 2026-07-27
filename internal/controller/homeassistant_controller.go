@@ -1662,7 +1662,19 @@ func (r *HomeAssistantReconciler) buildInitContainers(
 				"set -e; " +
 					"for f in automations.yaml scenes.yaml scripts.yaml; do " +
 					"[ -f /config/$f ] || echo '[]' > /config/$f; " +
-					"done",
+					"done; " +
+					// Home Assistant's python_script component aborts its own setup
+					// (never registering the python_script.reload service) if
+					// /config/python_scripts doesn't exist at HA's very first start —
+					// see homeassistant/components/python_script/__init__.py's setup().
+					// A HomeAssistantCommunityRepository of that category only creates
+					// the directory later, well after HA has already booted (that
+					// category never restarts the pod), so without this the reload
+					// service would never exist for the process's lifetime. Pre-create
+					// it unconditionally, independent of whether any community
+					// repository CR exists, so "python_script:" in the user's own
+					// configuration.yaml always works.
+					"mkdir -p /config/python_scripts",
 			},
 			VolumeMounts: []corev1.VolumeMount{
 				{
