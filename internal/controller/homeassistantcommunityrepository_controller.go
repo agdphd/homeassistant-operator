@@ -32,10 +32,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
@@ -348,11 +351,15 @@ func (r *HomeAssistantCommunityRepositoryReconciler) installingElapsed(
 }
 
 // activationTimedOut reports whether the Installing phase has been retrying
-// activation for longer than activationRetryWindow.
+// activation for longer than activationRetryWindow. The budget is measured after
+// activationSettleDelay, not from InstallingSince directly: both are anchored on
+// the same timestamp, so without this offset the settle wait would eat into the
+// retry window and leave far fewer than the documented 6 attempts to actually
+// confirm activation.
 func (r *HomeAssistantCommunityRepositoryReconciler) activationTimedOut(
 	repo *hav1alpha1.HomeAssistantCommunityRepository,
 ) bool {
-	return r.installingElapsed(repo) > activationRetryWindow
+	return r.installingElapsed(repo) > activationSettleDelay+activationRetryWindow
 }
 
 // markInstalled records a successfully activated installation.
@@ -458,7 +465,7 @@ func (r *HomeAssistantCommunityRepositoryReconciler) loadConfigMap(
 	err := r.Get(ctx, cmKey, cm)
 	switch {
 	case err == nil:
-		return cm, decodeConfigMapEntries(cm), nil
+		return cm, decodeConfigMapEntries(ctx, cm), nil
 	case k8serrors.IsNotFound(err):
 		cm = &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: cmKey.Name, Namespace: namespace}}
 		if err := controllerutil.SetControllerReference(ha, cm, r.Scheme); err != nil {
@@ -538,8 +545,10 @@ func (r *HomeAssistantCommunityRepositoryReconciler) currentConfigMapContent(
 // decodeConfigMapEntries parses the ConfigMap's repositories.json into a map keyed
 // by entryKey. A missing key or corrupt JSON is treated as "no entries yet" rather
 // than an error, so a damaged ConfigMap self-heals on the next successful write
-// instead of blocking reconciliation.
-func decodeConfigMapEntries(cm *corev1.ConfigMap) map[string]communityRepositoryConfigMapEntry {
+// instead of blocking reconciliation — but corruption is still logged, since a
+// silent self-heal would otherwise erase all evidence that something overwrote or
+// corrupted the ConfigMap outside the operator.
+func decodeConfigMapEntries(ctx context.Context, cm *corev1.ConfigMap) map[string]communityRepositoryConfigMapEntry {
 	entries := map[string]communityRepositoryConfigMapEntry{}
 	raw, ok := cm.Data[communityRepositoriesConfigMapKey]
 	if !ok {
@@ -547,6 +556,8 @@ func decodeConfigMapEntries(cm *corev1.ConfigMap) map[string]communityRepository
 	}
 	var payload communityRepositoriesConfigMapPayload
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		logf.FromContext(ctx).Error(err, "Failed to decode community repositories ConfigMap, treating as empty",
+			"configMap", cm.Name, "namespace", cm.Namespace)
 		return entries
 	}
 	for _, e := range payload.Repositories {
@@ -717,6 +728,7 @@ func (r *HomeAssistantCommunityRepositoryReconciler) SetupWithManager(mgr ctrl.M
 		Watches(
 			&hav1alpha1.HomeAssistantCommunityRepository{},
 			handler.EnqueueRequestsFromMapFunc(r.findSiblingRepositories),
+			builder.WithPredicates(siblingRelevantChangePredicate()),
 		).
 		Named("homeassistantcommunityrepository").
 		Complete(r)
@@ -777,4 +789,29 @@ func (r *HomeAssistantCommunityRepositoryReconciler) findSiblingRepositories(
 		})
 	}
 	return requests
+}
+
+// siblingRelevantChangePredicate limits findSiblingRepositories fan-out to changes
+// that can actually affect conflict resolution (phase, resolvedTarget, or
+// deletion). Without it, any write to any repository — including unrelated status
+// fields — would re-enqueue every sibling targeting the same HomeAssistant.
+func siblingRelevantChangePredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return true },
+		DeleteFunc:  func(event.DeleteEvent) bool { return true },
+		GenericFunc: func(event.GenericEvent) bool { return true },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldRepo, ok := e.ObjectOld.(*hav1alpha1.HomeAssistantCommunityRepository)
+			if !ok {
+				return true
+			}
+			newRepo, ok := e.ObjectNew.(*hav1alpha1.HomeAssistantCommunityRepository)
+			if !ok {
+				return true
+			}
+			return oldRepo.Status.Phase != newRepo.Status.Phase ||
+				oldRepo.Status.ResolvedTarget != newRepo.Status.ResolvedTarget ||
+				!oldRepo.DeletionTimestamp.Equal(newRepo.DeletionTimestamp)
+		},
+	}
 }

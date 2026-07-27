@@ -186,6 +186,15 @@ data:
 `, namespace, encoded), nil
 }
 
+// communityRepoFixtureImage pins python:3-alpine to a manifest-list digest (rather
+// than the mutable tag) so the fixture server can't silently change out from under
+// CI, matching this project's own "never track a moving reference" policy for
+// community repositories. Re-pin deliberately (docker pull python:3-alpine, then
+// docker inspect --format='{{index .RepoDigests 0}}' python:3-alpine) when a newer
+// Python/Alpine patch is wanted.
+const communityRepoFixtureImage = "python:3-alpine@sha256:" +
+	"26730869004e2b9c4b9ad09cab8625e81d256d1ce97e72df5520e806b1709f92"
+
 // communityRepoFixtureServerYAML is the Deployment+Service that decodes/unpacks the
 // ConfigMap above and serves it as a static file tree, standing in for
 // codeload.github.com during this test (real GitHub is never reachable/desirable
@@ -208,7 +217,7 @@ spec:
     spec:
       containers:
         - name: server
-          image: python:3-alpine
+          image: %[2]s
           command: ["sh", "-c"]
           args:
             - |
@@ -238,7 +247,7 @@ spec:
   ports:
     - port: 8080
       targetPort: 8080
-`, namespace)
+`, namespace, communityRepoFixtureImage)
 }
 
 var _ = Describe("HomeAssistantCommunityRepository E2E", Ordered, ContinueOnFailure, func() {
@@ -253,6 +262,10 @@ var _ = Describe("HomeAssistantCommunityRepository E2E", Ordered, ContinueOnFail
 	}
 	getInstalledVersion := func(name string) string {
 		return utils.Kubectl("get", "hacr", name, "-n", namespace, "-o", "jsonpath={.status.installedVersion}")
+	}
+	getReadyMessage := func(name string) string {
+		return utils.Kubectl("get", "hacr", name, "-n", namespace,
+			"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].message}")
 	}
 
 	BeforeAll(func() {
@@ -381,6 +394,12 @@ spec:
 				"COMMUNITY_REPOSITORY_CODELOAD_BASE_URL="+origCodeloadEnv)
 		}
 		_, _ = utils.Run(cmd)
+
+		By("Waiting for the operator to finish rolling out with the restored env var")
+		rolloutCmd := exec.Command("kubectl", "rollout", "status",
+			"deployment/homeassistant-operator-controller-manager",
+			"-n", "homeassistant-operator-system", "--timeout=60s")
+		_, _ = utils.Run(rolloutCmd)
 
 		By("Deleting test namespace: " + namespace)
 		_ = utils.DeleteNamespace(namespace)
@@ -533,6 +552,12 @@ spec:
 				g.Expect(getPhase("e2e-plugin")).To(Equal("Installed"))
 			}, crActivationSettleDelay+utils.ReconciliationTimeout, reconcileInterval).Should(Succeed())
 
+			// The Ready message distinguishes a confirmed Lovelace resource registration
+			// ("reload confirmed") from the YAML-mode fallback path, which also reaches
+			// Installed but never actually registers the resource via the API.
+			Expect(getReadyMessage("e2e-plugin")).To(ContainSubstring("reload confirmed"),
+				"the Lovelace resource must have been actually registered via the API, not just the file placed")
+
 			cmd := exec.Command("kubectl", "exec", haName+"-0", "-n", namespace, "-c", "home-assistant", "--",
 				"test", "-f", "/config/www/community/example-card.js")
 			_, err := utils.Run(cmd)
@@ -579,10 +604,15 @@ spec:
 
 			By("Waiting for the sidecar to remove the file from the pod (~poll interval + propagation)")
 			Eventually(func(g Gomega) {
+				// "test -f" alone would exit non-zero both when the file is genuinely
+				// absent and when kubectl exec itself fails to reach the container —
+				// echoing an explicit marker lets the assertion tell those apart instead
+				// of treating a transient connectivity failure as a false-positive pass.
 				cmd := exec.Command("kubectl", "exec", haName+"-0", "-n", namespace, "-c", "home-assistant", "--",
-					"test", "-f", "/config/python_scripts/example_script.py")
-				_, err := utils.Run(cmd)
-				g.Expect(err).To(HaveOccurred(), "file must be removed once the sidecar picks up the deletion")
+					"sh", "-c", "test -f /config/python_scripts/example_script.py && echo PRESENT || echo ABSENT")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred(), "kubectl exec must reach the home-assistant container")
+				g.Expect(output).To(ContainSubstring("ABSENT"), "file must be removed once the sidecar picks up the deletion")
 			}, crActivationSettleDelay+utils.ReconciliationTimeout, reconcileInterval).Should(Succeed())
 		})
 })

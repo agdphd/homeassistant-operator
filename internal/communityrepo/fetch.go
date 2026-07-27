@@ -210,7 +210,7 @@ func extractTarGz(r io.Reader) (*ExtractedRepo, error) {
 
 		// Guard against path traversal ("zip slip") from a malicious/unexpected tarball.
 		name := path.Clean(hdr.Name)
-		if name == ".." || strings.HasPrefix(name, "../") {
+		if name == ".." || strings.HasPrefix(name, "../") || path.IsAbs(name) {
 			return nil, fmt.Errorf("tar entry %q escapes the archive root", hdr.Name)
 		}
 

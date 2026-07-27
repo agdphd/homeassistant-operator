@@ -22,6 +22,7 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -173,6 +174,30 @@ func TestExtractTarGz_RejectsPathTraversal(t *testing.T) {
 	}
 }
 
+func TestExtractTarGz_RejectsAbsolutePath(t *testing.T) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "/etc/passwd",
+		Typeflag: tar.TypeReg,
+		Mode:     0o644,
+		Size:     0,
+	}); err != nil {
+		t.Fatalf("write header: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+
+	if _, err := extractTarGz(bytes.NewReader(buf.Bytes())); err == nil {
+		t.Fatal("expected extractTarGz to reject an absolute-path tar entry")
+	}
+}
+
 func TestExtractedRepo_ReadDir_Root(t *testing.T) {
 	tarball := buildTarball(t, "owner-repo-abc123", map[string]string{
 		"hacs.json":                         `{"name":"Test"}`,
@@ -228,5 +253,67 @@ func TestExtractTarGz_RejectsOversizedEntry(t *testing.T) {
 
 	if _, err := extractTarGz(bytes.NewReader(buf.Bytes())); err == nil {
 		t.Fatal("expected extractTarGz to reject an oversized entry")
+	}
+}
+
+func TestExtractTarGz_RejectsExceedingCumulativeLimit(t *testing.T) {
+	// Each entry stays well under maxExtractedEntryBytes, but enough of them
+	// together exceed maxExtractedTotalBytes — this must be rejected on its own,
+	// independent of the per-entry guard.
+	const chunkSize = 10 * 1024 * 1024 // 10 MiB
+	chunkCount := int(maxExtractedTotalBytes/chunkSize) + 2
+	chunk := bytes.Repeat([]byte("a"), chunkSize)
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for i := 0; i < chunkCount; i++ {
+		if err := tw.WriteHeader(&tar.Header{
+			Name:     fmt.Sprintf("owner-repo-abc123/file-%d", i),
+			Typeflag: tar.TypeReg,
+			Mode:     0o644,
+			Size:     int64(len(chunk)),
+		}); err != nil {
+			t.Fatalf("write header: %v", err)
+		}
+		if _, err := tw.Write(chunk); err != nil {
+			t.Fatalf("write content: %v", err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+
+	if _, err := extractTarGz(bytes.NewReader(buf.Bytes())); err == nil {
+		t.Fatal("expected extractTarGz to reject an archive exceeding the cumulative size limit")
+	}
+}
+
+func TestExtractTarGz_RejectsTooManyEntries(t *testing.T) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for i := 0; i < maxExtractedEntries+1; i++ {
+		if err := tw.WriteHeader(&tar.Header{
+			Name:     fmt.Sprintf("owner-repo-abc123/file-%d", i),
+			Typeflag: tar.TypeReg,
+			Mode:     0o644,
+			Size:     0,
+		}); err != nil {
+			t.Fatalf("write header: %v", err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+
+	if _, err := extractTarGz(bytes.NewReader(buf.Bytes())); err == nil {
+		t.Fatal("expected extractTarGz to reject an archive with too many entries")
 	}
 }
