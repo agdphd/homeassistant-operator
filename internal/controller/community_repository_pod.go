@@ -40,20 +40,21 @@ const (
 // hasCommunityRepositories reports whether at least one HomeAssistantCommunityRepository
 // targets ha, which gates the sidecar/init-container/ConfigMap-volume injection —
 // the stable HomeAssistant CRD never gets this alpha-feature footprint unless the
-// alpha CRD is actually in use. A List error is treated as "no" rather than
-// propagated: this only affects an optional, additive pod feature, never HA's own
-// startup — the reconcile must never fail just because of this check.
-func hasCommunityRepositories(ctx context.Context, c client.Client, ha *hav1.HomeAssistant) bool {
+// alpha CRD is actually in use. A List error is propagated rather than treated as
+// "no": silently degrading to "no repositories" on a transient API error would let
+// callers build a StatefulSet spec that strips an already-installed sidecar, doing
+// an unwanted rolling restart the moment the API server hiccups.
+func hasCommunityRepositories(ctx context.Context, c client.Client, ha *hav1.HomeAssistant) (bool, error) {
 	list := &hav1alpha1.HomeAssistantCommunityRepositoryList{}
 	if err := c.List(ctx, list, client.InNamespace(ha.Namespace)); err != nil {
-		return false
+		return false, err
 	}
 	for _, item := range list.Items {
 		if item.Spec.HomeAssistantRef.Name == ha.Name {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // buildCommunityRepositoryConfigMapVolume returns the read-only volume exposing the
@@ -184,6 +185,11 @@ REPO_FILE = os.environ.get('COMMUNITY_REPOSITORIES_FILE', '/etc/community-reposi
 CONFIG_DIR = os.environ.get('HA_CONFIG_DIR', '/config')
 CODELOAD_BASE = os.environ.get('CODELOAD_BASE_URL', 'https://codeload.github.com')
 
+# HACS repos are tiny plain-text source trees; these bound worst-case disk use
+# against a malicious or misbehaving upstream repository/host.
+MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
+MAX_EXTRACTED_BYTES = 100 * 1024 * 1024
+
 
 def load_entries():
     if not os.path.exists(REPO_FILE):
@@ -196,12 +202,29 @@ def load_entries():
     return [e for e in data.get('repositories', []) if e.get('category') == 'integration']
 
 
+def copy_limited(src, dst, limit):
+    copied = 0
+    while True:
+        chunk = src.read(65536)
+        if not chunk:
+            return
+        copied += len(chunk)
+        if copied > limit:
+            raise RuntimeError('download exceeds {} byte limit'.format(limit))
+        dst.write(chunk)
+
+
 def safe_extractall(tar, path):
     abs_path = os.path.abspath(path)
+    total = 0
     for member in tar.getmembers():
         member_path = os.path.abspath(os.path.join(path, member.name))
         if not (member_path == abs_path or member_path.startswith(abs_path + os.sep)):
             raise RuntimeError('unsafe path in tarball: ' + member.name)
+        if member.isfile():
+            total += member.size
+            if total > MAX_EXTRACTED_BYTES:
+                raise RuntimeError('extracted content exceeds {} byte limit'.format(MAX_EXTRACTED_BYTES))
     try:
         tar.extractall(path, filter='data')
     except TypeError:
@@ -214,7 +237,7 @@ def fetch_and_place(entry):
         with tempfile.TemporaryDirectory() as tmp:
             tar_path = os.path.join(tmp, 'repo.tar.gz')
             with open(tar_path, 'wb') as f:
-                shutil.copyfileobj(resp, f)
+                copy_limited(resp, f, MAX_DOWNLOAD_BYTES)
             extract_dir = os.path.join(tmp, 'extracted')
             os.makedirs(extract_dir, exist_ok=True)
             with tarfile.open(tar_path, 'r:gz') as tar:
@@ -269,6 +292,11 @@ CATEGORY_DIRS = {
     'plugin': 'www/community',
 }
 
+# HACS repos are tiny plain-text source trees; these bound worst-case disk use
+# against a malicious or misbehaving upstream repository/host.
+MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
+MAX_EXTRACTED_BYTES = 100 * 1024 * 1024
+
 
 def load_entries():
     if not os.path.exists(REPO_FILE):
@@ -308,12 +336,29 @@ def dest_path(entry):
     return os.path.join(CONFIG_DIR, category_dir, basename)
 
 
+def copy_limited(src, dst, limit):
+    copied = 0
+    while True:
+        chunk = src.read(65536)
+        if not chunk:
+            return
+        copied += len(chunk)
+        if copied > limit:
+            raise RuntimeError('download exceeds {} byte limit'.format(limit))
+        dst.write(chunk)
+
+
 def safe_extractall(tar, path):
     abs_path = os.path.abspath(path)
+    total = 0
     for member in tar.getmembers():
         member_path = os.path.abspath(os.path.join(path, member.name))
         if not (member_path == abs_path or member_path.startswith(abs_path + os.sep)):
             raise RuntimeError('unsafe path in tarball: ' + member.name)
+        if member.isfile():
+            total += member.size
+            if total > MAX_EXTRACTED_BYTES:
+                raise RuntimeError('extracted content exceeds {} byte limit'.format(MAX_EXTRACTED_BYTES))
     try:
         tar.extractall(path, filter='data')
     except TypeError:
@@ -326,7 +371,7 @@ def fetch_and_place(entry):
         with tempfile.TemporaryDirectory() as tmp:
             tar_path = os.path.join(tmp, 'repo.tar.gz')
             with open(tar_path, 'wb') as f:
-                shutil.copyfileobj(resp, f)
+                copy_limited(resp, f, MAX_DOWNLOAD_BYTES)
             extract_dir = os.path.join(tmp, 'extracted')
             os.makedirs(extract_dir, exist_ok=True)
             with tarfile.open(tar_path, 'r:gz') as tar:

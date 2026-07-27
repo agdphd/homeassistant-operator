@@ -34,6 +34,7 @@ var _ = Describe("HAClient community repository activation methods", func() {
 	Describe("ReloadThemes", func() {
 		It("posts to frontend/reload_themes and succeeds on 200", func() {
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer GinkgoRecover()
 				Expect(r.URL.Path).To(Equal("/api/services/frontend/reload_themes"))
 				Expect(r.Method).To(Equal("POST"))
 				w.WriteHeader(http.StatusOK)
@@ -57,6 +58,7 @@ var _ = Describe("HAClient community repository activation methods", func() {
 	Describe("ReloadPythonScripts", func() {
 		It("posts to python_script/reload", func() {
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer GinkgoRecover()
 				Expect(r.URL.Path).To(Equal("/api/services/python_script/reload"))
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte(`[]`))
@@ -70,6 +72,7 @@ var _ = Describe("HAClient community repository activation methods", func() {
 	Describe("ReloadCustomTemplates", func() {
 		It("posts to homeassistant/reload_custom_templates", func() {
 			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer GinkgoRecover()
 				Expect(r.URL.Path).To(Equal("/api/services/homeassistant/reload_custom_templates"))
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte(`[]`))
@@ -94,6 +97,7 @@ var _ = Describe("HAClient community repository activation methods", func() {
 
 		It("lists existing resources", func() {
 			wsServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer GinkgoRecover()
 				conn, err := upgrader.Upgrade(w, r, nil)
 				if err != nil {
 					return

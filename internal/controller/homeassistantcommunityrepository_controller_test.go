@@ -308,6 +308,7 @@ var _ = Describe("HomeAssistantCommunityRepository Controller", func() {
 				}))
 			} else {
 				haServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					defer GinkgoRecover()
 					Expect(r.URL.Path).To(Equal(servicePath))
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte(`[]`))
@@ -517,6 +518,7 @@ var _ = Describe("HomeAssistantCommunityRepository Controller", func() {
 		communityrepo.CodeloadBaseURL = codeloadServer.URL
 
 		haServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer GinkgoRecover()
 			Expect(r.URL.Path).To(Equal("/api/services/frontend/reload_themes"))
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`[]`))

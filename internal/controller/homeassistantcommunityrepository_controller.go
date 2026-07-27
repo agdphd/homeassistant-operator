@@ -226,6 +226,17 @@ func (r *HomeAssistantCommunityRepositoryReconciler) reconcileValidating(
 
 	previousResolvedTarget := repo.Status.ResolvedTarget
 	repo.Status.ResolvedTarget = resolved.ResolvedTarget
+	// Persist ResolvedTarget durably before mutating the shared aggregate ConfigMap.
+	// Ordering matters for crash recovery: if the reconciler were to restart between
+	// the ConfigMap write and the status write, an update-in-place (this field
+	// changing on an already-Installed resource) could otherwise leave the
+	// ConfigMap holding a new entry while this CR's own durable status still
+	// reports the old target — the next reconcile would then compute the wrong
+	// previousResolvedTarget and fail to clean up the stale ConfigMap key.
+	if err := r.Status().Update(ctx, repo); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	r.emitEvent(repo, corev1.EventTypeNormal, eventRepositoryValidated,
 		fmt.Sprintf("Repository validated, resolved target %q", resolved.ResolvedTarget))
 
@@ -320,18 +331,20 @@ func (r *HomeAssistantCommunityRepositoryReconciler) reconcileInstalling(
 }
 
 // installingElapsed returns how long the Installing phase has been active, or 0 if
-// not currently in it. Anchored on the Ready condition's LastTransitionTime, which
-// meta.SetStatusCondition only updates when Status or Reason actually changes — so
-// it stays fixed across repeated retries with the same "Installing" reason, giving
-// a stable start-of-window timestamp without a dedicated status field.
+// not currently in it (status.installingSince is unset). Anchored on this explicit
+// timestamp rather than the Ready condition's LastTransitionTime: meta.SetStatusCondition
+// only bumps LastTransitionTime when Status changes, not Reason, so a Validating ->
+// Installing transition (both report ConditionFalse) would leave it unchanged —
+// anchoring on it would make the retry/settle window start from whenever the
+// condition's Status last flipped, which can be arbitrarily earlier than actually
+// entering Installing.
 func (r *HomeAssistantCommunityRepositoryReconciler) installingElapsed(
 	repo *hav1alpha1.HomeAssistantCommunityRepository,
 ) time.Duration {
-	cond := meta.FindStatusCondition(repo.Status.Conditions, conditionTypeReady)
-	if cond == nil || cond.Reason != reasonRepoInstalling {
+	if repo.Status.Phase != hav1alpha1.PhaseInstalling || repo.Status.InstallingSince == nil {
 		return 0
 	}
-	return time.Since(cond.LastTransitionTime.Time)
+	return time.Since(repo.Status.InstallingSince.Time)
 }
 
 // activationTimedOut reports whether the Installing phase has been retrying
@@ -370,6 +383,12 @@ func (r *HomeAssistantCommunityRepositoryReconciler) findConflictingOwner(
 	myKey := communityrepo.NewConflictKey(haName, communityrepo.Category(repo.Spec.Category), resolved)
 	for _, item := range list.Items {
 		if item.Name == repo.Name {
+			continue
+		}
+		// A sibling already being deleted is on its way out — its finalizer will
+		// release the target shortly (best-effort). Treating it as still occupying
+		// the key would needlessly reject a new CR that's about to become valid.
+		if !item.DeletionTimestamp.IsZero() {
 			continue
 		}
 		if item.Status.Phase != hav1alpha1.PhaseInstalled && item.Status.Phase != hav1alpha1.PhaseInstalling {
@@ -636,6 +655,15 @@ func (r *HomeAssistantCommunityRepositoryReconciler) setPhase(
 	repo.Status.Phase = phase
 	repo.Status.ObservedGeneration = repo.Generation
 
+	if phase == hav1alpha1.PhaseInstalling {
+		if repo.Status.InstallingSince == nil {
+			now := metav1.Now()
+			repo.Status.InstallingSince = &now
+		}
+	} else {
+		repo.Status.InstallingSince = nil
+	}
+
 	if phase == hav1alpha1.PhaseFailed {
 		repo.Status.LastError = message
 		r.emitEvent(repo, corev1.EventTypeWarning, eventRepositoryInstallFailed, message)
@@ -671,7 +699,10 @@ func (r *HomeAssistantCommunityRepositoryReconciler) emitEvent(
 	eventType, reason, message string,
 ) {
 	if r.Recorder != nil {
-		r.Recorder.Eventf(repo, nil, eventType, reason, reason, message)
+		// message is passed as an argument (not the format string) so a literal
+		// "%" in a repository name or wrapped error message is emitted unchanged
+		// instead of being interpreted as a Sprintf verb.
+		r.Recorder.Eventf(repo, nil, eventType, reason, reason, "%s", message)
 	}
 }
 

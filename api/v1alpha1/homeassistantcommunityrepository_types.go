@@ -60,9 +60,12 @@ type HomeAssistantCommunityRepositorySpec struct {
 	Repository string `json:"repository"`
 
 	// Ref is the tag, branch, or commit SHA to install. Pinned and explicit — this
-	// operator never tracks a "latest" release automatically.
+	// operator never tracks a "latest" release automatically. Restricted to
+	// characters valid in a git ref (no URL-reserved or path-separator characters
+	// that could alter the codeload request path).
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[\w][\w.\-/]*$`
 	Ref string `json:"ref"`
 }
 
@@ -101,6 +104,12 @@ type HomeAssistantCommunityRepositoryStatus struct {
 	// Cleared when the operation succeeds.
 	// +optional
 	LastError string `json:"lastError,omitempty"`
+
+	// InstallingSince records when the resource most recently entered the
+	// Installing phase. Used to bound the activation retry window; cleared when
+	// the resource leaves Installing (Installed or Failed).
+	// +optional
+	InstallingSince *metav1.Time `json:"installingSince,omitempty"`
 
 	// ObservedGeneration reflects the generation of the most recently observed CR
 	// +optional

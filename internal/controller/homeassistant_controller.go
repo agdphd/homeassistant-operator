@@ -439,7 +439,10 @@ func (r *HomeAssistantReconciler) reconcileStatefulSet(ctx context.Context, ha *
 
 	if err != nil && errors.IsNotFound(err) {
 		// Create new StatefulSet
-		sts = r.buildStatefulSet(ctx, ha)
+		sts, err = r.buildStatefulSet(ctx, ha)
+		if err != nil {
+			return err
+		}
 
 		// Sync config hash from ConfigMap even for new StatefulSet
 		// This ensures the hash annotation is set from the beginning
@@ -458,7 +461,10 @@ func (r *HomeAssistantReconciler) reconcileStatefulSet(ctx context.Context, ha *
 	}
 
 	// Update StatefulSet if needed
-	desired := r.buildStatefulSet(ctx, ha)
+	desired, err := r.buildStatefulSet(ctx, ha)
+	if err != nil {
+		return err
+	}
 
 	// Sync config hash from ConfigMap to desired StatefulSet (Faza 2)
 	// This allows HomeAssistantConfiguration Controller to signal configuration changes
@@ -647,7 +653,7 @@ func (r *HomeAssistantReconciler) getGeneratedSecretsName(
 func (r *HomeAssistantReconciler) buildStatefulSet(
 	ctx context.Context,
 	ha *hav1.HomeAssistant,
-) *appsv1.StatefulSet {
+) (*appsv1.StatefulSet, error) {
 	labels := r.labelsForHomeAssistant(ha)
 	replicas := int32(1)
 
@@ -884,10 +890,24 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 			},
 		},
 	}
-	if hasCommunityRepositories(ctx, r.Client, ha) {
+	hasCR, err := hasCommunityRepositories(ctx, r.Client, ha)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check for HomeAssistantCommunityRepository resources: %w", err)
+	}
+	if hasCR {
 		containers = append(containers, r.buildCommunityRepositorySidecar(ha))
 		volumes = append(volumes, buildCommunityRepositoryConfigMapVolume(ha))
 	}
+
+	initContainers, err := r.buildInitContainers(ctx, ha)
+	if err != nil {
+		return nil, err
+	}
+
+	// The HA pod (and its community-repository sidecar) never call the Kubernetes
+	// API — deny it a ServiceAccount token rather than relying on the "default"
+	// ServiceAccount's implicit automount, least-privilege.
+	automountSAToken := false
 
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -907,9 +927,10 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 					Annotations: existingAnnotations,
 				},
 				Spec: corev1.PodSpec{
-					InitContainers: r.buildInitContainers(ctx, ha),
-					Containers:     containers,
-					Volumes:        volumes,
+					AutomountServiceAccountToken: &automountSAToken,
+					InitContainers:               initContainers,
+					Containers:                   containers,
+					Volumes:                      volumes,
 				},
 			},
 		},
@@ -928,7 +949,7 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 		sts.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
 	}
 
-	return sts
+	return sts, nil
 }
 
 // reconcileService ensures the Service exists and is up to date
@@ -1425,6 +1446,14 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 		return true
 	}
 
+	currentAutomount := current.Spec.Template.Spec.AutomountServiceAccountToken
+	desiredAutomount := desired.Spec.Template.Spec.AutomountServiceAccountToken
+	if (currentAutomount == nil) != (desiredAutomount == nil) ||
+		(currentAutomount != nil && desiredAutomount != nil && *currentAutomount != *desiredAutomount) {
+		log.V(1).Info("AutomountServiceAccountToken differs")
+		return true
+	}
+
 	return false
 }
 
@@ -1601,7 +1630,9 @@ func (r *HomeAssistantReconciler) findHomeAssistantForConfigMap(
 // then community-repository-init (if any HomeAssistantCommunityRepository targets
 // this instance — the "integration" category needs its files in place before HA's
 // Python process starts importing components).
-func (r *HomeAssistantReconciler) buildInitContainers(ctx context.Context, ha *hav1.HomeAssistant) []corev1.Container {
+func (r *HomeAssistantReconciler) buildInitContainers(
+	ctx context.Context, ha *hav1.HomeAssistant,
+) ([]corev1.Container, error) {
 	repo := defaultInitRepository
 	img := defaultInitImage
 	tag := defaultInitTag
@@ -1646,11 +1677,15 @@ func (r *HomeAssistantReconciler) buildInitContainers(ctx context.Context, ha *h
 		containers = append(containers, r.buildUnbanInitContainer(ha))
 	}
 
-	if hasCommunityRepositories(ctx, r.Client, ha) {
+	hasCR, err := hasCommunityRepositories(ctx, r.Client, ha)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check for HomeAssistantCommunityRepository resources: %w", err)
+	}
+	if hasCR {
 		containers = append(containers, r.buildCommunityRepositoryInitContainer(ha))
 	}
 
-	return containers
+	return containers, nil
 }
 
 // buildUnbanInitContainer returns an init-container that removes the operator's IP

@@ -201,3 +201,32 @@ func TestExtractedRepo_ReadDir_Root(t *testing.T) {
 		t.Errorf("unexpected root entries: %+v", entries)
 	}
 }
+
+func TestExtractTarGz_RejectsOversizedEntry(t *testing.T) {
+	oversized := bytes.Repeat([]byte("a"), maxExtractedEntryBytes+1)
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "owner-repo-abc123/big-file",
+		Typeflag: tar.TypeReg,
+		Mode:     0o644,
+		Size:     int64(len(oversized)),
+	}); err != nil {
+		t.Fatalf("write header: %v", err)
+	}
+	if _, err := tw.Write(oversized); err != nil {
+		t.Fatalf("write content: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+
+	if _, err := extractTarGz(bytes.NewReader(buf.Bytes())); err == nil {
+		t.Fatal("expected extractTarGz to reject an oversized entry")
+	}
+}

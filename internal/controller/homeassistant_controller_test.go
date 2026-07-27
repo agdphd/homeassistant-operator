@@ -1282,7 +1282,8 @@ var _ = Describe("HomeAssistant Controller", func() {
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
-			desired := reconciler.buildStatefulSet(ctx, ha)
+			desired, err := reconciler.buildStatefulSet(ctx, ha)
+			Expect(err).NotTo(HaveOccurred())
 
 			By("Verifying annotations are preserved")
 			Expect(desired.Spec.Template.Annotations).To(HaveKey("ha.homeassistant.io/config-hash"))
@@ -1984,7 +1985,8 @@ var _ = Describe("HomeAssistant Controller", func() {
 				ObjectMeta: metav1.ObjectMeta{Name: "unban-test", Namespace: "default"},
 				Spec:       hav1.HomeAssistantSpec{Version: "2024.1.0"},
 			}
-			containers := reconciler.buildInitContainers(ctx, ha)
+			containers, err := reconciler.buildInitContainers(ctx, ha)
+			Expect(err).NotTo(HaveOccurred())
 
 			names := make([]string, len(containers))
 			for i, c := range containers {
@@ -2007,7 +2009,8 @@ var _ = Describe("HomeAssistant Controller", func() {
 				ObjectMeta: metav1.ObjectMeta{Name: "unban-test-no-ip", Namespace: "default"},
 				Spec:       hav1.HomeAssistantSpec{Version: "2024.1.0"},
 			}
-			containers := reconciler.buildInitContainers(ctx, ha)
+			containers, err := reconciler.buildInitContainers(ctx, ha)
+			Expect(err).NotTo(HaveOccurred())
 
 			for _, c := range containers {
 				Expect(c.Name).NotTo(Equal("unban-operator-ip"))
@@ -2084,12 +2087,14 @@ var _ = Describe("HomeAssistant Controller", func() {
 				Spec:       hav1.HomeAssistantSpec{Version: "2024.1.0"},
 			}
 
-			initContainers := reconciler.buildInitContainers(ctx, ha)
+			initContainers, err := reconciler.buildInitContainers(ctx, ha)
+			Expect(err).NotTo(HaveOccurred())
 			for _, c := range initContainers {
 				Expect(c.Name).NotTo(Equal("community-repository-init"))
 			}
 
-			sts := reconciler.buildStatefulSet(ctx, ha)
+			sts, err := reconciler.buildStatefulSet(ctx, ha)
+			Expect(err).NotTo(HaveOccurred())
 			for _, c := range sts.Spec.Template.Spec.Containers {
 				Expect(c.Name).NotTo(Equal("community-repository-sidecar"))
 			}
@@ -2115,14 +2120,16 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, repo)).To(Succeed())
 
-			built := reconciler.buildInitContainers(ctx, ha)
+			built, err := reconciler.buildInitContainers(ctx, ha)
+			Expect(err).NotTo(HaveOccurred())
 			initContainerNames := make([]string, 0, len(built))
 			for _, c := range built {
 				initContainerNames = append(initContainerNames, c.Name)
 			}
 			Expect(initContainerNames).To(ContainElement("community-repository-init"))
 
-			sts := reconciler.buildStatefulSet(ctx, ha)
+			sts, err := reconciler.buildStatefulSet(ctx, ha)
+			Expect(err).NotTo(HaveOccurred())
 			containerNames := make([]string, 0, len(sts.Spec.Template.Spec.Containers))
 			for _, c := range sts.Spec.Template.Spec.Containers {
 				containerNames = append(containerNames, c.Name)

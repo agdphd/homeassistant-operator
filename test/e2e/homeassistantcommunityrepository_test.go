@@ -570,9 +570,12 @@ spec:
 				g.Expect(output).To(BeEmpty())
 			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 
-			cmData := utils.Kubectl("get", "configmap", haName+"-community-repositories", "-n", namespace,
-				"-o", "jsonpath={.data.repositories\\.json}")
-			Expect(cmData).NotTo(ContainSubstring("example_script"))
+			Eventually(func(g Gomega) {
+				cmData := utils.Kubectl("get", "configmap", haName+"-community-repositories", "-n", namespace,
+					"-o", "jsonpath={.data.repositories\\.json}")
+				g.Expect(cmData).NotTo(BeEmpty(), "kubectl get configmap must succeed")
+				g.Expect(cmData).NotTo(ContainSubstring("example_script"))
+			}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 
 			By("Waiting for the sidecar to remove the file from the pod (~poll interval + propagation)")
 			Eventually(func(g Gomega) {

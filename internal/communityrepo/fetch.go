@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 )
 
 // CodeloadBaseURL is the GitHub tarball endpoint used instead of a git client or the
@@ -39,6 +40,20 @@ import (
 // Exported (not const) so callers outside this package — controller envtest specs,
 // E2E suites — can point it at a local fixture server instead of the real GitHub host.
 var CodeloadBaseURL = "https://codeload.github.com"
+
+// codeloadHTTPClient has an explicit, finite timeout — the operator's reconcile
+// loop must never block indefinitely on a hung connection to codeload.github.com
+// (or a test fixture server), unlike http.DefaultClient which has none.
+var codeloadHTTPClient = &http.Client{Timeout: 60 * time.Second}
+
+// Limits on in-memory extraction. HACS repos are tiny plain-text source trees
+// (typically kilobytes), so these are generous but still bound worst-case memory
+// use against a malicious or misbehaving upstream repository/host.
+const (
+	maxExtractedEntryBytes = 20 * 1024 * 1024  // 20 MiB per file
+	maxExtractedTotalBytes = 100 * 1024 * 1024 // 100 MiB cumulative across the archive
+	maxExtractedEntries    = 20000             // archive entry count
+)
 
 // ExtractedRepo is an in-memory view of a fetched repository's contents, with the
 // tarball's single top-level wrapper directory already stripped. Kept entirely in
@@ -141,7 +156,7 @@ func FetchTarball(ctx context.Context, repository, ref string) (*ExtractedRepo, 
 		return nil, fmt.Errorf("failed to build request for %s: %w", url, err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := codeloadHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch %s: %w", url, err)
 	}
@@ -162,7 +177,11 @@ func FetchTarball(ctx context.Context, repository, ref string) (*ExtractedRepo, 
 	return stripTopLevelDir(extracted)
 }
 
-// extractTarGz reads a gzip-compressed tar stream fully into memory.
+// extractTarGz reads a gzip-compressed tar stream fully into memory, enforcing
+// bounded extraction (maxExtractedEntryBytes/maxExtractedTotalBytes/
+// maxExtractedEntries) against a decompression bomb or a runaway/malicious
+// archive — decompressed size is what matters here (not the compressed transfer
+// size), since gzip can expand many times over.
 func extractTarGz(r io.Reader) (*ExtractedRepo, error) {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
@@ -172,6 +191,8 @@ func extractTarGz(r io.Reader) (*ExtractedRepo, error) {
 
 	extracted := &ExtractedRepo{files: map[string][]byte{}, dirs: map[string]bool{}}
 
+	var totalBytes int64
+	var entryCount int
 	tr := tar.NewReader(gz)
 	for {
 		hdr, err := tr.Next()
@@ -180,6 +201,11 @@ func extractTarGz(r io.Reader) (*ExtractedRepo, error) {
 		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to read tar entry: %w", err)
+		}
+
+		entryCount++
+		if entryCount > maxExtractedEntries {
+			return nil, fmt.Errorf("archive has too many entries (limit %d)", maxExtractedEntries)
 		}
 
 		// Guard against path traversal ("zip slip") from a malicious/unexpected tarball.
@@ -193,9 +219,22 @@ func extractTarGz(r io.Reader) (*ExtractedRepo, error) {
 			extracted.dirs[name] = true
 			markParentDirs(extracted.dirs, name)
 		case tar.TypeReg:
-			data, err := io.ReadAll(tr)
+			if hdr.Size > maxExtractedEntryBytes {
+				return nil, fmt.Errorf("tar entry %q is too large (%d bytes, limit %d)",
+					hdr.Name, hdr.Size, maxExtractedEntryBytes)
+			}
+			totalBytes += hdr.Size
+			if totalBytes > maxExtractedTotalBytes {
+				return nil, fmt.Errorf("archive exceeds the cumulative extraction limit (%d bytes)", maxExtractedTotalBytes)
+			}
+			// LimitReader is a defense-in-depth backstop against a tar header lying
+			// about hdr.Size while the actual entry stream contains more data.
+			data, err := io.ReadAll(io.LimitReader(tr, maxExtractedEntryBytes+1))
 			if err != nil {
 				return nil, fmt.Errorf("failed to read %q: %w", hdr.Name, err)
+			}
+			if int64(len(data)) > maxExtractedEntryBytes {
+				return nil, fmt.Errorf("tar entry %q is too large (limit %d bytes)", hdr.Name, maxExtractedEntryBytes)
 			}
 			extracted.files[name] = data
 			markParentDirs(extracted.dirs, name)
