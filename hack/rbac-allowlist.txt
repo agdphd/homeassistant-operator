@@ -66,3 +66,19 @@ admissionregistration.k8s.io/validatingwebhookconfigurations/list
 admissionregistration.k8s.io/validatingwebhookconfigurations/watch
 admissionregistration.k8s.io/validatingwebhookconfigurations/update
 admissionregistration.k8s.io/validatingwebhookconfigurations/patch
+
+# New alpha CRD HomeAssistantCommunityRepository (declarative HACS-compatible
+# extension installs, spec 004-community-integration). RBAC for a brand-new own
+# CRD kind, same shape as every other HomeAssistant* CRD the operator already
+# manages.
+ha.homeassistant.io/homeassistantcommunityrepositories/create
+ha.homeassistant.io/homeassistantcommunityrepositories/delete
+ha.homeassistant.io/homeassistantcommunityrepositories/get
+ha.homeassistant.io/homeassistantcommunityrepositories/list
+ha.homeassistant.io/homeassistantcommunityrepositories/patch
+ha.homeassistant.io/homeassistantcommunityrepositories/update
+ha.homeassistant.io/homeassistantcommunityrepositories/watch
+ha.homeassistant.io/homeassistantcommunityrepositories/finalizers/update
+ha.homeassistant.io/homeassistantcommunityrepositories/status/get
+ha.homeassistant.io/homeassistantcommunityrepositories/status/patch
+ha.homeassistant.io/homeassistantcommunityrepositories/status/update
