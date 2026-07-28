@@ -507,51 +507,8 @@ func (c *Client) SendWebSocketCommand(
 	msgType string,
 	data map[string]interface{},
 ) (json.RawMessage, error) {
-	conn, err := c.wsAuthConnect(ctx, token)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = conn.Close() }()
-
-	// Build command message.
-	// id=1 is intentional: each call opens a fresh connection (one-shot pattern),
-	// so there is no need for unique IDs. Revisit if connection reuse is added.
-	msg := make(map[string]interface{})
-	for k, v := range data {
-		msg[k] = v
-	}
-	msg["id"] = 1
-	msg["type"] = msgType
-
-	if err := conn.WriteJSON(msg); err != nil {
-		return nil, &Error{
-			Type:    ErrorTypeHTTP,
-			Message: "failed to send websocket command",
-			Err:     err,
-		}
-	}
-
-	var resp WebSocketResponse
-	if err := conn.ReadJSON(&resp); err != nil {
-		return nil, &Error{
-			Type:    ErrorTypeHTTP,
-			Message: "failed to read websocket response",
-			Err:     err,
-		}
-	}
-
-	if !resp.Success {
-		errMsg := "unknown error"
-		if resp.Error != nil && resp.Error.Message != "" {
-			errMsg = resp.Error.Message
-		}
-		return nil, &Error{
-			Type:    ErrorTypeHTTP,
-			Message: fmt.Sprintf("websocket command %q failed: %s", msgType, errMsg),
-		}
-	}
-
-	return resp.Result, nil
+	result, _, err := c.sendWebSocketCommandWithCode(ctx, token, msgType, data)
+	return result, err
 }
 
 // CreateLongLivedToken creates a long-lived access token via WebSocket API.

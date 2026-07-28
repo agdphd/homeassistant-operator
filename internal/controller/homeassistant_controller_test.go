@@ -36,6 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
+	hav1alpha1 "github.com/przemekhys/homeassistant-operator/api/v1alpha1"
 )
 
 var _ = Describe("HomeAssistant Controller", func() {
@@ -1281,7 +1282,8 @@ var _ = Describe("HomeAssistant Controller", func() {
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}
-			desired := reconciler.buildStatefulSet(ctx, ha)
+			desired, err := reconciler.buildStatefulSet(ctx, ha)
+			Expect(err).NotTo(HaveOccurred())
 
 			By("Verifying annotations are preserved")
 			Expect(desired.Spec.Template.Annotations).To(HaveKey("ha.homeassistant.io/config-hash"))
@@ -1983,7 +1985,8 @@ var _ = Describe("HomeAssistant Controller", func() {
 				ObjectMeta: metav1.ObjectMeta{Name: "unban-test", Namespace: "default"},
 				Spec:       hav1.HomeAssistantSpec{Version: "2024.1.0"},
 			}
-			containers := reconciler.buildInitContainers(ha)
+			containers, err := reconciler.buildInitContainers(ctx, ha)
+			Expect(err).NotTo(HaveOccurred())
 
 			names := make([]string, len(containers))
 			for i, c := range containers {
@@ -1991,6 +1994,15 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}
 			Expect(names).To(ContainElement("unban-operator-ip"))
 			Expect(names).To(ContainElement("config-init"))
+
+			for _, c := range containers {
+				if c.Name == "config-init" {
+					Expect(c.Args).To(HaveLen(1))
+					Expect(c.Args[0]).To(ContainSubstring("mkdir -p /config/python_scripts"),
+						"python_script's own setup() never registers its reload service if "+
+							"this directory is missing at HA's first boot")
+				}
+			}
 		})
 
 		It("should NOT include unban-operator-ip init-container when POD_IP is empty", func() {
@@ -2006,7 +2018,8 @@ var _ = Describe("HomeAssistant Controller", func() {
 				ObjectMeta: metav1.ObjectMeta{Name: "unban-test-no-ip", Namespace: "default"},
 				Spec:       hav1.HomeAssistantSpec{Version: "2024.1.0"},
 			}
-			containers := reconciler.buildInitContainers(ha)
+			containers, err := reconciler.buildInitContainers(ctx, ha)
+			Expect(err).NotTo(HaveOccurred())
 
 			for _, c := range containers {
 				Expect(c.Name).NotTo(Equal("unban-operator-ip"))
@@ -2056,6 +2069,87 @@ var _ = Describe("HomeAssistant Controller", func() {
 			Expect(c.VolumeMounts).To(HaveLen(1))
 			Expect(c.VolumeMounts[0].Name).To(Equal("config"))
 			Expect(c.VolumeMounts[0].MountPath).To(Equal("/config"))
+		})
+	})
+
+	Context("Community repository sidecar/init-container injection", func() {
+		var reconciler *HomeAssistantReconciler
+
+		BeforeEach(func() {
+			reconciler = &HomeAssistantReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+		})
+
+		AfterEach(func() {
+			list := &hav1alpha1.HomeAssistantCommunityRepositoryList{}
+			_ = k8sClient.List(ctx, list, &client.ListOptions{Namespace: "default"})
+			for i := range list.Items {
+				_ = k8sClient.Delete(ctx, &list.Items[i])
+			}
+		})
+
+		It("omits the sidecar/init-container/ConfigMap volume when no CommunityRepository targets this instance", func() {
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: "cr-inject-none", Namespace: "default"},
+				Spec:       hav1.HomeAssistantSpec{Version: "2024.1.0"},
+			}
+
+			initContainers, err := reconciler.buildInitContainers(ctx, ha)
+			Expect(err).NotTo(HaveOccurred())
+			for _, c := range initContainers {
+				Expect(c.Name).NotTo(Equal("community-repository-init"))
+			}
+
+			sts, err := reconciler.buildStatefulSet(ctx, ha)
+			Expect(err).NotTo(HaveOccurred())
+			for _, c := range sts.Spec.Template.Spec.Containers {
+				Expect(c.Name).NotTo(Equal("community-repository-sidecar"))
+			}
+			for _, v := range sts.Spec.Template.Spec.Volumes {
+				Expect(v.Name).NotTo(Equal("community-repositories"))
+			}
+		})
+
+		It("injects the sidecar/init-container/ConfigMap volume when a CommunityRepository targets this instance", func() {
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: "cr-inject-some", Namespace: "default"},
+				Spec:       hav1.HomeAssistantSpec{Version: "2024.1.0"},
+			}
+
+			repo := &hav1alpha1.HomeAssistantCommunityRepository{
+				ObjectMeta: metav1.ObjectMeta{Name: "cr-inject-some-theme", Namespace: "default"},
+				Spec: hav1alpha1.HomeAssistantCommunityRepositorySpec{
+					HomeAssistantRef: hav1alpha1.HomeAssistantReference{Name: ha.Name},
+					Category:         hav1alpha1.CategoryTheme,
+					Repository:       "acme/some-theme",
+					Ref:              "v1.0.0",
+				},
+			}
+			Expect(k8sClient.Create(ctx, repo)).To(Succeed())
+
+			built, err := reconciler.buildInitContainers(ctx, ha)
+			Expect(err).NotTo(HaveOccurred())
+			initContainerNames := make([]string, 0, len(built))
+			for _, c := range built {
+				initContainerNames = append(initContainerNames, c.Name)
+			}
+			Expect(initContainerNames).To(ContainElement("community-repository-init"))
+
+			sts, err := reconciler.buildStatefulSet(ctx, ha)
+			Expect(err).NotTo(HaveOccurred())
+			containerNames := make([]string, 0, len(sts.Spec.Template.Spec.Containers))
+			for _, c := range sts.Spec.Template.Spec.Containers {
+				containerNames = append(containerNames, c.Name)
+			}
+			Expect(containerNames).To(ContainElement("community-repository-sidecar"))
+
+			volumeNames := make([]string, 0, len(sts.Spec.Template.Spec.Volumes))
+			for _, v := range sts.Spec.Template.Spec.Volumes {
+				volumeNames = append(volumeNames, v.Name)
+			}
+			Expect(volumeNames).To(ContainElement("community-repositories"))
 		})
 	})
 })

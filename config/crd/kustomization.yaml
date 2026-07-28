@@ -12,6 +12,7 @@ resources:
 - bases/ha.homeassistant.io_homeassistantfloors.yaml
 - bases/ha.homeassistant.io_homeassistantlabels.yaml
 - bases/ha.homeassistant.io_homeassistantareas.yaml
+- bases/ha.homeassistant.io_homeassistantcommunityrepositories.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
