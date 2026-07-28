@@ -123,7 +123,7 @@ K3D_MEMORY_E2E ?= 12g
 # renovate: datasource=docker depName=rancher/k3s
 K3S_VERSION ?= v1.36.2-k3s1
 # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
-HA_VERSION ?= 2026.7.2
+HA_VERSION ?= 2026.7.4
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a k3d cluster for e2e tests (always creates fresh cluster)
@@ -311,7 +311,7 @@ HELM_DOCS_VERSION ?= v1.14.2
 # renovate: datasource=github-releases depName=yannh/kubeconform
 KUBECONFORM_VERSION ?= v0.8.0
 # renovate: datasource=github-releases depName=helm-unittest/helm-unittest
-HELM_UNITTEST_VERSION ?= v1.1.1
+HELM_UNITTEST_VERSION ?= v1.1.2
 
 .PHONY: helm-tools
 helm-tools: helm-docs-bin kubeconform helm-unittest-plugin ## Install Helm dev/CI tooling (helm-docs, kubeconform, helm-unittest plugin).
