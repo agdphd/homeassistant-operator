@@ -37,16 +37,16 @@ import (
 	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 )
 
-// TestAdmissionWebhookRejectsInvalidNativeTLS exercises the real HTTP admission
-// path end to end (real API server + real ValidatingWebhookConfiguration + real
-// webhook server), the same wiring cmd/main.go uses via
-// SetupHomeAssistantWebhookWithManager. The unit tests in
-// homeassistant_webhook_test.go only exercise validateHomeAssistantTLS as a pure
-// function and would not catch a registration/wiring bug.
-func TestAdmissionWebhookRejectsInvalidNativeTLS(t *testing.T) {
+// setupWebhookTestEnv spins up a real envtest API server, a real
+// ValidatingWebhookConfiguration, and a real webhook server (the same wiring
+// cmd/main.go uses via SetupHomeAssistantWebhookWithManager), then waits for
+// the webhook server to accept TLS connections before returning a client
+// pointed at it. Callers must invoke the returned cleanup function (e.g. via
+// defer) to stop the manager and the envtest environment.
+func setupWebhookTestEnv(t *testing.T) (client.Client, func()) {
+	t.Helper()
 	g := NewWithT(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	g.Expect(hav1.AddToScheme(scheme.Scheme)).To(Succeed())
 
@@ -59,7 +59,6 @@ func TestAdmissionWebhookRejectsInvalidNativeTLS(t *testing.T) {
 
 	cfg, err := testEnv.Start()
 	g.Expect(err).NotTo(HaveOccurred())
-	defer func() { g.Expect(testEnv.Stop()).To(Succeed()) }()
 
 	whOpts := testEnv.WebhookInstallOptions
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
@@ -94,6 +93,22 @@ func TestAdmissionWebhookRejectsInvalidNativeTLS(t *testing.T) {
 	k8sClient, err := client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	g.Expect(err).NotTo(HaveOccurred())
 
+	cleanup := func() {
+		cancel()
+		g.Expect(testEnv.Stop()).To(Succeed())
+	}
+	return k8sClient, cleanup
+}
+
+// TestAdmissionWebhookRejectsInvalidNativeTLS exercises the real HTTP admission
+// path end to end. The unit tests in homeassistant_webhook_test.go only
+// exercise validateHomeAssistantTLS as a pure function and would not catch a
+// registration/wiring bug.
+func TestAdmissionWebhookRejectsInvalidNativeTLS(t *testing.T) {
+	g := NewWithT(t)
+	k8sClient, cleanup := setupWebhookTestEnv(t)
+	defer cleanup()
+
 	bad := &hav1.HomeAssistant{
 		ObjectMeta: metav1.ObjectMeta{Name: "ha-bad", Namespace: "default"},
 		Spec: hav1.HomeAssistantSpec{
@@ -105,65 +120,20 @@ func TestAdmissionWebhookRejectsInvalidNativeTLS(t *testing.T) {
 		},
 	}
 
-	err = k8sClient.Create(ctx, bad)
+	err := k8sClient.Create(context.Background(), bad)
 	g.Expect(err).To(HaveOccurred(), "webhook should reject native TLS without issuerRef/secretName")
 	g.Expect(err.Error()).To(ContainSubstring("requires issuerRef or secretName"))
 }
 
 // TestAdmissionWebhookRejectsInvalidGatewayFilter exercises the real HTTP
-// admission path (real API server + real ValidatingWebhookConfiguration + real
-// webhook server) for spec.gateway.filters, the same way
+// admission path end to end for spec.gateway.filters, the same way
 // TestAdmissionWebhookRejectsInvalidNativeTLS does for native TLS. The unit
 // tests in homeassistant_webhook_test.go only exercise validateGatewayFilters
 // as a pure function and would not catch a registration/wiring bug.
 func TestAdmissionWebhookRejectsInvalidGatewayFilter(t *testing.T) {
 	g := NewWithT(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	g.Expect(hav1.AddToScheme(scheme.Scheme)).To(Succeed())
-
-	testEnv := &envtest.Environment{
-		CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "config", "crd", "bases")},
-		WebhookInstallOptions: envtest.WebhookInstallOptions{
-			Paths: []string{filepath.Join("..", "..", "..", "config", "webhook")},
-		},
-	}
-
-	cfg, err := testEnv.Start()
-	g.Expect(err).NotTo(HaveOccurred())
-	defer func() { g.Expect(testEnv.Stop()).To(Succeed()) }()
-
-	whOpts := testEnv.WebhookInstallOptions
-	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
-		Scheme: scheme.Scheme,
-		WebhookServer: webhook.NewServer(webhook.Options{
-			Host:    whOpts.LocalServingHost,
-			Port:    whOpts.LocalServingPort,
-			CertDir: whOpts.LocalServingCertDir,
-		}),
-		Metrics:                metricsserver.Options{BindAddress: "0"},
-		HealthProbeBindAddress: "0",
-		LeaderElection:         false,
-	})
-	g.Expect(err).NotTo(HaveOccurred())
-
-	g.Expect(SetupHomeAssistantWebhookWithManager(mgr)).To(Succeed())
-
-	go func() {
-		_ = mgr.Start(ctx)
-	}()
-
-	g.Eventually(func(g Gomega) {
-		conn, err := tls.Dial("tcp",
-			fmt.Sprintf("%s:%d", whOpts.LocalServingHost, whOpts.LocalServingPort),
-			&tls.Config{InsecureSkipVerify: true}) //nolint:gosec // test-only
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(conn.Close()).To(Succeed())
-	}, 10*time.Second, 100*time.Millisecond).Should(Succeed())
-
-	k8sClient, err := client.New(cfg, client.Options{Scheme: scheme.Scheme})
-	g.Expect(err).NotTo(HaveOccurred())
+	k8sClient, cleanup := setupWebhookTestEnv(t)
+	defer cleanup()
 
 	// type is a valid enum value (passes the CRD's own OpenAPI schema check),
 	// but the required requestHeaderModifier sub-object is missing — only the
@@ -178,7 +148,7 @@ func TestAdmissionWebhookRejectsInvalidGatewayFilter(t *testing.T) {
 		},
 	}
 
-	err = k8sClient.Create(ctx, bad)
+	err := k8sClient.Create(context.Background(), bad)
 	g.Expect(err).To(HaveOccurred(), "webhook should reject a filter missing its declared type's sub-object")
 	g.Expect(err.Error()).To(ContainSubstring("requestHeaderModifier is required"))
 }

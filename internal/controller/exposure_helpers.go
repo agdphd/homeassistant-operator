@@ -272,10 +272,12 @@ func (r *HomeAssistantReconciler) reconcileGatewayRoute(
 }
 
 // buildGatewayFilters translates spec.gateway.filters into the equivalent
-// Gateway API HTTPRouteFilter unstructured shape, in declared order. Omitted
-// sub-fields are left out of the map entirely (rather than emitted as null),
-// keeping the rendered route minimal and matching how the rest of this file
-// builds unstructured objects.
+// Gateway API HTTPRouteFilter unstructured shape, in declared order. Mirrors
+// validateGatewayFilter's discriminated union: only the sub-object matching
+// f.Type is ever rendered, regardless of which pointer fields happen to be
+// set — the admission webhook already enforces that invariant, but this keeps
+// the builder correct on its own rather than relying on it. An unrecognized
+// Type renders with no sub-object at all.
 func buildGatewayFilters(filters []hav1.HTTPRouteFilter) []interface{} {
 	if len(filters) == 0 {
 		return nil
@@ -283,17 +285,23 @@ func buildGatewayFilters(filters []hav1.HTTPRouteFilter) []interface{} {
 	out := make([]interface{}, 0, len(filters))
 	for _, f := range filters {
 		m := map[string]interface{}{"type": f.Type}
-		if f.RequestHeaderModifier != nil {
-			m["requestHeaderModifier"] = buildHTTPHeaderFilter(f.RequestHeaderModifier)
-		}
-		if f.ResponseHeaderModifier != nil {
-			m["responseHeaderModifier"] = buildHTTPHeaderFilter(f.ResponseHeaderModifier)
-		}
-		if f.RequestRedirect != nil {
-			m["requestRedirect"] = buildHTTPRequestRedirectFilter(f.RequestRedirect)
-		}
-		if f.URLRewrite != nil {
-			m["urlRewrite"] = buildHTTPURLRewriteFilter(f.URLRewrite)
+		switch f.Type {
+		case "RequestHeaderModifier":
+			if f.RequestHeaderModifier != nil {
+				m["requestHeaderModifier"] = buildHTTPHeaderFilter(f.RequestHeaderModifier)
+			}
+		case "ResponseHeaderModifier":
+			if f.ResponseHeaderModifier != nil {
+				m["responseHeaderModifier"] = buildHTTPHeaderFilter(f.ResponseHeaderModifier)
+			}
+		case "RequestRedirect":
+			if f.RequestRedirect != nil {
+				m["requestRedirect"] = buildHTTPRequestRedirectFilter(f.RequestRedirect)
+			}
+		case "URLRewrite":
+			if f.URLRewrite != nil {
+				m["urlRewrite"] = buildHTTPURLRewriteFilter(f.URLRewrite)
+			}
 		}
 		out = append(out, m)
 	}

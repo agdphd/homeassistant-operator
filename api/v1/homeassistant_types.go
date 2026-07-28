@@ -278,7 +278,8 @@ type HTTPRequestRedirectFilter struct {
 	// +optional
 	Port *int32 `json:"port,omitempty"`
 
-	// StatusCode is the redirect status code (e.g. 301, 302).
+	// StatusCode is the redirect status code.
+	// +kubebuilder:validation:Enum=301;302;303;307;308
 	// +optional
 	StatusCode *int `json:"statusCode,omitempty"`
 }

@@ -410,8 +410,13 @@ spec:
                                 "https").
                               type: string
                             statusCode:
-                              description: StatusCode is the redirect status code
-                                (e.g. 301, 302).
+                              description: StatusCode is the redirect status code.
+                              enum:
+                              - 301
+                              - 302
+                              - 303
+                              - 307
+                              - 308
                               type: integer
                           type: object
                         responseHeaderModifier:

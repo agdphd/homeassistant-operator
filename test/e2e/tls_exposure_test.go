@@ -158,11 +158,19 @@ spec:
 			return utils.GetResourceStatus("httproute", haName, namespace, "{.spec.hostnames[0]}")
 		}, utils.ResourceTimeout, utils.DefaultEventuallyPollingInterval).Should(Equal(haName + ".example.com"))
 
-		By("Verifying the HTTPRoute carries the declared filters")
+		By("Verifying the HTTPRoute carries the declared filters, in order, with their exact fields")
 		Eventually(func() string {
-			return utils.GetResourceStatus("httproute", haName, namespace, "{.spec.rules[0].filters}")
+			return utils.GetResourceStatus("httproute", haName, namespace, "{.spec.rules[0].filters[*].type}")
 		}, utils.ResourceTimeout, utils.DefaultEventuallyPollingInterval).Should(
-			SatisfyAll(ContainSubstring("RequestRedirect"), ContainSubstring("ResponseHeaderModifier")))
+			Equal("RequestRedirect ResponseHeaderModifier"))
+		Expect(utils.GetResourceStatus("httproute", haName, namespace,
+			"{.spec.rules[0].filters[0].requestRedirect.scheme}")).To(Equal("https"))
+		Expect(utils.GetResourceStatus("httproute", haName, namespace,
+			"{.spec.rules[0].filters[0].requestRedirect.statusCode}")).To(Equal("301"))
+		Expect(utils.GetResourceStatus("httproute", haName, namespace,
+			"{.spec.rules[0].filters[1].responseHeaderModifier.set[0].name}")).To(Equal("X-Frame-Options"))
+		Expect(utils.GetResourceStatus("httproute", haName, namespace,
+			"{.spec.rules[0].filters[1].responseHeaderModifier.set[0].value}")).To(Equal("SAMEORIGIN"))
 
 		By("Waiting for the gateway Certificate to be Ready")
 		Eventually(func() string {
@@ -171,7 +179,11 @@ spec:
 		}, utils.CertIssueTimeout, utils.DefaultEventuallyPollingInterval).Should(Equal("True"))
 
 		By("Recording the HA pod start time before changing filters")
-		podStartBefore := utils.GetResourceStatus("pod", haName+"-0", namespace, "{.status.startTime}")
+		var podStartBefore string
+		Eventually(func() string {
+			podStartBefore = utils.GetResourceStatus("pod", haName+"-0", namespace, "{.status.startTime}")
+			return podStartBefore
+		}, utils.ResourceTimeout, utils.DefaultEventuallyPollingInterval).ShouldNot(BeEmpty())
 
 		By("Removing a filter and confirming the route updates without a pod restart")
 		redirectOnlyPatch := `{"spec":{"gateway":{"filters":[` +
@@ -179,10 +191,14 @@ spec:
 			`]}}}`
 		Expect(utils.PatchResource("homeassistant", haName, namespace, "merge", redirectOnlyPatch)).To(Succeed())
 
+		By("Verifying the route now carries exactly one RequestRedirect filter with its expected configuration")
 		Eventually(func() string {
-			return utils.GetResourceStatus("httproute", haName, namespace, "{.spec.rules[0].filters}")
-		}, utils.ResourceTimeout, utils.DefaultEventuallyPollingInterval).Should(
-			SatisfyAll(ContainSubstring("RequestRedirect"), Not(ContainSubstring("ResponseHeaderModifier"))))
+			return utils.GetResourceStatus("httproute", haName, namespace, "{.spec.rules[0].filters[*].type}")
+		}, utils.ResourceTimeout, utils.DefaultEventuallyPollingInterval).Should(Equal("RequestRedirect"))
+		Expect(utils.GetResourceStatus("httproute", haName, namespace,
+			"{.spec.rules[0].filters[0].requestRedirect.scheme}")).To(Equal("https"))
+		Expect(utils.GetResourceStatus("httproute", haName, namespace,
+			"{.spec.rules[0].filters[0].requestRedirect.statusCode}")).To(Equal("301"))
 
 		Expect(utils.GetResourceStatus("pod", haName+"-0", namespace, "{.status.startTime}")).
 			To(Equal(podStartBefore), "changing spec.gateway.filters must not restart the HA pod")
