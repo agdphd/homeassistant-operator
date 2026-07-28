@@ -478,10 +478,13 @@ spec:
 			podStartAfter := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.startTime}")
 			Expect(podStartAfter).To(Equal(podStartBefore), "theme install must not restart the pod")
 
-			cmd := exec.Command("kubectl", "exec", haName+"-0", "-n", namespace, "-c", "home-assistant", "--",
-				"test", "-f", "/config/themes/example_theme.yaml")
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
+			By("Waiting for the sidecar to materialize the theme file (~poll interval + propagation)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "exec", haName+"-0", "-n", namespace, "-c", "home-assistant", "--",
+					"test", "-f", "/config/themes/example_theme.yaml")
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}, crActivationSettleDelay+utils.ReconciliationTimeout, reconcileInterval).Should(Succeed())
 		})
 
 	It("installs a python_script-category repository",
@@ -504,10 +507,13 @@ spec:
 				g.Expect(getPhase("e2e-python-script")).To(Equal("Installed"))
 			}, crActivationSettleDelay+utils.ReconciliationTimeout, reconcileInterval).Should(Succeed())
 
-			cmd := exec.Command("kubectl", "exec", haName+"-0", "-n", namespace, "-c", "home-assistant", "--",
-				"test", "-f", "/config/python_scripts/example_script.py")
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
+			By("Waiting for the sidecar to materialize the python_script file (~poll interval + propagation)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "exec", haName+"-0", "-n", namespace, "-c", "home-assistant", "--",
+					"test", "-f", "/config/python_scripts/example_script.py")
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}, crActivationSettleDelay+utils.ReconciliationTimeout, reconcileInterval).Should(Succeed())
 		})
 
 	It("installs a template-category repository",
@@ -530,10 +536,13 @@ spec:
 				g.Expect(getPhase("e2e-template")).To(Equal("Installed"))
 			}, crActivationSettleDelay+utils.ReconciliationTimeout, reconcileInterval).Should(Succeed())
 
-			cmd := exec.Command("kubectl", "exec", haName+"-0", "-n", namespace, "-c", "home-assistant", "--",
-				"test", "-f", "/config/custom_templates/example_template.jinja")
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
+			By("Waiting for the sidecar to materialize the template file (~poll interval + propagation)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "exec", haName+"-0", "-n", namespace, "-c", "home-assistant", "--",
+					"test", "-f", "/config/custom_templates/example_template.jinja")
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}, crActivationSettleDelay+utils.ReconciliationTimeout, reconcileInterval).Should(Succeed())
 		})
 
 	It("installs a plugin-category repository and registers its Lovelace resource",
@@ -562,10 +571,13 @@ spec:
 			Expect(getReadyMessage("e2e-plugin")).To(ContainSubstring("reload confirmed"),
 				"the Lovelace resource must have been actually registered via the API, not just the file placed")
 
-			cmd := exec.Command("kubectl", "exec", haName+"-0", "-n", namespace, "-c", "home-assistant", "--",
-				"test", "-f", "/config/www/community/example-card.js")
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred())
+			By("Waiting for the sidecar to materialize the plugin file (~poll interval + propagation)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "exec", haName+"-0", "-n", namespace, "-c", "home-assistant", "--",
+					"test", "-f", "/config/www/community/example-card.js")
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}, crActivationSettleDelay+utils.ReconciliationTimeout, reconcileInterval).Should(Succeed())
 		})
 
 	It("keeps installedVersion at the old ref until a ref update is confirmed, then updates it",
@@ -580,10 +592,14 @@ spec:
 				g.Expect(getInstalledVersion("e2e-theme")).To(Equal("v2.0.0"))
 			}, crActivationSettleDelay+utils.ReconciliationTimeout, reconcileInterval).Should(Succeed())
 
-			cmd := exec.Command("kubectl", "exec", haName+"-0", "-n", namespace, "-c", "home-assistant", "--",
-				"grep", "-q", "version: 2", "/config/themes/example_theme.yaml")
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "theme file content must reflect v2.0.0")
+			By("Waiting for the sidecar to materialize the updated theme file (~poll interval + propagation)")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "exec", haName+"-0", "-n", namespace, "-c", "home-assistant", "--",
+					"grep", "-q", "version: 2", "/config/themes/example_theme.yaml")
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}, crActivationSettleDelay+utils.ReconciliationTimeout, reconcileInterval).Should(Succeed(),
+				"theme file content must reflect v2.0.0")
 		})
 
 	It("removes the ConfigMap entry and the materialized file on deletion",
