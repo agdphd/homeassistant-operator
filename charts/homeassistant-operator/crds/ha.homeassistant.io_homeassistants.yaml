@@ -310,6 +310,202 @@ spec:
                       Enabled turns on operator management of Gateway API routing (HTTPRoute,
                       and optionally a Gateway).
                     type: boolean
+                  filters:
+                    description: |-
+                      Filters are HTTP route-level behaviors (header modification, redirect, URL
+                      rewrite) applied, in order, to the single HTTPRoute rule the operator
+                      manages for this instance. Omitted/empty leaves the route unchanged from
+                      its default shape.
+                    items:
+                      description: |-
+                        HTTPRouteFilter is one user-declared route behavior attached to the HTTP
+                        route exposing a HomeAssistant instance through Gateway API. Mirrors the
+                        field names/shape of upstream Gateway API's own HTTPRouteFilter, limited to
+                        the four supported types: RequestHeaderModifier, ResponseHeaderModifier,
+                        RequestRedirect, URLRewrite. Exactly the sub-object matching Type must be
+                        set; the webhook rejects any other combination.
+                      properties:
+                        requestHeaderModifier:
+                          description: |-
+                            RequestHeaderModifier modifies request headers. Must be set, and only be
+                            set, when Type is RequestHeaderModifier.
+                          properties:
+                            add:
+                              description: Add appends headers, keeping any existing
+                                value.
+                              items:
+                                description: HTTPHeader is a single HTTP header name/value
+                                  pair.
+                                properties:
+                                  name:
+                                    description: Name of the header.
+                                    type: string
+                                  value:
+                                    description: Value of the header.
+                                    type: string
+                                required:
+                                - name
+                                - value
+                                type: object
+                              type: array
+                            remove:
+                              description: Remove lists header names to strip.
+                              items:
+                                type: string
+                              type: array
+                            set:
+                              description: Set overwrites headers already present.
+                              items:
+                                description: HTTPHeader is a single HTTP header name/value
+                                  pair.
+                                properties:
+                                  name:
+                                    description: Name of the header.
+                                    type: string
+                                  value:
+                                    description: Value of the header.
+                                    type: string
+                                required:
+                                - name
+                                - value
+                                type: object
+                              type: array
+                          type: object
+                        requestRedirect:
+                          description: |-
+                            RequestRedirect redirects the request. Must be set, and only be set,
+                            when Type is RequestRedirect.
+                          properties:
+                            hostname:
+                              description: Hostname replaces the request hostname.
+                              type: string
+                            path:
+                              description: Path replaces the request path.
+                              properties:
+                                replaceFullPath:
+                                  description: |-
+                                    ReplaceFullPath is the whole replacement path. Must be set, and only be
+                                    set, when Type is ReplaceFullPath.
+                                  type: string
+                                replacePrefixMatch:
+                                  description: |-
+                                    ReplacePrefixMatch is the replacement for the matched path prefix. Must
+                                    be set, and only be set, when Type is ReplacePrefixMatch.
+                                  type: string
+                                type:
+                                  description: Type selects which of the fields below
+                                    applies.
+                                  enum:
+                                  - ReplaceFullPath
+                                  - ReplacePrefixMatch
+                                  type: string
+                              required:
+                              - type
+                              type: object
+                            port:
+                              description: Port replaces the request port.
+                              format: int32
+                              type: integer
+                            scheme:
+                              description: Scheme replaces the request scheme (e.g.
+                                "https").
+                              type: string
+                            statusCode:
+                              description: StatusCode is the redirect status code
+                                (e.g. 301, 302).
+                              type: integer
+                          type: object
+                        responseHeaderModifier:
+                          description: |-
+                            ResponseHeaderModifier modifies response headers. Must be set, and only
+                            be set, when Type is ResponseHeaderModifier.
+                          properties:
+                            add:
+                              description: Add appends headers, keeping any existing
+                                value.
+                              items:
+                                description: HTTPHeader is a single HTTP header name/value
+                                  pair.
+                                properties:
+                                  name:
+                                    description: Name of the header.
+                                    type: string
+                                  value:
+                                    description: Value of the header.
+                                    type: string
+                                required:
+                                - name
+                                - value
+                                type: object
+                              type: array
+                            remove:
+                              description: Remove lists header names to strip.
+                              items:
+                                type: string
+                              type: array
+                            set:
+                              description: Set overwrites headers already present.
+                              items:
+                                description: HTTPHeader is a single HTTP header name/value
+                                  pair.
+                                properties:
+                                  name:
+                                    description: Name of the header.
+                                    type: string
+                                  value:
+                                    description: Value of the header.
+                                    type: string
+                                required:
+                                - name
+                                - value
+                                type: object
+                              type: array
+                          type: object
+                        type:
+                          description: Type selects which of the sub-objects below
+                            applies.
+                          enum:
+                          - RequestHeaderModifier
+                          - ResponseHeaderModifier
+                          - RequestRedirect
+                          - URLRewrite
+                          type: string
+                        urlRewrite:
+                          description: |-
+                            URLRewrite rewrites the request path/hostname. Must be set, and only be
+                            set, when Type is URLRewrite.
+                          properties:
+                            hostname:
+                              description: Hostname replaces the request hostname.
+                              type: string
+                            path:
+                              description: Path replaces the request path.
+                              properties:
+                                replaceFullPath:
+                                  description: |-
+                                    ReplaceFullPath is the whole replacement path. Must be set, and only be
+                                    set, when Type is ReplaceFullPath.
+                                  type: string
+                                replacePrefixMatch:
+                                  description: |-
+                                    ReplacePrefixMatch is the replacement for the matched path prefix. Must
+                                    be set, and only be set, when Type is ReplacePrefixMatch.
+                                  type: string
+                                type:
+                                  description: Type selects which of the fields below
+                                    applies.
+                                  enum:
+                                  - ReplaceFullPath
+                                  - ReplacePrefixMatch
+                                  type: string
+                              required:
+                              - type
+                              type: object
+                          type: object
+                      required:
+                      - type
+                      type: object
+                    type: array
                   host:
                     description: Host is the hostname for the route and certificate.
                     type: string

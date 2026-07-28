@@ -14,6 +14,10 @@
 # Attach to an existing Gateway via parentRef, OR set manageGateway: true to let
 # the operator create the Gateway (referencing an existing GatewayClass by name
 # equal to metadata.name — adjust to your environment).
+#
+# This example also shows spec.gateway.filters: route-level behaviors (header
+# modification, redirect, URL rewrite) applied to the route, without needing a
+# hand-authored HTTPRoute.
 apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistant
 metadata:
@@ -40,6 +44,19 @@ spec:
     # ...or let the operator create a Gateway instead of parentRef:
     # manageGateway: true
     # secretName: my-existing-tls   # bring-your-own; overrides issuerRef
+    # Route-level filters (optional): applied, in order, to the single route
+    # the operator manages for this instance. Supported types:
+    # RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, URLRewrite.
+    filters:
+      - type: RequestRedirect
+        requestRedirect:
+          scheme: https
+          statusCode: 301
+      - type: ResponseHeaderModifier
+        responseHeaderModifier:
+          set:
+            - name: X-Frame-Options
+              value: SAMEORIGIN
 ---
 apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantConfiguration

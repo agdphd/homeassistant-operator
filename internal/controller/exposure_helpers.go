@@ -243,6 +243,16 @@ func (r *HomeAssistantReconciler) reconcileGatewayRoute(
 		return false, nil
 	}
 
+	rule := map[string]interface{}{
+		"backendRefs": []interface{}{map[string]interface{}{
+			"name": ha.Name,
+			"port": int64(servicePort(ha)),
+		}},
+	}
+	if filters := buildGatewayFilters(g.Filters); len(filters) > 0 {
+		rule["filters"] = filters
+	}
+
 	route := &unstructured.Unstructured{}
 	route.SetGroupVersionKind(httpRouteGVK)
 	route.SetName(ha.Name)
@@ -251,12 +261,7 @@ func (r *HomeAssistantReconciler) reconcileGatewayRoute(
 		route.Object["spec"] = map[string]interface{}{
 			"parentRefs": []interface{}{parent},
 			"hostnames":  []interface{}{g.Host},
-			"rules": []interface{}{map[string]interface{}{
-				"backendRefs": []interface{}{map[string]interface{}{
-					"name": ha.Name,
-					"port": int64(servicePort(ha)),
-				}},
-			}},
+			"rules":      []interface{}{rule},
 		}
 		return controllerutil.SetControllerReference(ha, route, r.Scheme)
 	})
@@ -264,6 +269,103 @@ func (r *HomeAssistantReconciler) reconcileGatewayRoute(
 		return false, err
 	}
 	return true, nil
+}
+
+// buildGatewayFilters translates spec.gateway.filters into the equivalent
+// Gateway API HTTPRouteFilter unstructured shape, in declared order. Omitted
+// sub-fields are left out of the map entirely (rather than emitted as null),
+// keeping the rendered route minimal and matching how the rest of this file
+// builds unstructured objects.
+func buildGatewayFilters(filters []hav1.HTTPRouteFilter) []interface{} {
+	if len(filters) == 0 {
+		return nil
+	}
+	out := make([]interface{}, 0, len(filters))
+	for _, f := range filters {
+		m := map[string]interface{}{"type": f.Type}
+		if f.RequestHeaderModifier != nil {
+			m["requestHeaderModifier"] = buildHTTPHeaderFilter(f.RequestHeaderModifier)
+		}
+		if f.ResponseHeaderModifier != nil {
+			m["responseHeaderModifier"] = buildHTTPHeaderFilter(f.ResponseHeaderModifier)
+		}
+		if f.RequestRedirect != nil {
+			m["requestRedirect"] = buildHTTPRequestRedirectFilter(f.RequestRedirect)
+		}
+		if f.URLRewrite != nil {
+			m["urlRewrite"] = buildHTTPURLRewriteFilter(f.URLRewrite)
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+func buildHTTPHeaderFilter(h *hav1.HTTPHeaderFilter) map[string]interface{} {
+	m := map[string]interface{}{}
+	if len(h.Set) > 0 {
+		m["set"] = buildHTTPHeaders(h.Set)
+	}
+	if len(h.Add) > 0 {
+		m["add"] = buildHTTPHeaders(h.Add)
+	}
+	if len(h.Remove) > 0 {
+		remove := make([]interface{}, len(h.Remove))
+		for i, name := range h.Remove {
+			remove[i] = name
+		}
+		m["remove"] = remove
+	}
+	return m
+}
+
+func buildHTTPHeaders(headers []hav1.HTTPHeader) []interface{} {
+	out := make([]interface{}, len(headers))
+	for i, h := range headers {
+		out[i] = map[string]interface{}{"name": h.Name, "value": h.Value}
+	}
+	return out
+}
+
+func buildHTTPRequestRedirectFilter(f *hav1.HTTPRequestRedirectFilter) map[string]interface{} {
+	m := map[string]interface{}{}
+	if f.Scheme != nil {
+		m["scheme"] = *f.Scheme
+	}
+	if f.Hostname != nil {
+		m["hostname"] = *f.Hostname
+	}
+	if f.Path != nil {
+		m["path"] = buildHTTPPathModifier(f.Path)
+	}
+	if f.Port != nil {
+		m["port"] = int64(*f.Port)
+	}
+	if f.StatusCode != nil {
+		m["statusCode"] = int64(*f.StatusCode)
+	}
+	return m
+}
+
+func buildHTTPURLRewriteFilter(f *hav1.HTTPURLRewriteFilter) map[string]interface{} {
+	m := map[string]interface{}{}
+	if f.Hostname != nil {
+		m["hostname"] = *f.Hostname
+	}
+	if f.Path != nil {
+		m["path"] = buildHTTPPathModifier(f.Path)
+	}
+	return m
+}
+
+func buildHTTPPathModifier(p *hav1.HTTPPathModifier) map[string]interface{} {
+	m := map[string]interface{}{"type": p.Type}
+	if p.ReplaceFullPath != nil {
+		m["replaceFullPath"] = *p.ReplaceFullPath
+	}
+	if p.ReplacePrefixMatch != nil {
+		m["replacePrefixMatch"] = *p.ReplacePrefixMatch
+	}
+	return m
 }
 
 // ensureManagedGateway creates/updates a Gateway with an HTTPS listener when the

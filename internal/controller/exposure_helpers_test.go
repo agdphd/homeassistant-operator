@@ -79,7 +79,7 @@ func getUnstructured(
 	return u, r.Get(context.Background(), client.ObjectKey{Name: name, Namespace: "default"}, u)
 }
 
-// TestReconcileExposureIngress (US3): Ingress enabled with an issuerRef and
+// TestReconcileExposureIngress: Ingress enabled with an issuerRef and
 // cert-manager present → Ingress + Certificate created, ExposureReady=True.
 func TestReconcileExposureIngress(t *testing.T) {
 	ha := ingressHA("home", true)
@@ -157,6 +157,107 @@ func TestReconcileExposureGatewayRoute(t *testing.T) {
 		t.Fatal("expected ExposureReady=True")
 	}
 }
+
+// TestReconcileExposureGatewayRouteFilters: declared filters are applied,
+// in order, to the managed HTTPRoute's single rule.
+func TestReconcileExposureGatewayRouteFilters(t *testing.T) {
+	statusCode := 301
+	ha := &hav1.HomeAssistant{
+		ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default"},
+		Spec: hav1.HomeAssistantSpec{Gateway: &hav1.GatewaySpec{
+			Enabled:   true,
+			Host:      "ha.example.com",
+			ParentRef: &hav1.GatewayParentRef{Name: "traefik", Namespace: "gateway", SectionName: "https"},
+			Filters: []hav1.HTTPRouteFilter{
+				{
+					Type: "RequestRedirect",
+					RequestRedirect: &hav1.HTTPRequestRedirectFilter{
+						Scheme:     ptrTo("https"),
+						StatusCode: &statusCode,
+					},
+				},
+				{
+					Type: "ResponseHeaderModifier",
+					ResponseHeaderModifier: &hav1.HTTPHeaderFilter{
+						Set: []hav1.HTTPHeader{{Name: "X-Frame-Options", Value: "SAMEORIGIN"}},
+					},
+				},
+			},
+		}},
+	}
+	r := newExposureReconciler(t, true, ha)
+
+	if err := r.reconcileExposure(context.Background(), ha); err != nil {
+		t.Fatalf("reconcileExposure error: %v", err)
+	}
+	route, err := getUnstructured(t, r, httpRouteGVK, "home")
+	if err != nil {
+		t.Fatalf("expected HTTPRoute created: %v", err)
+	}
+	rules, _, _ := unstructured.NestedSlice(route.Object, "spec", "rules")
+	if len(rules) != 1 {
+		t.Fatalf("expected exactly one rule, got %d", len(rules))
+	}
+	rule, ok := rules[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("rule is not a map: %#v", rules[0])
+	}
+	rawFilters, ok := rule["filters"].([]interface{})
+	if !ok {
+		t.Fatalf("expected rule.filters to be a list, got %#v", rule["filters"])
+	}
+	if len(rawFilters) != 2 {
+		t.Fatalf("expected 2 filters, got %d: %#v", len(rawFilters), rawFilters)
+	}
+	first, _ := rawFilters[0].(map[string]interface{})
+	if first["type"] != "RequestRedirect" {
+		t.Fatalf("expected first filter type RequestRedirect, got %#v", first)
+	}
+	redirect, _ := first["requestRedirect"].(map[string]interface{})
+	if redirect["scheme"] != "https" {
+		t.Fatalf("expected requestRedirect.scheme=https, got %#v", redirect)
+	}
+	second, _ := rawFilters[1].(map[string]interface{})
+	if second["type"] != "ResponseHeaderModifier" {
+		t.Fatalf("expected second filter type ResponseHeaderModifier, got %#v", second)
+	}
+}
+
+// TestReconcileExposureGatewayRouteNoFilters: omitting filters entirely must
+// leave the route's rule without a "filters" key at all — byte-for-byte
+// identical to the route produced before this feature existed.
+func TestReconcileExposureGatewayRouteNoFilters(t *testing.T) {
+	ha := &hav1.HomeAssistant{
+		ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default"},
+		Spec: hav1.HomeAssistantSpec{Gateway: &hav1.GatewaySpec{
+			Enabled:   true,
+			Host:      "ha.example.com",
+			ParentRef: &hav1.GatewayParentRef{Name: "traefik", Namespace: "gateway", SectionName: "https"},
+		}},
+	}
+	r := newExposureReconciler(t, true, ha)
+
+	if err := r.reconcileExposure(context.Background(), ha); err != nil {
+		t.Fatalf("reconcileExposure error: %v", err)
+	}
+	route, err := getUnstructured(t, r, httpRouteGVK, "home")
+	if err != nil {
+		t.Fatalf("expected HTTPRoute created: %v", err)
+	}
+	rules, _, _ := unstructured.NestedSlice(route.Object, "spec", "rules")
+	if len(rules) != 1 {
+		t.Fatalf("expected exactly one rule, got %d", len(rules))
+	}
+	rule, ok := rules[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("rule is not a map: %#v", rules[0])
+	}
+	if _, present := rule["filters"]; present {
+		t.Fatalf("expected no filters key on the rule, got %#v", rule["filters"])
+	}
+}
+
+func ptrTo[T any](v T) *T { return &v }
 
 // TestReconcileExposureCleanup: disabling Ingress removes the managed Ingress.
 func TestReconcileExposureCleanup(t *testing.T) {

@@ -140,6 +140,16 @@ spec:
       name: %s
       kind: ClusterIssuer
     manageGateway: true
+    filters:
+      - type: RequestRedirect
+        requestRedirect:
+          scheme: https
+          statusCode: 301
+      - type: ResponseHeaderModifier
+        responseHeaderModifier:
+          set:
+            - name: X-Frame-Options
+              value: SAMEORIGIN
   %s`, haName, namespace, haName, clusterIssuer, utils.GetDefaultHAResourceRequests())
 		Expect(utils.ApplyYAML(haYAML, namespace)).To(Succeed())
 
@@ -148,11 +158,34 @@ spec:
 			return utils.GetResourceStatus("httproute", haName, namespace, "{.spec.hostnames[0]}")
 		}, utils.ResourceTimeout, utils.DefaultEventuallyPollingInterval).Should(Equal(haName + ".example.com"))
 
+		By("Verifying the HTTPRoute carries the declared filters")
+		Eventually(func() string {
+			return utils.GetResourceStatus("httproute", haName, namespace, "{.spec.rules[0].filters}")
+		}, utils.ResourceTimeout, utils.DefaultEventuallyPollingInterval).Should(
+			SatisfyAll(ContainSubstring("RequestRedirect"), ContainSubstring("ResponseHeaderModifier")))
+
 		By("Waiting for the gateway Certificate to be Ready")
 		Eventually(func() string {
 			return utils.GetResourceStatus("certificate", haName+"-gateway-tls", namespace,
 				"{.status.conditions[?(@.type=='Ready')].status}")
 		}, utils.CertIssueTimeout, utils.DefaultEventuallyPollingInterval).Should(Equal("True"))
+
+		By("Recording the HA pod start time before changing filters")
+		podStartBefore := utils.GetResourceStatus("pod", haName+"-0", namespace, "{.status.startTime}")
+
+		By("Removing a filter and confirming the route updates without a pod restart")
+		redirectOnlyPatch := `{"spec":{"gateway":{"filters":[` +
+			`{"type":"RequestRedirect","requestRedirect":{"scheme":"https","statusCode":301}}` +
+			`]}}}`
+		Expect(utils.PatchResource("homeassistant", haName, namespace, "merge", redirectOnlyPatch)).To(Succeed())
+
+		Eventually(func() string {
+			return utils.GetResourceStatus("httproute", haName, namespace, "{.spec.rules[0].filters}")
+		}, utils.ResourceTimeout, utils.DefaultEventuallyPollingInterval).Should(
+			SatisfyAll(ContainSubstring("RequestRedirect"), Not(ContainSubstring("ResponseHeaderModifier"))))
+
+		Expect(utils.GetResourceStatus("pod", haName+"-0", namespace, "{.status.startTime}")).
+			To(Equal(podStartBefore), "changing spec.gateway.filters must not restart the HA pod")
 	})
 })
 

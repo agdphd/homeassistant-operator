@@ -263,7 +263,7 @@ func getCertificate(
 	return u, err
 }
 
-// TestReconcileTLSCreatesNativeCertificate (US2): with cert-manager available and
+// TestReconcileTLSCreatesNativeCertificate: with cert-manager available and
 // native TLS on, the operator creates a Certificate (with the Service FQDN SAN)
 // and reports TLSReady=False until it is issued.
 func TestReconcileTLSCreatesNativeCertificate(t *testing.T) {
@@ -397,7 +397,7 @@ func withTLSReady(ha *hav1.HomeAssistant) *hav1.HomeAssistant {
 	return ha
 }
 
-// TestNativeTLSActiveAndScheme (US2 runtime): scheme flips to https only once the
+// TestNativeTLSActiveAndScheme: scheme flips to https only once the
 // certificate is ready (TLSReady=True), so operator and HA switch together.
 func TestNativeTLSActiveAndScheme(t *testing.T) {
 	// Enabled but not yet ready → still http.
