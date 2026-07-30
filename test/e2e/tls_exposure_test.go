@@ -189,7 +189,7 @@ spec:
 		redirectOnlyPatch := `{"spec":{"gateway":{"filters":[` +
 			`{"type":"RequestRedirect","requestRedirect":{"scheme":"https","statusCode":301}}` +
 			`]}}}`
-		Expect(utils.PatchResource("homeassistant", haName, namespace, "merge", redirectOnlyPatch)).To(Succeed())
+		Expect(utils.PatchResource("homeassistants", haName, namespace, "merge", redirectOnlyPatch)).To(Succeed())
 
 		By("Verifying the route now carries exactly one RequestRedirect filter with its expected configuration")
 		Eventually(func() string {
