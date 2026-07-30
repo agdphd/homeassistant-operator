@@ -178,6 +178,13 @@ type GatewaySpec struct {
 	// +kubebuilder:default=false
 	// +optional
 	ManageGateway bool `json:"manageGateway,omitempty"`
+
+	// Filters are HTTP route-level behaviors (header modification, redirect, URL
+	// rewrite) applied, in order, to the single HTTPRoute rule the operator
+	// manages for this instance. Omitted/empty leaves the route unchanged from
+	// its default shape.
+	// +optional
+	Filters []HTTPRouteFilter `json:"filters,omitempty"`
 }
 
 // GatewayParentRef references an existing Gateway listener.
@@ -193,6 +200,118 @@ type GatewayParentRef struct {
 	// SectionName is the listener name (e.g. "https").
 	// +optional
 	SectionName string `json:"sectionName,omitempty"`
+}
+
+// HTTPRouteFilter is one user-declared route behavior attached to the HTTP
+// route exposing a HomeAssistant instance through Gateway API. Mirrors the
+// field names/shape of upstream Gateway API's own HTTPRouteFilter, limited to
+// the four supported types: RequestHeaderModifier, ResponseHeaderModifier,
+// RequestRedirect, URLRewrite. Exactly the sub-object matching Type must be
+// set; the webhook rejects any other combination.
+type HTTPRouteFilter struct {
+	// Type selects which of the sub-objects below applies.
+	// +kubebuilder:validation:Enum=RequestHeaderModifier;ResponseHeaderModifier;RequestRedirect;URLRewrite
+	Type string `json:"type"`
+
+	// RequestHeaderModifier modifies request headers. Must be set, and only be
+	// set, when Type is RequestHeaderModifier.
+	// +optional
+	RequestHeaderModifier *HTTPHeaderFilter `json:"requestHeaderModifier,omitempty"`
+
+	// ResponseHeaderModifier modifies response headers. Must be set, and only
+	// be set, when Type is ResponseHeaderModifier.
+	// +optional
+	ResponseHeaderModifier *HTTPHeaderFilter `json:"responseHeaderModifier,omitempty"`
+
+	// RequestRedirect redirects the request. Must be set, and only be set,
+	// when Type is RequestRedirect.
+	// +optional
+	RequestRedirect *HTTPRequestRedirectFilter `json:"requestRedirect,omitempty"`
+
+	// URLRewrite rewrites the request path/hostname. Must be set, and only be
+	// set, when Type is URLRewrite.
+	// +optional
+	URLRewrite *HTTPURLRewriteFilter `json:"urlRewrite,omitempty"`
+}
+
+// HTTPHeaderFilter adds, sets, or removes HTTP headers. Used for both
+// RequestHeaderModifier and ResponseHeaderModifier.
+type HTTPHeaderFilter struct {
+	// Set overwrites headers already present.
+	// +optional
+	Set []HTTPHeader `json:"set,omitempty"`
+
+	// Add appends headers, keeping any existing value.
+	// +optional
+	Add []HTTPHeader `json:"add,omitempty"`
+
+	// Remove lists header names to strip.
+	// +optional
+	Remove []string `json:"remove,omitempty"`
+}
+
+// HTTPHeader is a single HTTP header name/value pair.
+type HTTPHeader struct {
+	// Name of the header.
+	Name string `json:"name"`
+
+	// Value of the header.
+	Value string `json:"value"`
+}
+
+// HTTPRequestRedirectFilter redirects the request to a different
+// scheme/hostname/path/port, optionally with a specific status code.
+type HTTPRequestRedirectFilter struct {
+	// Scheme replaces the request scheme (e.g. "https").
+	// +optional
+	Scheme *string `json:"scheme,omitempty"`
+
+	// Hostname replaces the request hostname.
+	// +optional
+	Hostname *string `json:"hostname,omitempty"`
+
+	// Path replaces the request path.
+	// +optional
+	Path *HTTPPathModifier `json:"path,omitempty"`
+
+	// Port replaces the request port.
+	// +optional
+	Port *int32 `json:"port,omitempty"`
+
+	// StatusCode is the redirect status code.
+	// +kubebuilder:validation:Enum=301;302;303;307;308
+	// +optional
+	StatusCode *int `json:"statusCode,omitempty"`
+}
+
+// HTTPURLRewriteFilter rewrites the request hostname/path before it reaches
+// Home Assistant.
+type HTTPURLRewriteFilter struct {
+	// Hostname replaces the request hostname.
+	// +optional
+	Hostname *string `json:"hostname,omitempty"`
+
+	// Path replaces the request path.
+	// +optional
+	Path *HTTPPathModifier `json:"path,omitempty"`
+}
+
+// HTTPPathModifier describes a path replacement for HTTPRequestRedirectFilter
+// or HTTPURLRewriteFilter.
+type HTTPPathModifier struct {
+	// Type selects which of the fields below applies.
+	// +kubebuilder:validation:Enum=ReplaceFullPath;ReplacePrefixMatch
+	Type string `json:"type"`
+
+	// ReplaceFullPath is the whole replacement path. Must be set, and only be
+	// set, when Type is ReplaceFullPath.
+	// +optional
+	ReplaceFullPath *string `json:"replaceFullPath,omitempty"`
+
+	// ReplacePrefixMatch is the replacement for the matched path prefix. Must
+	// be set, and only be set, when Type is ReplacePrefixMatch.
+	// +optional
+	ReplacePrefixMatch *string `json:"replacePrefixMatch,omitempty"`
 }
 
 // IssuerReference references a cert-manager Issuer or ClusterIssuer. The

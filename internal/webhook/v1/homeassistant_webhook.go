@@ -69,8 +69,9 @@ func (v *HomeAssistantCustomValidator) ValidateDelete(
 func validateHomeAssistant(ha *hav1.HomeAssistant) (admission.Warnings, error) {
 	log := logf.Log.WithName("homeassistant-webhook")
 	warnings, msgs := validateHomeAssistantTLS(&ha.Spec)
+	msgs = append(msgs, validateGatewayFilters(&ha.Spec)...)
 	if len(msgs) > 0 {
-		log.Info("rejecting HomeAssistant with invalid TLS configuration", "name", ha.Name, "reasons", msgs)
+		log.Info("rejecting HomeAssistant with invalid configuration", "name", ha.Name, "reasons", msgs)
 		return warnings, fmt.Errorf("invalid HomeAssistant %q: %s", ha.Name, strings.Join(msgs, "; "))
 	}
 	return warnings, nil
@@ -120,6 +121,124 @@ func validateHomeAssistantTLS(spec *hav1.HomeAssistantSpec) (admission.Warnings,
 	}
 
 	return warnings, errs
+}
+
+// validateGatewayFilters validates spec.gateway.filters: each entry's type
+// must be one of the four supported values, exactly the sub-object matching
+// that type must be set (and populated with usable content), and a path
+// modifier's fields must match its own declared type. Returns one message per
+// problem found, empty when valid.
+func validateGatewayFilters(spec *hav1.HomeAssistantSpec) []string {
+	if spec.Gateway == nil {
+		return nil
+	}
+	var errs []string
+	for i, f := range spec.Gateway.Filters {
+		errs = append(errs, validateGatewayFilter(i, f)...)
+	}
+	return errs
+}
+
+func validateGatewayFilter(index int, f hav1.HTTPRouteFilter) []string {
+	path := fmt.Sprintf("spec.gateway.filters[%d]", index)
+
+	type sub struct {
+		typeName string
+		field    string
+		present  bool
+	}
+	subs := []sub{
+		{"RequestHeaderModifier", "requestHeaderModifier", f.RequestHeaderModifier != nil},
+		{"ResponseHeaderModifier", "responseHeaderModifier", f.ResponseHeaderModifier != nil},
+		{"RequestRedirect", "requestRedirect", f.RequestRedirect != nil},
+		{"URLRewrite", "urlRewrite", f.URLRewrite != nil},
+	}
+
+	var expected *sub
+	for i := range subs {
+		if subs[i].typeName == f.Type {
+			expected = &subs[i]
+		}
+	}
+	if expected == nil {
+		return []string{fmt.Sprintf(
+			"%s.type must be one of RequestHeaderModifier, ResponseHeaderModifier, RequestRedirect, URLRewrite, got %q",
+			path, f.Type)}
+	}
+
+	var errs []string
+	for _, s := range subs {
+		if s.present && s.typeName != f.Type {
+			errs = append(errs, fmt.Sprintf("%s.%s must not be set when type is %q", path, s.field, f.Type))
+		}
+	}
+	if !expected.present {
+		errs = append(errs, fmt.Sprintf("%s.%s is required when type is %q", path, expected.field, f.Type))
+	}
+	if len(errs) > 0 {
+		return errs
+	}
+
+	switch f.Type {
+	case "RequestHeaderModifier":
+		errs = append(errs, validateHeaderFilter(path+".requestHeaderModifier", f.RequestHeaderModifier)...)
+	case "ResponseHeaderModifier":
+		errs = append(errs, validateHeaderFilter(path+".responseHeaderModifier", f.ResponseHeaderModifier)...)
+	case "RequestRedirect":
+		errs = append(errs, validateRequestRedirect(path+".requestRedirect", f.RequestRedirect)...)
+	case "URLRewrite":
+		errs = append(errs, validateURLRewrite(path+".urlRewrite", f.URLRewrite)...)
+	}
+	return errs
+}
+
+func validateHeaderFilter(path string, h *hav1.HTTPHeaderFilter) []string {
+	if len(h.Set) == 0 && len(h.Add) == 0 && len(h.Remove) == 0 {
+		return []string{fmt.Sprintf("%s must set at least one of set, add, remove", path)}
+	}
+	return nil
+}
+
+func validateRequestRedirect(path string, r *hav1.HTTPRequestRedirectFilter) []string {
+	if r.Scheme == nil && r.Hostname == nil && r.Path == nil && r.Port == nil && r.StatusCode == nil {
+		return []string{fmt.Sprintf("%s must set at least one of scheme, hostname, path, port, statusCode", path)}
+	}
+	if r.Path != nil {
+		return validatePathModifier(path+".path", r.Path)
+	}
+	return nil
+}
+
+func validateURLRewrite(path string, u *hav1.HTTPURLRewriteFilter) []string {
+	if u.Hostname == nil && u.Path == nil {
+		return []string{fmt.Sprintf("%s must set at least one of hostname, path", path)}
+	}
+	if u.Path != nil {
+		return validatePathModifier(path+".path", u.Path)
+	}
+	return nil
+}
+
+func validatePathModifier(path string, p *hav1.HTTPPathModifier) []string {
+	switch p.Type {
+	case "ReplaceFullPath":
+		if p.ReplaceFullPath == nil {
+			return []string{fmt.Sprintf("%s.replaceFullPath is required when path.type is ReplaceFullPath", path)}
+		}
+		if p.ReplacePrefixMatch != nil {
+			return []string{fmt.Sprintf("%s.replacePrefixMatch must not be set when path.type is ReplaceFullPath", path)}
+		}
+	case "ReplacePrefixMatch":
+		if p.ReplacePrefixMatch == nil {
+			return []string{fmt.Sprintf("%s.replacePrefixMatch is required when path.type is ReplacePrefixMatch", path)}
+		}
+		if p.ReplaceFullPath != nil {
+			return []string{fmt.Sprintf("%s.replaceFullPath must not be set when path.type is ReplacePrefixMatch", path)}
+		}
+	default:
+		return []string{fmt.Sprintf("%s.type must be ReplaceFullPath or ReplacePrefixMatch, got %q", path, p.Type)}
+	}
+	return nil
 }
 
 func validateIssuerKind(path string, ref *hav1.IssuerReference) []string {

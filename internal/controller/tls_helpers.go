@@ -335,8 +335,8 @@ func certManagerRequired(ha *hav1.HomeAssistant) bool {
 // contract: when a TLS mode is requested but cert-manager is not
 // installed, it records status conditions, emits an event and requeues — it never
 // returns an error, so the rest of the reconcile and other resources keep working
-// (constitution principle I). Certificate issuance and exposure (US2/US3) are
-// layered on top of the CertManagerAvailable gate established here.
+// (constitution principle I). Certificate issuance and exposure are layered
+// on top of the CertManagerAvailable gate established here.
 func (r *HomeAssistantReconciler) reconcileTLS(ctx context.Context, ha *hav1.HomeAssistant) (ctrl.Result, error) {
 	// Native TLS with a user-provided Secret needs no cert-manager.
 	if handled, err := r.nativeTLSUsingProvidedSecret(ctx, ha); err != nil {

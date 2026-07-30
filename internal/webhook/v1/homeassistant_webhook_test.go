@@ -104,6 +104,122 @@ func TestValidateHomeAssistantTLS(t *testing.T) {
 	}
 }
 
+func TestValidateGatewayFilters(t *testing.T) {
+	str := func(s string) *string { return &s }
+	code := func(i int) *int { return &i }
+
+	tests := []struct {
+		name     string
+		filters  []hav1.HTTPRouteFilter
+		wantErrs int
+	}{
+		{name: "no filters is valid"},
+		{
+			name: "unknown type is rejected",
+			filters: []hav1.HTTPRouteFilter{
+				{Type: "RequestMirror"},
+			},
+			wantErrs: 1,
+		},
+		{
+			name: "missing sub-object for declared type is rejected",
+			filters: []hav1.HTTPRouteFilter{
+				{Type: "RequestHeaderModifier"},
+			},
+			wantErrs: 1,
+		},
+		{
+			name: "sub-object for a different type is rejected",
+			filters: []hav1.HTTPRouteFilter{
+				{
+					Type:                   "RequestHeaderModifier",
+					ResponseHeaderModifier: &hav1.HTTPHeaderFilter{Set: []hav1.HTTPHeader{{Name: "a", Value: "b"}}},
+				},
+			},
+			wantErrs: 2, // wrong field set + declared type's own field missing
+		},
+		{
+			name: "empty header filter is rejected",
+			filters: []hav1.HTTPRouteFilter{
+				{Type: "RequestHeaderModifier", RequestHeaderModifier: &hav1.HTTPHeaderFilter{}},
+			},
+			wantErrs: 1,
+		},
+		{
+			name: "valid header filter is accepted",
+			filters: []hav1.HTTPRouteFilter{
+				{Type: "RequestHeaderModifier", RequestHeaderModifier: &hav1.HTTPHeaderFilter{Remove: []string{"X-Debug"}}},
+			},
+		},
+		{
+			name: "empty redirect filter is rejected",
+			filters: []hav1.HTTPRouteFilter{
+				{Type: "RequestRedirect", RequestRedirect: &hav1.HTTPRequestRedirectFilter{}},
+			},
+			wantErrs: 1,
+		},
+		{
+			name: "valid redirect filter is accepted",
+			filters: []hav1.HTTPRouteFilter{
+				{
+					Type: "RequestRedirect",
+					RequestRedirect: &hav1.HTTPRequestRedirectFilter{
+						Scheme: str("https"), StatusCode: code(301),
+					},
+				},
+			},
+		},
+		{
+			name: "empty url rewrite filter is rejected",
+			filters: []hav1.HTTPRouteFilter{
+				{Type: "URLRewrite", URLRewrite: &hav1.HTTPURLRewriteFilter{}},
+			},
+			wantErrs: 1,
+		},
+		{
+			name: "valid url rewrite filter is accepted",
+			filters: []hav1.HTTPRouteFilter{
+				{Type: "URLRewrite", URLRewrite: &hav1.HTTPURLRewriteFilter{Hostname: str("new.example.com")}},
+			},
+		},
+		{
+			name: "path modifier missing its matching field is rejected",
+			filters: []hav1.HTTPRouteFilter{
+				{Type: "URLRewrite", URLRewrite: &hav1.HTTPURLRewriteFilter{
+					Path: &hav1.HTTPPathModifier{Type: "ReplaceFullPath"},
+				}},
+			},
+			wantErrs: 1,
+		},
+		{
+			name: "valid path modifier is accepted",
+			filters: []hav1.HTTPRouteFilter{
+				{Type: "URLRewrite", URLRewrite: &hav1.HTTPURLRewriteFilter{
+					Path: &hav1.HTTPPathModifier{Type: "ReplacePrefixMatch", ReplacePrefixMatch: str("/")},
+				}},
+			},
+		},
+		{
+			name: "response header modifier valid",
+			filters: []hav1.HTTPRouteFilter{
+				{Type: "ResponseHeaderModifier", ResponseHeaderModifier: &hav1.HTTPHeaderFilter{
+					Set: []hav1.HTTPHeader{{Name: "X-Frame-Options", Value: "SAMEORIGIN"}},
+				}},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := &hav1.HomeAssistantSpec{Gateway: &hav1.GatewaySpec{Filters: tc.filters}}
+			errs := validateGatewayFilters(spec)
+			if len(errs) != tc.wantErrs {
+				t.Fatalf("errs = %d (%v), want %d", len(errs), errs, tc.wantErrs)
+			}
+		})
+	}
+}
+
 func TestValidatorRejectsAndAccepts(t *testing.T) {
 	v := &HomeAssistantCustomValidator{}
 
