@@ -221,6 +221,47 @@ func TestReconcileExposureGatewayRouteFilters(t *testing.T) {
 	if second["type"] != "ResponseHeaderModifier" {
 		t.Fatalf("expected second filter type ResponseHeaderModifier, got %#v", second)
 	}
+	// Gateway API rejects a rule combining backendRefs with a RequestRedirect
+	// filter, so the rule must not carry backendRefs here.
+	if _, present := rule["backendRefs"]; present {
+		t.Fatalf("expected no backendRefs on a rule with a RequestRedirect filter, got %#v", rule["backendRefs"])
+	}
+}
+
+// TestReconcileExposureGatewayRouteFiltersWithoutRedirectKeepsBackendRefs:
+// filters that don't include RequestRedirect must not affect backendRefs.
+func TestReconcileExposureGatewayRouteFiltersWithoutRedirectKeepsBackendRefs(t *testing.T) {
+	ha := &hav1.HomeAssistant{
+		ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default"},
+		Spec: hav1.HomeAssistantSpec{Gateway: &hav1.GatewaySpec{
+			Enabled:   true,
+			Host:      "ha.example.com",
+			ParentRef: &hav1.GatewayParentRef{Name: "traefik", Namespace: "gateway", SectionName: "https"},
+			Filters: []hav1.HTTPRouteFilter{{
+				Type: "ResponseHeaderModifier",
+				ResponseHeaderModifier: &hav1.HTTPHeaderFilter{
+					Set: []hav1.HTTPHeader{{Name: "X-Frame-Options", Value: "SAMEORIGIN"}},
+				},
+			}},
+		}},
+	}
+	r := newExposureReconciler(t, true, ha)
+
+	if err := r.reconcileExposure(context.Background(), ha); err != nil {
+		t.Fatalf("reconcileExposure error: %v", err)
+	}
+	route, err := getUnstructured(t, r, httpRouteGVK, "home")
+	if err != nil {
+		t.Fatalf("expected HTTPRoute created: %v", err)
+	}
+	rules, _, _ := unstructured.NestedSlice(route.Object, "spec", "rules")
+	rule, ok := rules[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("rule is not a map: %#v", rules[0])
+	}
+	if _, present := rule["backendRefs"]; !present {
+		t.Fatal("expected backendRefs to be present when no RequestRedirect filter is declared")
+	}
 }
 
 // TestReconcileExposureGatewayRouteNoFilters: omitting filters entirely must

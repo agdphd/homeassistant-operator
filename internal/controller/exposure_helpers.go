@@ -243,11 +243,15 @@ func (r *HomeAssistantReconciler) reconcileGatewayRoute(
 		return false, nil
 	}
 
-	rule := map[string]interface{}{
-		"backendRefs": []interface{}{map[string]interface{}{
+	rule := map[string]interface{}{}
+	// Gateway API rejects a rule that combines backendRefs with a
+	// RequestRedirect filter (the redirect short-circuits before any backend
+	// is ever reached), so omit backendRefs whenever one is present.
+	if !hasRequestRedirectFilter(g.Filters) {
+		rule["backendRefs"] = []interface{}{map[string]interface{}{
 			"name": ha.Name,
 			"port": int64(servicePort(ha)),
-		}},
+		}}
 	}
 	if filters := buildGatewayFilters(g.Filters); len(filters) > 0 {
 		rule["filters"] = filters
@@ -269,6 +273,18 @@ func (r *HomeAssistantReconciler) reconcileGatewayRoute(
 		return false, err
 	}
 	return true, nil
+}
+
+// hasRequestRedirectFilter reports whether filters contains a RequestRedirect
+// entry, which Gateway API's HTTPRoute validation forbids combining with
+// backendRefs on the same rule.
+func hasRequestRedirectFilter(filters []hav1.HTTPRouteFilter) bool {
+	for _, f := range filters {
+		if f.Type == "RequestRedirect" {
+			return true
+		}
+	}
+	return false
 }
 
 // buildGatewayFilters translates spec.gateway.filters into the equivalent
