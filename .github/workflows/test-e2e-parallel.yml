@@ -83,7 +83,7 @@ jobs:
   e2e-critical-path:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 9
 
     steps:
       - name: Clone the code
@@ -156,7 +156,7 @@ jobs:
           ./bin/ginkgo run \
             -v \
             --label-filter=critical-path \
-            --timeout=5m \
+            --timeout=7m \
             ./test/e2e/
 
       - name: Collect controller logs on failure
@@ -221,7 +221,7 @@ jobs:
   e2e-tls:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 9
+    timeout-minutes: 11
 
     steps:
       - name: Clone the code
@@ -295,7 +295,7 @@ jobs:
           ./bin/ginkgo run \
             -v \
             --label-filter=tls \
-            --timeout=6m \
+            --timeout=8m \
             ./test/e2e/
 
       - name: Collect controller logs on failure
@@ -358,7 +358,7 @@ jobs:
   e2e-network-policy:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
 
     steps:
       - name: Clone the code
@@ -432,7 +432,7 @@ jobs:
           ./bin/ginkgo run \
             -v \
             --label-filter=network-policy \
-            --timeout=5m \
+            --timeout=7m \
             ./test/e2e/
 
       - name: Collect controller logs on failure

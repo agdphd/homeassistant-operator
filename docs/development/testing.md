@@ -224,12 +224,18 @@ created by the python_script-install spec — each pair must run in the same
 Ginkgo process since separate CI jobs use separate clusters and cannot see
 each other's resources.
 
-**Known gap**: `e2e-community-repository-a`/`-b` currently run with a longer
-timeout than every other job. Their specs took longer against a genuinely
-cold cluster/runner than initial estimates (extrapolated from a single
-long-running, cache-warm job) suggested, so their budget was widened rather
-than left to fail — these two are the ones to re-tighten first once real
-completion-time data is available from CI.
+**Known gap**: real CI runs showed every job's cold-start overhead — and the
+community-repository specs' own runtime — running noticeably longer than
+initial estimates (extrapolated from a single long-running, cache-warm job)
+suggested, so per-job timeouts have been progressively widened rather than
+left to fail: `e2e-community-repository-b` up to 16 min, `-a` up to 14 min,
+`e2e-tls` up to 11 min. **The whole workflow does not currently meet the
+10-minute goal** — with `build` (a few minutes) plus the slowest job
+(`e2e-community-repository-b`), real end-to-end time is closer to 15-20
+minutes. Tightening this back down needs either genuine optimization (e.g.
+the per-spec activation-confirmation polling in community-repository, or the
+"Load Home Assistant image" step's own variability) or accepting a revised,
+honest target — not just more timeout increases.
 
 ### `e2e-critical-path` tests (10 specs)
 
