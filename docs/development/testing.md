@@ -199,6 +199,13 @@ Each target creates its own fresh k3d cluster (`K3D_MEMORY_E2E=4g` by
 default), runs its `ginkgo run --label-filter=...` subset, and tears the
 cluster down afterward — mirroring exactly what each CI job does.
 
+Local runs build and use `example.com/homeassistant-operator:v0.0.1` (the
+suite's own default), rebuilding the image each time. CI instead builds the
+image once (the `build` job), uploads it as an artifact tagged `operator:e2e`,
+and every e2e job downloads and loads that same artifact — set
+`E2E_SKIP_IMAGE_BUILD=true` and `E2E_IMG=<tag>` to reproduce that
+skip-the-rebuild behavior locally against a pre-built image.
+
 ### The six e2e jobs
 
 | Job | Label filter | Specs | What is verified |
@@ -216,6 +223,13 @@ theme-install spec, and "removes the ConfigMap entry..." reuses the CR
 created by the python_script-install spec — each pair must run in the same
 Ginkgo process since separate CI jobs use separate clusters and cannot see
 each other's resources.
+
+**Known gap**: `e2e-community-repository-a`/`-b` currently run with a longer
+timeout than every other job. Their specs took longer against a genuinely
+cold cluster/runner than initial estimates (extrapolated from a single
+long-running, cache-warm job) suggested, so their budget was widened rather
+than left to fail — these two are the ones to re-tighten first once real
+completion-time data is available from CI.
 
 ### `e2e-critical-path` tests (10 specs)
 

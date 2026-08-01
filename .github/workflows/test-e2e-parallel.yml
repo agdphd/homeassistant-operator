@@ -50,16 +50,35 @@ jobs:
           path: operator-e2e.tar
           retention-days: 1
 
+      - name: Pull Home Assistant image
+        run: docker pull ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }}
+
+      - name: Save Home Assistant image as tarball
+        run: docker save ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -o ha-image.tar
+
+      - name: Upload Home Assistant image artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ha-image
+          path: ha-image.tar
+          retention-days: 1
+
   # Jobs 2-7: the e2e suite split across six jobs that run concurrently, each
-  # selecting a scoped subset of ./test/e2e/ via Ginkgo's --label-filter, so
-  # that the whole workflow (not any single job) completes within 10 minutes.
-  # See docs/development/testing.md for the current expected duration and the
-  # rationale behind this split (previously one long sequential job).
+  # selecting a scoped subset of ./test/e2e/ via Ginkgo's --label-filter.
+  # Because all six `needs: build`, the workflow's real end-to-end time is
+  # build's own duration PLUS the slowest of the six e2e jobs — not just the
+  # slowest job in isolation. See docs/development/testing.md (the sole
+  # source of truth for e2e suite/job duration) for the current target and
+  # the rationale behind this split (previously one long sequential job).
   #
-  # timeout-minutes below are initial estimates derived from the per-job costs
-  # measured for the prior sequential job; expect to tune them from real CI
-  # runs. None may exceed 10, since these jobs run concurrently and the
-  # workflow's own end-to-end time equals the slowest job's time.
+  # timeout-minutes below were tuned from real CI runs of this workflow.
+  # e2e-community-repository-a/-b currently run above the per-job target
+  # every other job keeps to, because their specs took longer against a
+  # genuinely cold cluster/runner than initial estimates (extrapolated from
+  # a single long-running, cache-warm job) suggested — see
+  # docs/development/testing.md for the current known-gap note. These two
+  # are the ones to re-tighten first once more real completion-time data is
+  # available; every other job's timeout is close to its measured cost.
 
   e2e-critical-path:
     needs: build
@@ -95,6 +114,11 @@ jobs:
         with:
           name: operator-image
 
+      - name: Download Home Assistant image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ha-image
+
       - name: Create k3d cluster
         run: |
           k3d cluster create e2e-critical-path \
@@ -109,9 +133,9 @@ jobs:
           docker load -i operator-e2e.tar
           k3d image import operator:e2e -c e2e-critical-path
 
-      - name: Preload Home Assistant image into k3d
+      - name: Load Home Assistant image into k3d
         run: |
-          docker pull ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }}
+          docker load -i ha-image.tar
           k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-critical-path
 
       - name: Verify cluster is ready
@@ -202,6 +226,8 @@ jobs:
     steps:
       - name: Clone the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -228,6 +254,11 @@ jobs:
         with:
           name: operator-image
 
+      - name: Download Home Assistant image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ha-image
+
       - name: Create k3d cluster
         run: |
           k3d cluster create e2e-tls \
@@ -242,9 +273,9 @@ jobs:
           docker load -i operator-e2e.tar
           k3d image import operator:e2e -c e2e-tls
 
-      - name: Preload Home Assistant image into k3d
+      - name: Load Home Assistant image into k3d
         run: |
-          docker pull ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }}
+          docker load -i ha-image.tar
           k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-tls
 
       - name: Verify cluster is ready
@@ -332,6 +363,8 @@ jobs:
     steps:
       - name: Clone the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -358,6 +391,11 @@ jobs:
         with:
           name: operator-image
 
+      - name: Download Home Assistant image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ha-image
+
       - name: Create k3d cluster
         run: |
           k3d cluster create e2e-network-policy \
@@ -372,9 +410,9 @@ jobs:
           docker load -i operator-e2e.tar
           k3d image import operator:e2e -c e2e-network-policy
 
-      - name: Preload Home Assistant image into k3d
+      - name: Load Home Assistant image into k3d
         run: |
-          docker pull ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }}
+          docker load -i ha-image.tar
           k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-network-policy
 
       - name: Verify cluster is ready
@@ -432,6 +470,8 @@ jobs:
     steps:
       - name: Clone the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -521,11 +561,13 @@ jobs:
   e2e-community-repository-a:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 9
+    timeout-minutes: 14
 
     steps:
       - name: Clone the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -552,6 +594,11 @@ jobs:
         with:
           name: operator-image
 
+      - name: Download Home Assistant image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ha-image
+
       - name: Create k3d cluster
         run: |
           k3d cluster create e2e-community-repository-a \
@@ -566,9 +613,9 @@ jobs:
           docker load -i operator-e2e.tar
           k3d image import operator:e2e -c e2e-community-repository-a
 
-      - name: Preload Home Assistant image into k3d
+      - name: Load Home Assistant image into k3d
         run: |
-          docker pull ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }}
+          docker load -i ha-image.tar
           k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-community-repository-a
 
       - name: Verify cluster is ready
@@ -588,7 +635,7 @@ jobs:
           ./bin/ginkgo run \
             -v \
             --label-filter="community-repository && group-a" \
-            --timeout=6m \
+            --timeout=12m \
             ./test/e2e/
 
       - name: Collect controller logs on failure
@@ -621,11 +668,13 @@ jobs:
   e2e-community-repository-b:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 16
 
     steps:
       - name: Clone the code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
@@ -652,6 +701,11 @@ jobs:
         with:
           name: operator-image
 
+      - name: Download Home Assistant image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ha-image
+
       - name: Create k3d cluster
         run: |
           k3d cluster create e2e-community-repository-b \
@@ -666,9 +720,9 @@ jobs:
           docker load -i operator-e2e.tar
           k3d image import operator:e2e -c e2e-community-repository-b
 
-      - name: Preload Home Assistant image into k3d
+      - name: Load Home Assistant image into k3d
         run: |
-          docker pull ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }}
+          docker load -i ha-image.tar
           k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-community-repository-b
 
       - name: Verify cluster is ready
@@ -688,7 +742,7 @@ jobs:
           ./bin/ginkgo run \
             -v \
             --label-filter="community-repository && group-b" \
-            --timeout=7m \
+            --timeout=14m \
             ./test/e2e/
 
       - name: Collect controller logs on failure
