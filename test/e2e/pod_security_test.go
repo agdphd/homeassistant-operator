@@ -35,7 +35,7 @@ import (
 //
 // Prereq: the operator is already deployed by the suite via `make deploy`, which
 // applies the Namespace object (with the PSA labels) onto homeassistant-operator-system.
-var _ = Describe("Pod Security Standards E2E", func() {
+var _ = Describe("Pod Security Standards E2E", Label("pod-security"), func() {
 	const operatorNamespace = "homeassistant-operator-system"
 
 	AfterEach(func() {

@@ -30,7 +30,7 @@ import (
 // This suite verifies that spec.alpha.networkPolicy.enabled actually restricts
 // traffic to the Home Assistant pod, not just that the NetworkPolicy object
 // exists. k3d/k3s's default CNI enforces NetworkPolicy in this project's CI.
-var _ = Describe("NetworkPolicy E2E", func() {
+var _ = Describe("NetworkPolicy E2E", Label("network-policy"), func() {
 	var (
 		namespace      string
 		probeNamespace string

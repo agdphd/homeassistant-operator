@@ -17,13 +17,79 @@ Every reconciliation test should verify idempotent behavior.
 
 ```
               ┌─────────────┐
-              │    E2E      │  ← One critical path (all CRDs, sequential)
+              │    E2E      │  ← Six focused suites, run concurrently (≤10 min total)
               ├─────────────┤
               │    Unit     │  ← Controller logic + pure functions (envtest)
               └─────────────┘
 ```
 
 **Golden rule**: if you can test it with envtest, don't use E2E.
+
+## Choosing a test level
+
+The golden rule above is a starting point, not the whole decision. Use this
+checklist for anything more specific — if any signal below applies, the
+behavior belongs in e2e (or a Helm chart test); otherwise it belongs in
+unit/integration (envtest).
+
+**Push toward e2e when the behavior...**
+
+- Can only be observed against a real running container or HTTP/WebSocket
+  server (e.g. a real Home Assistant instance's actual API response) — no
+  Go-level fake or mock reproduces the real service's behavior.
+- Depends on a real external controller reconciling something on its own
+  schedule — a real Gateway API implementation's `HTTPRoute` acceptance, or
+  cert-manager actually issuing a `Certificate` — which envtest's fake API
+  server does not simulate (it accepts writes to the Kubernetes API but runs
+  no other controllers).
+- Validates the Helm chart's install/upgrade path itself (RBAC that only
+  takes effect once actually applied by Helm, webhook wiring that depends on
+  chart-templated Secrets/Services, CRD schema as shipped in the chart).
+
+**Push toward unit/integration (envtest) when the behavior...**
+
+- Is pure reconciliation logic against the Kubernetes API surface envtest
+  already provides (creating/updating child resources, computing status
+  conditions, hashing, owner references) — envtest's fake API server models
+  this faithfully.
+- Can be exercised with the `NewHAClient` dependency-injection pattern (an
+  `httptest.Server` standing in for Home Assistant's REST API) rather than a
+  real HA container.
+
+**Tiebreaker** for borderline cases (technically reproducible with envtest,
+but only via significant custom scaffolding): if reproducing the real
+behavior in envtest would require re-implementing a third-party controller's
+logic (Gateway API, cert-manager) rather than just calling the Kubernetes API,
+that is itself the "e2e" signal — you'd be testing your fake, not the real
+integration.
+
+### Worked examples
+
+1. **A `HomeAssistantScript` field that changes what gets written into
+   `scripts.yaml`.** → Unit/integration. This is reconciliation logic
+   (ConfigMap generation) against the Kubernetes API — envtest covers it
+   fully; assert on the generated ConfigMap's content.
+2. **A change whose correctness depends on a real Home Assistant
+   HTTP/WebSocket API response** (e.g. confirming a `spec.gateway.filters`
+   redirect actually changes traffic once reconciled onto a real `HTTPRoute`
+   by a real Gateway API implementation, or confirming an automation actually
+   hot-reloads via HA's real REST API). → E2e. No fake API server simulates a
+   real Gateway API controller's route acceptance or a real HA process's
+   config-reload behavior.
+3. **A change to RBAC/webhook wiring that only matters once deployed via
+   Helm** (e.g. the webhook's `certManager.enabled` fallback path, or a new
+   RBAC rule's effect on the shipped `ClusterRole`). → E2e or a Helm chart
+   test via `make helm-verify` — this is only observable once the chart is
+   actually installed, not from Go code directly.
+
+### A note on coverage trade-offs
+
+Adding e2e coverage is not free — every e2e job runs against a real k3d
+cluster and counts against the 10-minute workflow budget (see below). If a
+new scenario cannot fit within an existing job's budget even after
+considering unit/integration alternatives, it is acceptable to intentionally
+not add e2e coverage for it, **as long as that decision is recorded** in the
+Coverage Gap Record below rather than the scenario silently going untested.
 
 ---
 
@@ -104,30 +170,74 @@ Eventually(func(g Gomega) {
 
 ## E2E Tests
 
-**Location**: `test/e2e/e2e_critical_path_test.go`
+**Location**: `test/e2e/*_test.go` (8 files, 25 specs total)
 **Framework**: Ginkgo v2 + real k3d cluster
-**Strategy**: One ordered suite, one bootstrap, one `It` block per CRD
+**Strategy**: Six independently-labeled suites, run as six concurrent GitHub
+Actions jobs (`.github/workflows/test-e2e-parallel.yml`), so the whole
+workflow — not any single job — completes within a **10-minute** budget.
 
-The entire E2E suite shares a single Home Assistant bootstrap (~30 min). Tests run sequentially (`Ordered`) and continue even if one fails (`ContinueOnFailure`) so later CRDs are still exercised.
+**This section is the sole source of truth in this repository for e2e
+suite/job duration** (per this project's testing policy). Any other file that
+needs to reference how long the suite takes should point here rather than
+restating a number.
 
-### Running E2E
+**Goal**: the whole e2e workflow completes in about 10 minutes, split across
+the six concurrent jobs below.
+
+### Running E2E locally
 
 ```bash
-make test-e2e    # Creates fresh k3d cluster (12 GB RAM), runs all tests, tears down (~40-50 min)
+make test-e2e-critical-path              # HomeAssistant + sibling CRDs (10 specs)
+make test-e2e-tls                        # TLS ingress/gateway/native/webhook (5 specs)
+make test-e2e-network-policy             # NetworkPolicy enforcement (1 spec)
+make test-e2e-pod-security                # Pod Security Standards (2 specs)
+make test-e2e-community-repository-a     # HACS-style installs, group A (3 specs)
+make test-e2e-community-repository-b     # HACS-style installs, group B (4 specs)
 ```
 
-Under the hood:
-1. `make setup-test-e2e` — deletes any existing cluster, creates a fresh one, imports HA image
-2. Ginkgo runs the suite with `--timeout=60m`
-3. `make cleanup-test-e2e` — tears down the cluster regardless of result
+Each target creates its own fresh k3d cluster (`K3D_MEMORY_E2E=4g` by
+default), runs its `ginkgo run --label-filter=...` subset, and tears the
+cluster down afterward — mirroring exactly what each CI job does.
 
-!!! warning "Memory requirement"
-    `make test-e2e` requires **12 GB RAM** for the k3d cluster. On machines with less memory:
-    ```bash
-    K3D_MEMORY_E2E=4g make test-e2e
-    ```
+Local runs build and use `example.com/homeassistant-operator:v0.0.1` (the
+suite's own default), rebuilding the image each time. CI instead builds the
+image once (the `build` job), uploads it as an artifact tagged `operator:e2e`,
+and every e2e job downloads and loads that same artifact — set
+`E2E_SKIP_IMAGE_BUILD=true` and `E2E_IMG=<tag>` to reproduce that
+skip-the-rebuild behavior locally against a pre-built image.
 
-### Critical path tests (11 tests)
+### The six e2e jobs
+
+| Job | Label filter | Specs | What is verified |
+|---|---|---|---|
+| `e2e-critical-path` | `critical-path` | 10 | All CRDs' core lifecycle (see table below) — shares one HA bootstrap |
+| `e2e-tls` | `tls` | 5 | TLS via Ingress, Gateway API, native HA TLS, and the validating webhook |
+| `e2e-network-policy` | `network-policy` | 1 | `spec.alpha.networkPolicy` actually restricts traffic, not just that the object exists |
+| `e2e-pod-security` | `pod-security` | 2 | Operator namespace enforces the `restricted` Pod Security Standard |
+| `e2e-community-repository-a` | `community-repository && group-a` | 3 | `HomeAssistantCommunityRepository`: integration + theme install, theme ref-update |
+| `e2e-community-repository-b` | `community-repository && group-b` | 4 | `HomeAssistantCommunityRepository`: python_script + template + plugin install, deletion |
+
+The community-repository split (not an arbitrary half-and-half) keeps two
+spec pairs together: "keeps installedVersion..." reuses the CR created by the
+theme-install spec, and "removes the ConfigMap entry..." reuses the CR
+created by the python_script-install spec — each pair must run in the same
+Ginkgo process since separate CI jobs use separate clusters and cannot see
+each other's resources.
+
+**Known gap**: real CI runs showed every job's cold-start overhead — and the
+community-repository specs' own runtime — running noticeably longer than
+initial estimates (extrapolated from a single long-running, cache-warm job)
+suggested, so per-job timeouts have been progressively widened rather than
+left to fail: `e2e-community-repository-b` up to 16 min, `-a` up to 14 min,
+`e2e-tls` up to 11 min. **The whole workflow does not currently meet the
+10-minute goal** — with `build` (a few minutes) plus the slowest job
+(`e2e-community-repository-b`), real end-to-end time is closer to 15-20
+minutes. Tightening this back down needs either genuine optimization (e.g.
+the per-spec activation-confirmation polling in community-repository, or the
+"Load Home Assistant image" step's own variability) or accepting a revised,
+honest target — not just more timeout increases.
+
+### `e2e-critical-path` tests (10 specs)
 
 | # | CRD | What is verified |
 |---|-----|-----------------|
@@ -141,3 +251,19 @@ Under the hood:
 | 8 | `HomeAssistantFloor` | Created via WebSocket registry API, deleted |
 | 9 | `HomeAssistantLabel` | Created via WebSocket registry API, deleted |
 | 10 | `HomeAssistantArea` | Created via WebSocket registry API, deleted |
+
+This job's specs share one Home Assistant bootstrap (real onboarding) and run
+sequentially (`Ordered`), continuing even if one fails (`ContinueOnFailure`)
+so later CRDs are still exercised.
+
+## Coverage Gap Record
+
+No e2e scenario has been intentionally dropped from the gating workflow — all
+25 pre-existing specs are still verified, split across the six jobs above.
+This section exists as the place to record it if a future change ever needs
+to drop a scenario from the gating path rather than fitting it into an
+existing (or new) job:
+
+| Scenario | Why not gating | Where (if anywhere) it's still verified |
+|---|---|---|
+| _(none currently)_ | | |
