@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **E2E test suite optimization** — CI e2e tests now run faster; see `docs/development/testing.md` (and `.claude/TESTING.md` for AI guidance) for details.
+
 ### Added
 
 - **Gateway API route filters (`spec.gateway.filters`)** — the `HomeAssistant` CRD's `spec.gateway` now supports declaring HTTP route-level behaviors on the operator-managed `HTTPRoute`: request/response header modification, redirects (e.g. enforcing HTTPS), and URL rewrites — mirroring upstream Gateway API's own `HTTPRouteFilter` field names/shape so existing Gateway API knowledge transfers directly (`RequestMirror` and `ExtensionRef` are intentionally out of scope). Filters are validated at admission time by the existing validating webhook: an unknown filter type, a missing or mismatched sub-object for the declared type, or an all-empty filter are all rejected with a message naming the problem, before ever reaching the cluster. Changing filters never restarts the Home Assistant pod (route exposure is fully decoupled from the pod template hash), and omitting `filters` entirely leaves the managed route byte-for-byte unchanged from today's behavior.

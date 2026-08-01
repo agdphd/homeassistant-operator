@@ -23,7 +23,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Job 1: Build and cache operator image
+  # Job 1: Build and cache operator image once, shared by every e2e-* job below
+  # so no job redundantly rebuilds it (see docs/development/testing.md).
   build:
     name: Build Operator Image
     runs-on: ubuntu-latest
@@ -49,13 +50,21 @@ jobs:
           path: operator-e2e.tar
           retention-days: 1
 
-  # Job 2: Critical path E2E — 1 bootstrap, 11 tests sequential
-  # Estimated time: ~40-50 min (bootstrap ~30 min + tests ~10 min)
+  # Jobs 2-7: the e2e suite split across six jobs that run concurrently, each
+  # selecting a scoped subset of ./test/e2e/ via Ginkgo's --label-filter, so
+  # that the whole workflow (not any single job) completes within 10 minutes.
+  # See docs/development/testing.md for the current expected duration and the
+  # rationale behind this split (previously one long sequential job).
+  #
+  # timeout-minutes below are initial estimates derived from the per-job costs
+  # measured for the prior sequential job; expect to tune them from real CI
+  # runs. None may exceed 10, since these jobs run concurrently and the
+  # workflow's own end-to-end time equals the slowest job's time.
+
   e2e-critical-path:
-    name: E2E Critical Path
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 8
 
     steps:
       - name: Clone the code
@@ -88,48 +97,48 @@ jobs:
 
       - name: Create k3d cluster
         run: |
-          k3d cluster create e2e-critical \
+          k3d cluster create e2e-critical-path \
             --image rancher/k3s:${{ env.K3S_VERSION }} \
             --agents 0 \
-            --servers-memory 12g \
+            --servers-memory 4g \
             --wait \
             --timeout 5m
 
       - name: Load operator image into k3d
         run: |
           docker load -i operator-e2e.tar
-          k3d image import operator:e2e -c e2e-critical
+          k3d image import operator:e2e -c e2e-critical-path
 
       - name: Preload Home Assistant image into k3d
         run: |
           docker pull ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }}
-          k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-critical
+          k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-critical-path
 
       - name: Verify cluster is ready
         run: |
           kubectl cluster-info
           kubectl get nodes
 
-      - name: Run E2E critical path tests
+      - name: Run E2E critical-path tests
         env:
-          K3D_CLUSTER: e2e-critical
+          K3D_CLUSTER: e2e-critical-path
           HA_VERSION: ${{ env.HA_VERSION }}
           CERT_MANAGER_VERSION: ${{ env.CERT_MANAGER_VERSION }}
+          CERT_MANAGER_INSTALL_SKIP: "true"
+          E2E_IMG: "operator:e2e"
+          E2E_SKIP_IMAGE_BUILD: "true"
         run: |
           make ginkgo
           ./bin/ginkgo run \
             -v \
-            --timeout=59m \
+            --label-filter=critical-path \
+            --timeout=5m \
             ./test/e2e/
 
       - name: Collect controller logs on failure
         if: failure()
         run: |
           echo "=== Controller Manager Logs ==="
-          # No --tail limit: this suite runs ~15 min with debug-level logging, so a
-          # tail=500 snapshot only captured the last few seconds and missed the
-          # actual failure window. Also write to a file and upload as an artifact
-          # so the full log survives even if the GH Actions UI truncates it.
           kubectl logs -n homeassistant-operator-system \
             -l control-plane=controller-manager \
             --tail=-1 --prefix | tee controller-manager.log || true
@@ -142,7 +151,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: controller-manager-logs
+          name: controller-manager-logs-critical-path
           path: controller-manager.log
           retention-days: 7
 
@@ -152,22 +161,6 @@ jobs:
           echo "=== Kubernetes Events ==="
           kubectl get events --all-namespaces \
             --sort-by=.lastTimestamp || true
-
-      - name: Collect webhook diagnostics on failure
-        if: failure()
-        run: |
-          echo "=== ValidatingWebhookConfiguration (live, incl. caBundle length) ==="
-          kubectl get validatingwebhookconfiguration -o yaml || true
-          echo "=== caBundle byte length per webhook (empty/missing means TLS trust is broken) ==="
-          kubectl get validatingwebhookconfiguration -o json | \
-            jq -r '.items[] | .metadata.name as $n | .webhooks[] | "\($n) / \(.name): caBundle len=\(.clientConfig.caBundle | length // 0)"' || true
-          echo "=== webhook-server-cert Secret (keys + data lengths only) ==="
-          kubectl get secret -n homeassistant-operator-system homeassistant-operator-webhook-server-cert -o json | \
-            jq -r '.data // {} | to_entries[] | "\(.key): \(.value | length) bytes (base64)"' || true
-          echo "=== webhook Service + Endpoints ==="
-          kubectl get svc,endpoints -n homeassistant-operator-system -o wide || true
-          echo "=== apiserver admission webhook dispatch log (dispatcher.go) — every call/failure, unfiltered by volume ==="
-          docker logs k3d-e2e-critical-server-0 2>&1 | grep -E "dispatcher\.go|webhook_duration|failed calling webhook|failing open" || true
 
       - name: Collect resource status on failure
         if: failure()
@@ -199,4 +192,528 @@ jobs:
 
       - name: Cleanup k3d cluster
         if: always()
-        run: k3d cluster delete e2e-critical
+        run: k3d cluster delete e2e-critical-path
+
+  e2e-tls:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Cache Ginkgo CLI
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: bin/ginkgo*
+          key: ginkgo-${{ hashFiles('go.mod', 'Makefile') }}
+          restore-keys: |
+            ginkgo-
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/${{ env.K3D_VERSION }}/install.sh | bash
+
+      - name: Verify k3d installation
+        run: k3d version
+
+      - name: Download operator image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: operator-image
+
+      - name: Create k3d cluster
+        run: |
+          k3d cluster create e2e-tls \
+            --image rancher/k3s:${{ env.K3S_VERSION }} \
+            --agents 0 \
+            --servers-memory 4g \
+            --wait \
+            --timeout 5m
+
+      - name: Load operator image into k3d
+        run: |
+          docker load -i operator-e2e.tar
+          k3d image import operator:e2e -c e2e-tls
+
+      - name: Preload Home Assistant image into k3d
+        run: |
+          docker pull ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }}
+          k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-tls
+
+      - name: Verify cluster is ready
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Run E2E TLS tests
+        env:
+          K3D_CLUSTER: e2e-tls
+          HA_VERSION: ${{ env.HA_VERSION }}
+          CERT_MANAGER_VERSION: ${{ env.CERT_MANAGER_VERSION }}
+          E2E_IMG: "operator:e2e"
+          E2E_SKIP_IMAGE_BUILD: "true"
+        run: |
+          make ginkgo
+          ./bin/ginkgo run \
+            -v \
+            --label-filter=tls \
+            --timeout=6m \
+            ./test/e2e/
+
+      - name: Collect controller logs on failure
+        if: failure()
+        run: |
+          echo "=== Controller Manager Logs ==="
+          kubectl logs -n homeassistant-operator-system \
+            -l control-plane=controller-manager \
+            --tail=-1 --prefix | tee controller-manager.log || true
+          echo "=== Controller Manager Previous (crashed) Container Logs, if any ==="
+          kubectl logs -n homeassistant-operator-system \
+            -l control-plane=controller-manager \
+            --tail=-1 --prefix --previous 2>/dev/null | tee -a controller-manager.log || true
+
+      - name: Upload controller logs artifact on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: controller-manager-logs-tls
+          path: controller-manager.log
+          retention-days: 7
+
+      - name: Collect Kubernetes events on failure
+        if: failure()
+        run: |
+          echo "=== Kubernetes Events ==="
+          kubectl get events --all-namespaces \
+            --sort-by=.lastTimestamp || true
+
+      - name: Collect webhook diagnostics on failure
+        if: failure()
+        run: |
+          echo "=== ValidatingWebhookConfiguration (live, incl. caBundle length) ==="
+          kubectl get validatingwebhookconfiguration -o yaml || true
+          echo "=== caBundle byte length per webhook (empty/missing means TLS trust is broken) ==="
+          kubectl get validatingwebhookconfiguration -o json | \
+            jq -r '.items[] | .metadata.name as $n | .webhooks[] | "\($n) / \(.name): caBundle len=\(.clientConfig.caBundle | length // 0)"' || true
+          echo "=== webhook-server-cert Secret (keys + data lengths only) ==="
+          kubectl get secret -n homeassistant-operator-system homeassistant-operator-webhook-server-cert -o json | \
+            jq -r '.data // {} | to_entries[] | "\(.key): \(.value | length) bytes (base64)"' || true
+          echo "=== webhook Service + Endpoints ==="
+          kubectl get svc,endpoints -n homeassistant-operator-system -o wide || true
+          echo "=== apiserver admission webhook dispatch log (dispatcher.go) — every call/failure, unfiltered by volume ==="
+          docker logs k3d-e2e-tls-server-0 2>&1 | grep -E "dispatcher\.go|webhook_duration|failed calling webhook|failing open" || true
+
+      - name: Collect resource status on failure
+        if: failure()
+        run: |
+          echo "=== HomeAssistant Resources ==="
+          kubectl get homeassistants --all-namespaces -o wide || true
+          echo "=== Pods ==="
+          kubectl get pods --all-namespaces -o wide || true
+          echo "=== StatefulSets ==="
+          kubectl get statefulsets --all-namespaces -o wide || true
+
+      - name: Cleanup k3d cluster
+        if: always()
+        run: k3d cluster delete e2e-tls
+
+  e2e-network-policy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Cache Ginkgo CLI
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: bin/ginkgo*
+          key: ginkgo-${{ hashFiles('go.mod', 'Makefile') }}
+          restore-keys: |
+            ginkgo-
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/${{ env.K3D_VERSION }}/install.sh | bash
+
+      - name: Verify k3d installation
+        run: k3d version
+
+      - name: Download operator image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: operator-image
+
+      - name: Create k3d cluster
+        run: |
+          k3d cluster create e2e-network-policy \
+            --image rancher/k3s:${{ env.K3S_VERSION }} \
+            --agents 0 \
+            --servers-memory 4g \
+            --wait \
+            --timeout 5m
+
+      - name: Load operator image into k3d
+        run: |
+          docker load -i operator-e2e.tar
+          k3d image import operator:e2e -c e2e-network-policy
+
+      - name: Preload Home Assistant image into k3d
+        run: |
+          docker pull ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }}
+          k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-network-policy
+
+      - name: Verify cluster is ready
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Run E2E network-policy tests
+        env:
+          K3D_CLUSTER: e2e-network-policy
+          HA_VERSION: ${{ env.HA_VERSION }}
+          CERT_MANAGER_INSTALL_SKIP: "true"
+          E2E_IMG: "operator:e2e"
+          E2E_SKIP_IMAGE_BUILD: "true"
+        run: |
+          make ginkgo
+          ./bin/ginkgo run \
+            -v \
+            --label-filter=network-policy \
+            --timeout=5m \
+            ./test/e2e/
+
+      - name: Collect controller logs on failure
+        if: failure()
+        run: |
+          kubectl logs -n homeassistant-operator-system \
+            -l control-plane=controller-manager \
+            --tail=-1 --prefix | tee controller-manager.log || true
+
+      - name: Upload controller logs artifact on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: controller-manager-logs-network-policy
+          path: controller-manager.log
+          retention-days: 7
+
+      - name: Collect resource status on failure
+        if: failure()
+        run: |
+          echo "=== Pods ==="
+          kubectl get pods --all-namespaces -o wide || true
+          echo "=== NetworkPolicies ==="
+          kubectl get networkpolicies --all-namespaces -o wide || true
+
+      - name: Cleanup k3d cluster
+        if: always()
+        run: k3d cluster delete e2e-network-policy
+
+  e2e-pod-security:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Cache Ginkgo CLI
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: bin/ginkgo*
+          key: ginkgo-${{ hashFiles('go.mod', 'Makefile') }}
+          restore-keys: |
+            ginkgo-
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/${{ env.K3D_VERSION }}/install.sh | bash
+
+      - name: Verify k3d installation
+        run: k3d version
+
+      - name: Download operator image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: operator-image
+
+      - name: Create k3d cluster
+        run: |
+          k3d cluster create e2e-pod-security \
+            --image rancher/k3s:${{ env.K3S_VERSION }} \
+            --agents 0 \
+            --servers-memory 4g \
+            --wait \
+            --timeout 5m
+
+      - name: Load operator image into k3d
+        run: |
+          docker load -i operator-e2e.tar
+          k3d image import operator:e2e -c e2e-pod-security
+
+      - name: Verify cluster is ready
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Run E2E pod-security tests
+        env:
+          K3D_CLUSTER: e2e-pod-security
+          CERT_MANAGER_INSTALL_SKIP: "true"
+          E2E_IMG: "operator:e2e"
+          E2E_SKIP_IMAGE_BUILD: "true"
+        run: |
+          make ginkgo
+          ./bin/ginkgo run \
+            -v \
+            --label-filter=pod-security \
+            --timeout=5m \
+            ./test/e2e/
+
+      - name: Collect controller logs on failure
+        if: failure()
+        run: |
+          kubectl logs -n homeassistant-operator-system \
+            -l control-plane=controller-manager \
+            --tail=-1 --prefix | tee controller-manager.log || true
+
+      - name: Upload controller logs artifact on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: controller-manager-logs-pod-security
+          path: controller-manager.log
+          retention-days: 7
+
+      - name: Collect resource status on failure
+        if: failure()
+        run: |
+          echo "=== Namespace labels ==="
+          kubectl get ns homeassistant-operator-system -o yaml || true
+          echo "=== Pods ==="
+          kubectl get pods --all-namespaces -o wide || true
+
+      - name: Cleanup k3d cluster
+        if: always()
+        run: k3d cluster delete e2e-pod-security
+
+  e2e-community-repository-a:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Cache Ginkgo CLI
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: bin/ginkgo*
+          key: ginkgo-${{ hashFiles('go.mod', 'Makefile') }}
+          restore-keys: |
+            ginkgo-
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/${{ env.K3D_VERSION }}/install.sh | bash
+
+      - name: Verify k3d installation
+        run: k3d version
+
+      - name: Download operator image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: operator-image
+
+      - name: Create k3d cluster
+        run: |
+          k3d cluster create e2e-community-repository-a \
+            --image rancher/k3s:${{ env.K3S_VERSION }} \
+            --agents 0 \
+            --servers-memory 4g \
+            --wait \
+            --timeout 5m
+
+      - name: Load operator image into k3d
+        run: |
+          docker load -i operator-e2e.tar
+          k3d image import operator:e2e -c e2e-community-repository-a
+
+      - name: Preload Home Assistant image into k3d
+        run: |
+          docker pull ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }}
+          k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-community-repository-a
+
+      - name: Verify cluster is ready
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Run E2E community-repository (group A) tests
+        env:
+          K3D_CLUSTER: e2e-community-repository-a
+          HA_VERSION: ${{ env.HA_VERSION }}
+          CERT_MANAGER_INSTALL_SKIP: "true"
+          E2E_IMG: "operator:e2e"
+          E2E_SKIP_IMAGE_BUILD: "true"
+        run: |
+          make ginkgo
+          ./bin/ginkgo run \
+            -v \
+            --label-filter="community-repository && group-a" \
+            --timeout=6m \
+            ./test/e2e/
+
+      - name: Collect controller logs on failure
+        if: failure()
+        run: |
+          kubectl logs -n homeassistant-operator-system \
+            -l control-plane=controller-manager \
+            --tail=-1 --prefix | tee controller-manager.log || true
+
+      - name: Upload controller logs artifact on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: controller-manager-logs-community-repository-a
+          path: controller-manager.log
+          retention-days: 7
+
+      - name: Collect resource status on failure
+        if: failure()
+        run: |
+          echo "=== HomeAssistantCommunityRepositories ==="
+          kubectl get homeassistantcommunityrepositories --all-namespaces -o wide || true
+          echo "=== Pods ==="
+          kubectl get pods --all-namespaces -o wide || true
+
+      - name: Cleanup k3d cluster
+        if: always()
+        run: k3d cluster delete e2e-community-repository-a
+
+  e2e-community-repository-b:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Cache Ginkgo CLI
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: bin/ginkgo*
+          key: ginkgo-${{ hashFiles('go.mod', 'Makefile') }}
+          restore-keys: |
+            ginkgo-
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/${{ env.K3D_VERSION }}/install.sh | bash
+
+      - name: Verify k3d installation
+        run: k3d version
+
+      - name: Download operator image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: operator-image
+
+      - name: Create k3d cluster
+        run: |
+          k3d cluster create e2e-community-repository-b \
+            --image rancher/k3s:${{ env.K3S_VERSION }} \
+            --agents 0 \
+            --servers-memory 4g \
+            --wait \
+            --timeout 5m
+
+      - name: Load operator image into k3d
+        run: |
+          docker load -i operator-e2e.tar
+          k3d image import operator:e2e -c e2e-community-repository-b
+
+      - name: Preload Home Assistant image into k3d
+        run: |
+          docker pull ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }}
+          k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-community-repository-b
+
+      - name: Verify cluster is ready
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Run E2E community-repository (group B) tests
+        env:
+          K3D_CLUSTER: e2e-community-repository-b
+          HA_VERSION: ${{ env.HA_VERSION }}
+          CERT_MANAGER_INSTALL_SKIP: "true"
+          E2E_IMG: "operator:e2e"
+          E2E_SKIP_IMAGE_BUILD: "true"
+        run: |
+          make ginkgo
+          ./bin/ginkgo run \
+            -v \
+            --label-filter="community-repository && group-b" \
+            --timeout=7m \
+            ./test/e2e/
+
+      - name: Collect controller logs on failure
+        if: failure()
+        run: |
+          kubectl logs -n homeassistant-operator-system \
+            -l control-plane=controller-manager \
+            --tail=-1 --prefix | tee controller-manager.log || true
+
+      - name: Upload controller logs artifact on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: controller-manager-logs-community-repository-b
+          path: controller-manager.log
+          retention-days: 7
+
+      - name: Collect resource status on failure
+        if: failure()
+        run: |
+          echo "=== HomeAssistantCommunityRepositories ==="
+          kubectl get homeassistantcommunityrepositories --all-namespaces -o wide || true
+          echo "=== Pods ==="
+          kubectl get pods --all-namespaces -o wide || true
+
+      - name: Cleanup k3d cluster
+        if: always()
+        run: k3d cluster delete e2e-community-repository-b

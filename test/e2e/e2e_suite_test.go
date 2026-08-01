@@ -33,20 +33,37 @@ var (
 	// Optional Environment Variables:
 	// - CERT_MANAGER_INSTALL_SKIP=true: Skips CertManager installation during test setup.
 	// - K3D_CLUSTER: Override k3d cluster name (defaults to homeassistant-operator-test-e2e)
+	// - E2E_IMG: Override the operator image reference used by the suite (defaults to
+	//   "example.com/homeassistant-operator:v0.0.1").
+	// - E2E_SKIP_IMAGE_BUILD=true: Skip building/loading the operator image locally and
+	//   use E2E_IMG as-is — for CI jobs that already loaded a pre-built image (e.g. via
+	//   `k3d image import`) so each concurrent job doesn't redundantly rebuild it.
 	// These variables are useful if CertManager is already installed, avoiding
 	// re-installation and conflicts.
 	skipCertManagerInstall = os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true"
 	// isCertManagerAlreadyInstalled will be set true when CertManager CRDs be found on the cluster
 	isCertManagerAlreadyInstalled = false
 
+	// skipImageBuild skips the local `make docker-build` + k3d image load steps,
+	// using projectImage as an already-loaded image instead.
+	skipImageBuild = os.Getenv("E2E_SKIP_IMAGE_BUILD") == "true"
+
 	// projectImage is the name of the image which will be build and loaded
-	// with the code source changes to be tested.
-	projectImage = "example.com/homeassistant-operator:v0.0.1"
+	// with the code source changes to be tested. Override with E2E_IMG.
+	projectImage = envOrDefault("E2E_IMG", "example.com/homeassistant-operator:v0.0.1")
 
 	// tempKubeconfigPath holds the path to the isolated kubeconfig used by this test run.
 	// It is deleted in SynchronizedAfterSuite.
 	tempKubeconfigPath string
 )
+
+// envOrDefault returns the value of the named environment variable, or def if unset/empty.
+func envOrDefault(name, def string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return def
+}
 
 // TestE2E runs the end-to-end (e2e) test suite for the project. These tests execute in an isolated,
 // temporary k3d cluster to validate project changes for use in CI jobs.
@@ -72,14 +89,18 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		"Cannot isolate kubeconfig for k3d context %q — is the k3d cluster running? "+
 			"Run: make k3d-create", utils.K3dContextName())
 
-	By("building the manager(Operator) image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
-	_, err := utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
+	if !skipImageBuild {
+		By("building the manager(Operator) image")
+		cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", projectImage))
+		_, err := utils.Run(cmd)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager(Operator) image")
 
-	By("loading the manager(Operator) image into k3d cluster")
-	err = utils.LoadImageToK3dClusterWithName(projectImage)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into k3d")
+		By("loading the manager(Operator) image into k3d cluster")
+		err = utils.LoadImageToK3dClusterWithName(projectImage)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager(Operator) image into k3d")
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "E2E_SKIP_IMAGE_BUILD=true: using pre-loaded image %s\n", projectImage)
+	}
 
 	// The tests-e2e are intended to run on a temporary cluster that is created and destroyed for testing.
 	// To prevent errors when tests run in environments with CertManager already installed,
@@ -98,7 +119,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 
 	// Shared setup for all E2E tests: Install CRDs and deploy controller once
 	By("installing CRDs")
-	cmd = exec.Command("make", "install")
+	cmd := exec.Command("make", "install")
 	output, err := utils.Run(cmd)
 	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to install CRDs")
 	_, _ = fmt.Fprintf(GinkgoWriter, "CRD installation output:\n%s\n", output)

@@ -410,7 +410,7 @@ spec:
 	})
 
 	It("installs an integration-category repository, restarting the HA pod",
-		Label("community-repository", "fast"), func() {
+		Label("community-repository", "fast", "group-a"), func() {
 			podStartBefore := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.startTime}")
 
 			hacrYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -454,7 +454,7 @@ spec:
 		})
 
 	It("installs a theme-category repository without restarting the HA pod",
-		Label("community-repository", "fast"), func() {
+		Label("community-repository", "fast", "group-a"), func() {
 			podStartBefore := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.startTime}")
 
 			hacrYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
@@ -488,7 +488,7 @@ spec:
 		})
 
 	It("installs a python_script-category repository",
-		Label("community-repository", "fast"), func() {
+		Label("community-repository", "fast", "group-b"), func() {
 			hacrYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantCommunityRepository
 metadata:
@@ -517,7 +517,7 @@ spec:
 		})
 
 	It("installs a template-category repository",
-		Label("community-repository", "fast"), func() {
+		Label("community-repository", "fast", "group-b"), func() {
 			hacrYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantCommunityRepository
 metadata:
@@ -546,7 +546,7 @@ spec:
 		})
 
 	It("installs a plugin-category repository and registers its Lovelace resource",
-		Label("community-repository", "slow"), func() {
+		Label("community-repository", "slow", "group-b"), func() {
 			hacrYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1alpha1
 kind: HomeAssistantCommunityRepository
 metadata:
@@ -581,7 +581,7 @@ spec:
 		})
 
 	It("keeps installedVersion at the old ref until a ref update is confirmed, then updates it",
-		Label("community-repository", "fast"), func() {
+		Label("community-repository", "fast", "group-a"), func() {
 			Expect(getPhase("e2e-theme")).To(Equal("Installed"))
 			Expect(getInstalledVersion("e2e-theme")).To(Equal("v1.0.0"))
 
@@ -603,7 +603,7 @@ spec:
 		})
 
 	It("removes the ConfigMap entry and the materialized file on deletion",
-		Label("community-repository", "fast"), func() {
+		Label("community-repository", "fast", "group-b"), func() {
 			Expect(getPhase("e2e-python-script")).To(Equal("Installed"))
 
 			cmd := exec.Command("kubectl", "delete", "hacr", "e2e-python-script", "-n", namespace)

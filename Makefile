@@ -139,9 +139,8 @@ setup-test-e2e: ## Set up a k3d cluster for e2e tests (always creates fresh clus
 	@k3d image import ghcr.io/home-assistant/home-assistant:$(HA_VERSION) -c $(K3D_CLUSTER_E2E)
 
 .PHONY: test-e2e
-test-e2e: setup-test-e2e manifests generate fmt vet ginkgo ## Run E2E critical path tests — 1 bootstrap, 11 tests (~40-50 min)
+test-e2e: setup-test-e2e manifests generate fmt vet ginkgo ## Run all E2E tests sequentially (1 bootstrap)
 	@echo "Running E2E critical path tests (1 bootstrap, sequential)..."
-	@echo "Expected time: ~40-50 min (bootstrap ~30 min + 11 tests ~10 min)"
 	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) $(GINKGO) run \
 		-v \
 		--timeout=60m \
@@ -154,6 +153,46 @@ test-e2e: setup-test-e2e manifests generate fmt vet ginkgo ## Run E2E critical p
 cleanup-test-e2e: ## Tear down the k3d cluster used for e2e tests
 	@echo "Cleaning up k3d cluster $(K3D_CLUSTER_E2E)..."
 	@k3d cluster delete $(K3D_CLUSTER_E2E) 2>/dev/null || true
+
+# Local, single-job reproductions of the six concurrent CI jobs defined in
+# .github/workflows/test-e2e-parallel.yml. See docs/development/testing.md
+# for what each label-filter subset covers.
+
+.PHONY: test-e2e-critical-path
+test-e2e-critical-path: setup-test-e2e manifests generate fmt vet ginkgo ## Run the critical-path e2e job locally
+	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) $(GINKGO) run \
+		-v --label-filter=critical-path --timeout=8m ./test/e2e/ | tee test-e2e.log; \
+	status=$$?; $(MAKE) cleanup-test-e2e; exit $$status
+
+.PHONY: test-e2e-tls
+test-e2e-tls: setup-test-e2e manifests generate fmt vet ginkgo ## Run the tls e2e job locally (installs cert-manager)
+	K3D_CLUSTER=$(K3D_CLUSTER_E2E) $(GINKGO) run \
+		-v --label-filter=tls --timeout=9m ./test/e2e/ | tee test-e2e.log; \
+	status=$$?; $(MAKE) cleanup-test-e2e; exit $$status
+
+.PHONY: test-e2e-network-policy
+test-e2e-network-policy: setup-test-e2e manifests generate fmt vet ginkgo ## Run the network-policy e2e job locally
+	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) $(GINKGO) run \
+		-v --label-filter=network-policy --timeout=8m ./test/e2e/ | tee test-e2e.log; \
+	status=$$?; $(MAKE) cleanup-test-e2e; exit $$status
+
+.PHONY: test-e2e-pod-security
+test-e2e-pod-security: setup-test-e2e manifests generate fmt vet ginkgo ## Run the pod-security e2e job locally
+	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) $(GINKGO) run \
+		-v --label-filter=pod-security --timeout=8m ./test/e2e/ | tee test-e2e.log; \
+	status=$$?; $(MAKE) cleanup-test-e2e; exit $$status
+
+.PHONY: test-e2e-community-repository-a
+test-e2e-community-repository-a: setup-test-e2e manifests generate fmt vet ginkgo ## Run the community-repository group-a e2e job locally
+	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) $(GINKGO) run \
+		-v --label-filter="community-repository && group-a" --timeout=9m ./test/e2e/ | tee test-e2e.log; \
+	status=$$?; $(MAKE) cleanup-test-e2e; exit $$status
+
+.PHONY: test-e2e-community-repository-b
+test-e2e-community-repository-b: setup-test-e2e manifests generate fmt vet ginkgo ## Run the community-repository group-b e2e job locally
+	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) $(GINKGO) run \
+		-v --label-filter="community-repository && group-b" --timeout=10m ./test/e2e/ | tee test-e2e.log; \
+	status=$$?; $(MAKE) cleanup-test-e2e; exit $$status
 
 ##@ k3d Testing (recommended for k3s target environments)
 
