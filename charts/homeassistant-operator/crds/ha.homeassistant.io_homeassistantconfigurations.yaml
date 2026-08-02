@@ -284,6 +284,16 @@ spec:
                   status reflects
                 format: int64
                 type: integer
+              trustedProxiesDefaulted:
+                description: |-
+                  TrustedProxiesDefaulted reports whether the operator's default
+                  http.trusted_proxies / http.use_x_forwarded_for values are currently
+                  active in the generated configuration for the referenced HomeAssistant.
+                  false covers every case where they are not active (not exposed via
+                  Ingress/Gateway, opted out via spec.disableDefaultTrustedProxies, or the
+                  user already manages these keys themselves) — see the HomeAssistant's own
+                  ExposureReady condition message for which of those it is.
+                type: boolean
             type: object
         type: object
         x-kubernetes-validations:

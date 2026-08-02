@@ -273,6 +273,7 @@ _Appears in:_
 | `secretName` _string_ | SecretName references a bring-your-own TLS Secret for the listener.<br />Takes precedence over IssuerRef. |  | Optional: \{\} <br /> |
 | `parentRef` _[GatewayParentRef](#gatewayparentref)_ | ParentRef references an existing Gateway/listener to attach the HTTPRoute<br />to. When empty and ManageGateway is true, the operator creates a Gateway. |  | Optional: \{\} <br /> |
 | `manageGateway` _boolean_ | ManageGateway controls whether the operator also creates a Gateway<br />resource (not just the HTTPRoute). GatewayClass and the gateway controller<br />remain the platform's responsibility. | false | Optional: \{\} <br /> |
+| `filters` _[HTTPRouteFilter](#httproutefilter) array_ | Filters are HTTP route-level behaviors (header modification, redirect, URL<br />rewrite) applied, in order, to the single HTTPRoute rule the operator<br />manages for this instance. Omitted/empty leaves the route unchanged from<br />its default shape. |  | Optional: \{\} <br /> |
 
 
 #### HTTPConfig
@@ -291,6 +292,126 @@ _Appears in:_
 | `corsDomains` _string array_ | CorsDomains is a list of allowed CORS origins |  | Optional: \{\} <br /> |
 | `trustProxy` _boolean_ | TrustProxy enables trust in X-Forwarded-For header |  | Optional: \{\} <br /> |
 | `useXForwardedFor` _boolean_ | UseXForwardedFor enables usage of X-Forwarded-For header |  | Optional: \{\} <br /> |
+
+
+#### HTTPHeader
+
+
+
+HTTPHeader is a single HTTP header name/value pair.
+
+
+
+_Appears in:_
+- [HTTPHeaderFilter](#httpheaderfilter)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name of the header. |  | Required: \{\} <br /> |
+| `value` _string_ | Value of the header. |  | Required: \{\} <br /> |
+
+
+#### HTTPHeaderFilter
+
+
+
+HTTPHeaderFilter adds, sets, or removes HTTP headers. Used for both
+RequestHeaderModifier and ResponseHeaderModifier.
+
+
+
+_Appears in:_
+- [HTTPRouteFilter](#httproutefilter)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `set` _[HTTPHeader](#httpheader) array_ | Set overwrites headers already present. |  | Optional: \{\} <br /> |
+| `add` _[HTTPHeader](#httpheader) array_ | Add appends headers, keeping any existing value. |  | Optional: \{\} <br /> |
+| `remove` _string array_ | Remove lists header names to strip. |  | Optional: \{\} <br /> |
+
+
+#### HTTPPathModifier
+
+
+
+HTTPPathModifier describes a path replacement for HTTPRequestRedirectFilter
+or HTTPURLRewriteFilter.
+
+
+
+_Appears in:_
+- [HTTPRequestRedirectFilter](#httprequestredirectfilter)
+- [HTTPURLRewriteFilter](#httpurlrewritefilter)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `type` _string_ | Type selects which of the fields below applies. |  | Enum: [ReplaceFullPath ReplacePrefixMatch] <br />Required: \{\} <br /> |
+| `replaceFullPath` _string_ | ReplaceFullPath is the whole replacement path. Must be set, and only be<br />set, when Type is ReplaceFullPath. |  | Optional: \{\} <br /> |
+| `replacePrefixMatch` _string_ | ReplacePrefixMatch is the replacement for the matched path prefix. Must<br />be set, and only be set, when Type is ReplacePrefixMatch. |  | Optional: \{\} <br /> |
+
+
+#### HTTPRequestRedirectFilter
+
+
+
+HTTPRequestRedirectFilter redirects the request to a different
+scheme/hostname/path/port, optionally with a specific status code.
+
+
+
+_Appears in:_
+- [HTTPRouteFilter](#httproutefilter)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `scheme` _string_ | Scheme replaces the request scheme (e.g. "https"). |  | Optional: \{\} <br /> |
+| `hostname` _string_ | Hostname replaces the request hostname. |  | Optional: \{\} <br /> |
+| `path` _[HTTPPathModifier](#httppathmodifier)_ | Path replaces the request path. |  | Optional: \{\} <br /> |
+| `port` _integer_ | Port replaces the request port. |  | Optional: \{\} <br /> |
+| `statusCode` _integer_ | StatusCode is the redirect status code. |  | Enum: [301 302 303 307 308] <br />Optional: \{\} <br /> |
+
+
+#### HTTPRouteFilter
+
+
+
+HTTPRouteFilter is one user-declared route behavior attached to the HTTP
+route exposing a HomeAssistant instance through Gateway API. Mirrors the
+field names/shape of upstream Gateway API's own HTTPRouteFilter, limited to
+the four supported types: RequestHeaderModifier, ResponseHeaderModifier,
+RequestRedirect, URLRewrite. Exactly the sub-object matching Type must be
+set; the webhook rejects any other combination.
+
+
+
+_Appears in:_
+- [GatewaySpec](#gatewayspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `type` _string_ | Type selects which of the sub-objects below applies. |  | Enum: [RequestHeaderModifier ResponseHeaderModifier RequestRedirect URLRewrite] <br />Required: \{\} <br /> |
+| `requestHeaderModifier` _[HTTPHeaderFilter](#httpheaderfilter)_ | RequestHeaderModifier modifies request headers. Must be set, and only be<br />set, when Type is RequestHeaderModifier. |  | Optional: \{\} <br /> |
+| `responseHeaderModifier` _[HTTPHeaderFilter](#httpheaderfilter)_ | ResponseHeaderModifier modifies response headers. Must be set, and only<br />be set, when Type is ResponseHeaderModifier. |  | Optional: \{\} <br /> |
+| `requestRedirect` _[HTTPRequestRedirectFilter](#httprequestredirectfilter)_ | RequestRedirect redirects the request. Must be set, and only be set,<br />when Type is RequestRedirect. |  | Optional: \{\} <br /> |
+| `urlRewrite` _[HTTPURLRewriteFilter](#httpurlrewritefilter)_ | URLRewrite rewrites the request path/hostname. Must be set, and only be<br />set, when Type is URLRewrite. |  | Optional: \{\} <br /> |
+
+
+#### HTTPURLRewriteFilter
+
+
+
+HTTPURLRewriteFilter rewrites the request hostname/path before it reaches
+Home Assistant.
+
+
+
+_Appears in:_
+- [HTTPRouteFilter](#httproutefilter)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `hostname` _string_ | Hostname replaces the request hostname. |  | Optional: \{\} <br /> |
+| `path` _[HTTPPathModifier](#httppathmodifier)_ | Path replaces the request path. |  | Optional: \{\} <br /> |
 
 
 #### HomeAssistant
@@ -558,6 +679,7 @@ _Appears in:_
 | `lastReloadMethod` _string_ | LastReloadMethod indicates how the last reload was performed (hot-reload or restart) |  | Optional: \{\} <br /> |
 | `lastError` _string_ | LastError contains the error message from the last failed reload attempt<br />Cleared when reload succeeds |  | Optional: \{\} <br /> |
 | `observedGeneration` _integer_ | Generation tracks the generation of the spec that the status reflects |  | Optional: \{\} <br /> |
+| `trustedProxiesDefaulted` _boolean_ | TrustedProxiesDefaulted reports whether the operator's default<br />http.trusted_proxies / http.use_x_forwarded_for values are currently<br />active in the generated configuration for the referenced HomeAssistant.<br />false covers every case where they are not active (not exposed via<br />Ingress/Gateway, opted out via spec.disableDefaultTrustedProxies, or the<br />user already manages these keys themselves) — see the HomeAssistant's own<br />ExposureReady condition message for which of those it is. |  | Optional: \{\} <br /> |
 
 
 #### HomeAssistantFloor
@@ -1120,6 +1242,7 @@ _Appears in:_
 | `hostNetwork` _boolean_ | HostNetwork enables host networking for the Home Assistant pod.<br />When true, the pod uses the host's network namespace, enabling discovery<br />of IoT devices via mDNS, SSDP, and DHCP on the local network. |  | Optional: \{\} <br /> |
 | `bootstrap` _[BootstrapSpec](#bootstrapspec)_ | Bootstrap configures automatic onboarding and API token creation<br />When enabled, the operator will automatically complete the Home Assistant<br />onboarding process and create a long-lived access token for API access |  | Optional: \{\} <br /> |
 | `backup` _[BackupSpec](#backupspec)_ | Backup configures automatic backups using Home Assistant's built-in backup system.<br />Requires bootstrap with API token enabled. |  | Optional: \{\} <br /> |
+| `disableDefaultTrustedProxies` _boolean_ | DisableDefaultTrustedProxies opts out of the operator's automatic<br />http.trusted_proxies / http.use_x_forwarded_for defaults. When Ingress or<br />Gateway API exposure is enabled, Home Assistant rejects every request<br />through that endpoint with 400 Bad Request until it trusts the proxy<br />forwarding the request. Unless this is set to true, and unless the user<br />has already set these keys themselves in HomeAssistantConfiguration (or<br />manages http: entirely externally, e.g. via an !include tag), the<br />operator injects the RFC1918 private address ranges (10.0.0.0/8,<br />172.16.0.0/12, 192.168.0.0/16) as sensible defaults — this cannot be a<br />reliable autodetection of the real cluster CIDR, only a conservative<br />guess, so this field exists to opt out entirely for clusters where it<br />doesn't apply (e.g. non-RFC1918 pod/service networks, or where other<br />workloads on the pod network should not be trusted to set<br />X-Forwarded-For for the actual Ingress/Gateway proxy). |  | Optional: \{\} <br /> |
 | `alpha` _[AlphaSpec](#alphaspec)_ | Alpha groups experimental, unstable fields. Fields here may change or be<br />removed without a deprecation notice. |  | Optional: \{\} <br /> |
 
 

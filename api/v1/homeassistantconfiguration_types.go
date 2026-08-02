@@ -190,6 +190,16 @@ type HomeAssistantConfigurationStatus struct {
 	// Generation tracks the generation of the spec that the status reflects
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// TrustedProxiesDefaulted reports whether the operator's default
+	// http.trusted_proxies / http.use_x_forwarded_for values are currently
+	// active in the generated configuration for the referenced HomeAssistant.
+	// false covers every case where they are not active (not exposed via
+	// Ingress/Gateway, opted out via spec.disableDefaultTrustedProxies, or the
+	// user already manages these keys themselves) — see the HomeAssistant's own
+	// ExposureReady condition message for which of those it is.
+	// +optional
+	TrustedProxiesDefaulted *bool `json:"trustedProxiesDefaulted,omitempty"`
 }
 
 // +kubebuilder:storageversion

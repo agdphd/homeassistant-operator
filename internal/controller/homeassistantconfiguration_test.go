@@ -2366,6 +2366,20 @@ prometheus:
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(BeTrue(), "changing ssl_certificate should require restart")
 		})
+
+		It("should NOT require restart when the operator injects default trusted proxies", func() {
+			// Regression: injectTrustedProxies adds use_x_forwarded_for and
+			// trusted_proxies from scratch (no prior http: section) the first time
+			// Ingress/Gateway exposure is enabled — this must stay hot-reloadable,
+			// not trigger a pod restart.
+			oldConfig := "homeassistant:\n  name: Test\n"
+			newConfig := "homeassistant:\n  name: Test\nhttp:\n  use_x_forwarded_for: true\n" +
+				"  trusted_proxies:\n    - 10.0.0.0/8\n    - 172.16.0.0/12\n    - 192.168.0.0/16\n"
+
+			result, err := needsRestart(oldConfig, newConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(BeFalse(), "adding default trusted proxies should be hot-reloadable")
+		})
 	})
 
 	Context("Empty configs", func() {
