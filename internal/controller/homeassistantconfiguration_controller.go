@@ -544,7 +544,7 @@ func httpSectionChanged(old, new interface{}) (changed bool, critical bool) {
 		return true, true
 	}
 
-	allKeys := make(map[string]bool, len(oldMap)+len(newMap))
+	allKeys := make(map[string]bool)
 	for key := range oldMap {
 		allKeys[key] = true
 	}

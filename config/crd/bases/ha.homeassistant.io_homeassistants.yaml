@@ -355,9 +355,12 @@ spec:
                                 properties:
                                   name:
                                     description: Name of the header.
+                                    minLength: 1
+                                    pattern: ^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$
                                     type: string
                                   value:
                                     description: Value of the header.
+                                    minLength: 1
                                     type: string
                                 required:
                                 - name
@@ -377,9 +380,12 @@ spec:
                                 properties:
                                   name:
                                     description: Name of the header.
+                                    minLength: 1
+                                    pattern: ^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$
                                     type: string
                                   value:
                                     description: Value of the header.
+                                    minLength: 1
                                     type: string
                                 required:
                                 - name
@@ -450,9 +456,12 @@ spec:
                                 properties:
                                   name:
                                     description: Name of the header.
+                                    minLength: 1
+                                    pattern: ^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$
                                     type: string
                                   value:
                                     description: Value of the header.
+                                    minLength: 1
                                     type: string
                                 required:
                                 - name
@@ -472,9 +481,12 @@ spec:
                                 properties:
                                   name:
                                     description: Name of the header.
+                                    minLength: 1
+                                    pattern: ^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$
                                     type: string
                                   value:
                                     description: Value of the header.
+                                    minLength: 1
                                     type: string
                                 required:
                                 - name

@@ -272,10 +272,13 @@ type HTTPHeaderFilter struct {
 type HTTPHeader struct {
 	// Name of the header.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$`
 	Name string `json:"name"`
 
 	// Value of the header.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
 	Value string `json:"value"`
 }
 

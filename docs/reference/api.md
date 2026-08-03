@@ -307,8 +307,8 @@ _Appears in:_
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
-| `name` _string_ | Name of the header. |  | Required: \{\} <br /> |
-| `value` _string_ | Value of the header. |  | Required: \{\} <br /> |
+| `name` _string_ | Name of the header. |  | MinLength: 1 <br />Pattern: `^[A-Za-z0-9!#$%&'*+\-.^_\x60\|~]+$` <br />Required: \{\} <br /> |
+| `value` _string_ | Value of the header. |  | MinLength: 1 <br />Required: \{\} <br /> |
 
 
 #### HTTPHeaderFilter
