@@ -220,6 +220,66 @@ func TestValidateGatewayFilters(t *testing.T) {
 	}
 }
 
+func TestValidateDevices(t *testing.T) {
+	tests := []struct {
+		name     string
+		devices  []hav1.DevicePassthroughEntry
+		wantErrs int
+	}{
+		{name: "no devices is valid"},
+		{
+			name:     "empty hostPath is rejected",
+			devices:  []hav1.DevicePassthroughEntry{{HostPath: ""}},
+			wantErrs: 1,
+		},
+		{
+			name:     "relative hostPath is rejected",
+			devices:  []hav1.DevicePassthroughEntry{{HostPath: "relative/path"}},
+			wantErrs: 1,
+		},
+		{
+			name:     "hostPath outside /dev is rejected",
+			devices:  []hav1.DevicePassthroughEntry{{HostPath: "/etc/passwd"}},
+			wantErrs: 1,
+		},
+		{
+			name:     "hostPath with .. traversal is rejected",
+			devices:  []hav1.DevicePassthroughEntry{{HostPath: "/dev/../etc/passwd"}},
+			wantErrs: 1,
+		},
+		{
+			name:     "malformed containerPath is rejected",
+			devices:  []hav1.DevicePassthroughEntry{{HostPath: "/dev/ttyACM0", ContainerPath: "relative"}},
+			wantErrs: 1,
+		},
+		{
+			name: "duplicate hostPath is rejected",
+			devices: []hav1.DevicePassthroughEntry{
+				{HostPath: "/dev/ttyACM0"},
+				{HostPath: "/dev/ttyACM0"},
+			},
+			wantErrs: 1,
+		},
+		{
+			name: "two distinct valid devices are accepted",
+			devices: []hav1.DevicePassthroughEntry{
+				{HostPath: "/dev/ttyACM0"},
+				{HostPath: "/dev/ttyACM1", ContainerPath: "/dev/zigbee"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := &hav1.HomeAssistantSpec{Alpha: &hav1.AlphaSpec{Devices: tc.devices}}
+			errs := validateDevices(spec)
+			if len(errs) != tc.wantErrs {
+				t.Fatalf("errs = %d (%v), want %d", len(errs), errs, tc.wantErrs)
+			}
+		})
+	}
+}
+
 func TestValidatorRejectsAndAccepts(t *testing.T) {
 	v := &HomeAssistantCustomValidator{}
 

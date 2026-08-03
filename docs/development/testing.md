@@ -170,7 +170,7 @@ Eventually(func(g Gomega) {
 
 ## E2E Tests
 
-**Location**: `test/e2e/*_test.go` (8 files, 25 specs total)
+**Location**: `test/e2e/*_test.go` (8 files, 26 specs total)
 **Framework**: Ginkgo v2 + real k3d cluster
 **Strategy**: Six independently-labeled suites, run as six concurrent GitHub
 Actions jobs (`.github/workflows/test-e2e-parallel.yml`), so the whole
@@ -187,7 +187,7 @@ the six concurrent jobs below.
 ### Running E2E locally
 
 ```bash
-make test-e2e-critical-path              # HomeAssistant + sibling CRDs (10 specs)
+make test-e2e-critical-path              # HomeAssistant + sibling CRDs (11 specs)
 make test-e2e-tls                        # TLS ingress/gateway/native/webhook (5 specs)
 make test-e2e-network-policy             # NetworkPolicy enforcement (1 spec)
 make test-e2e-pod-security                # Pod Security Standards (2 specs)
@@ -210,7 +210,7 @@ skip-the-rebuild behavior locally against a pre-built image.
 
 | Job | Label filter | Specs | What is verified |
 |---|---|---|---|
-| `e2e-critical-path` | `critical-path` | 10 | All CRDs' core lifecycle (see table below) — shares one HA bootstrap |
+| `e2e-critical-path` | `critical-path` | 11 | All CRDs' core lifecycle plus device passthrough (see table below) — shares one HA bootstrap |
 | `e2e-tls` | `tls` | 5 | TLS via Ingress, Gateway API, native HA TLS, and the validating webhook |
 | `e2e-network-policy` | `network-policy` | 1 | `spec.alpha.networkPolicy` actually restricts traffic, not just that the object exists |
 | `e2e-pod-security` | `pod-security` | 2 | Operator namespace enforces the `restricted` Pod Security Standard |
@@ -237,7 +237,16 @@ the per-spec activation-confirmation polling in community-repository, or the
 "Load Home Assistant image" step's own variability) or accepting a revised,
 honest target — not just more timeout increases.
 
-### `e2e-critical-path` tests (10 specs)
+`e2e-critical-path`'s new 11th spec (device passthrough) adds two StatefulSet
+rolling restarts to a job whose `ginkgo run --timeout=7m` had no headroom
+built in for this — a rolling restart of an already-onboarded instance is
+expected to be much faster than the initial bootstrap (no onboarding wizard),
+but this hasn't been confirmed against a real CI run yet. If real CI timing
+shows this job needs more room, widen its `--timeout` in
+`.github/workflows/test-e2e-parallel.yml` the same way the jobs above already
+were, rather than letting it fail intermittently.
+
+### `e2e-critical-path` tests (11 specs)
 
 | # | CRD | What is verified |
 |---|-----|-----------------|
@@ -251,15 +260,19 @@ honest target — not just more timeout increases.
 | 8 | `HomeAssistantFloor` | Created via WebSocket registry API, deleted |
 | 9 | `HomeAssistantLabel` | Created via WebSocket registry API, deleted |
 | 10 | `HomeAssistantArea` | Created via WebSocket registry API, deleted |
+| 11 | `HomeAssistant` (`spec.alpha.devices`) | Device mounted without `privileged: true` (`/dev/null`/`/dev/zero` stand-ins), missing device surfaced via `DevicesReady` |
 
 This job's specs share one Home Assistant bootstrap (real onboarding) and run
 sequentially (`Ordered`), continuing even if one fails (`ContinueOnFailure`)
-so later CRDs are still exercised.
+so later CRDs are still exercised. Spec 11 reuses this same shared instance
+(no second bootstrap) and is deliberately last, since its final step leaves
+the instance in a broken state (an intentionally unmountable device) to
+exercise the missing-device diagnostics.
 
 ## Coverage Gap Record
 
 No e2e scenario has been intentionally dropped from the gating workflow — all
-25 pre-existing specs are still verified, split across the six jobs above.
+26 specs are still verified, split across the six jobs above.
 This section exists as the place to record it if a future change ever needs
 to drop a scenario from the gating path rather than fitting it into an
 existing (or new) job:

@@ -840,6 +840,59 @@ spec:
 		}, utils.ResourceTimeout, reconcileInterval).Should(Succeed())
 	})
 
+	// -------------------------------------------------------------------------
+	// 11. spec.alpha.devices — device passthrough (last: intentionally leaves
+	// the shared HA instance in a broken state at the end to exercise the
+	// missing-device diagnostics, since nothing runs after this in the suite).
+	// Reuses the already-bootstrapped instance from spec #1 instead of a
+	// second full HA bootstrap, to stay within this job's time budget — real
+	// hardware cannot be tested in CI, so /dev/null and /dev/zero (present on
+	// every Linux node) stand in for a real Zigbee/Z-Wave coordinator.
+	// -------------------------------------------------------------------------
+	It("Device passthrough (spec.alpha.devices) — mount, multi-device, and missing-device diagnostics", func() {
+		By("Verifying no device volume exists by default")
+		Expect(utils.Kubectl("get", "statefulset", haName, "-n", namespace,
+			"-o", "jsonpath={.spec.template.spec.volumes[?(@.name=='device-0')].name}")).To(BeEmpty())
+
+		By("Declaring two devices: /dev/null and /dev/zero")
+		Expect(utils.PatchResource("homeassistants", haName, namespace, "merge",
+			`{"spec":{"alpha":{"devices":[{"hostPath":"/dev/null"},{"hostPath":"/dev/zero"}]}}}`)).To(Succeed())
+
+		By("Waiting for the pod to restart and become Ready with both devices mounted")
+		Eventually(func(g Gomega) {
+			phase := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
+			g.Expect(phase).To(Equal("Running"))
+			ready := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+				"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
+			g.Expect(ready).To(Equal("True"))
+		}, utils.RestartTimeout, reconcileInterval).Should(Succeed())
+
+		By("Verifying the container is never privileged")
+		privileged := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+			"-o", `jsonpath={.spec.containers[?(@.name=="home-assistant")].securityContext.privileged}`)
+		Expect(privileged).NotTo(Equal("true"))
+
+		By("Verifying both devices are present inside the container")
+		cmd := exec.Command("kubectl", "exec", "-n", namespace, haName+"-0", "-c", "home-assistant",
+			"--", "sh", "-c", "test -c /dev/null && test -c /dev/zero")
+		_, err := utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "/dev/null and /dev/zero should both be character devices inside the container")
+
+		By("Declaring a device path that does not exist on this node")
+		Expect(utils.PatchResource("homeassistants", haName, namespace, "merge",
+			`{"spec":{"alpha":{"devices":[{"hostPath":"/dev/does-not-exist-e2e-0"}]}}}`)).To(Succeed())
+
+		By("Verifying DevicesReady=False names the missing path")
+		Eventually(func(g Gomega) {
+			status := utils.Kubectl("get", "ha", haName, "-n", namespace,
+				"-o", `jsonpath={.status.conditions[?(@.type=="DevicesReady")].status}`)
+			g.Expect(status).To(Equal("False"))
+			message := utils.Kubectl("get", "ha", haName, "-n", namespace,
+				"-o", `jsonpath={.status.conditions[?(@.type=="DevicesReady")].message}`)
+			g.Expect(message).To(ContainSubstring("/dev/does-not-exist-e2e-0"))
+		}, utils.RestartTimeout, reconcileInterval).Should(Succeed())
+	})
+
 })
 
 // collectCriticalPathDebugInfo gathers diagnostic information on failure.

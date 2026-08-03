@@ -57,6 +57,36 @@ spec:
                   Alpha groups experimental, unstable fields. Fields here may change or be
                   removed without a deprecation notice.
                 properties:
+                  devices:
+                    description: |-
+                      Devices declares host device nodes (e.g. /dev/ttyACM0 for a Zigbee/
+                      Z-Wave USB coordinator) to mount into the Home Assistant container.
+                      Each entry is mounted via a hostPath volume typed as a character
+                      device; the container is never granted `privileged: true` for this.
+                      Declaring at least one entry changes the pod's security context, so
+                      this starts in spec.alpha until it stabilizes. This does not affect
+                      where the pod is scheduled — the declared device(s) must already
+                      exist on whichever node the pod lands on (see node pinning, a
+                      separate capability) for this to be useful.
+                    items:
+                      description: |-
+                        DevicePassthroughEntry declares one host device node to expose inside the
+                        Home Assistant container.
+                      properties:
+                        containerPath:
+                          description: |-
+                            ContainerPath is the path the device is mounted at inside the Home
+                            Assistant container. Defaults to HostPath when omitted.
+                          type: string
+                        hostPath:
+                          description: |-
+                            HostPath is the device node's path on the host, e.g. /dev/ttyACM0.
+                            Must be an absolute path under /dev.
+                          type: string
+                      required:
+                      - hostPath
+                      type: object
+                    type: array
                   networkPolicy:
                     description: |-
                       NetworkPolicy controls whether the operator creates a NetworkPolicy
