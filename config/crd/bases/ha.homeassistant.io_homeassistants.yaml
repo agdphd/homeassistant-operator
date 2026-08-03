@@ -298,6 +298,23 @@ spec:
                       created during onboarding
                     type: string
                 type: object
+              disableDefaultTrustedProxies:
+                description: |-
+                  DisableDefaultTrustedProxies opts out of the operator's automatic
+                  http.trusted_proxies / http.use_x_forwarded_for defaults. When Ingress or
+                  Gateway API exposure is enabled, Home Assistant rejects every request
+                  through that endpoint with 400 Bad Request until it trusts the proxy
+                  forwarding the request. Unless this is set to true, and unless the user
+                  has already set these keys themselves in HomeAssistantConfiguration (or
+                  manages http: entirely externally, e.g. via an !include tag), the
+                  operator injects the RFC1918 private address ranges (10.0.0.0/8,
+                  172.16.0.0/12, 192.168.0.0/16) as sensible defaults — this cannot be a
+                  reliable autodetection of the real cluster CIDR, only a conservative
+                  guess, so this field exists to opt out entirely for clusters where it
+                  doesn't apply (e.g. non-RFC1918 pod/service networks, or where other
+                  workloads on the pod network should not be trusted to set
+                  X-Forwarded-For for the actual Ingress/Gateway proxy).
+                type: boolean
               gateway:
                 description: |-
                   Gateway configures operator-managed Gateway API exposure (HTTPRoute, and
@@ -338,9 +355,12 @@ spec:
                                 properties:
                                   name:
                                     description: Name of the header.
+                                    minLength: 1
+                                    pattern: ^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$
                                     type: string
                                   value:
                                     description: Value of the header.
+                                    minLength: 1
                                     type: string
                                 required:
                                 - name
@@ -360,9 +380,12 @@ spec:
                                 properties:
                                   name:
                                     description: Name of the header.
+                                    minLength: 1
+                                    pattern: ^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$
                                     type: string
                                   value:
                                     description: Value of the header.
+                                    minLength: 1
                                     type: string
                                 required:
                                 - name
@@ -433,9 +456,12 @@ spec:
                                 properties:
                                   name:
                                     description: Name of the header.
+                                    minLength: 1
+                                    pattern: ^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$
                                     type: string
                                   value:
                                     description: Value of the header.
+                                    minLength: 1
                                     type: string
                                 required:
                                 - name
@@ -455,9 +481,12 @@ spec:
                                 properties:
                                   name:
                                     description: Name of the header.
+                                    minLength: 1
+                                    pattern: ^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$
                                     type: string
                                   value:
                                     description: Value of the header.
+                                    minLength: 1
                                     type: string
                                 required:
                                 - name

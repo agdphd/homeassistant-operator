@@ -165,6 +165,24 @@ func overrideNodeField(mapping *yaml.Node, key, value, tag string) {
 	)
 }
 
+// setSequenceFieldIfAbsent adds a key with a list-of-strings value to a mapping
+// node if the key doesn't already exist. Like setNodeField (its scalar
+// counterpart), it never touches an existing key — used for trusted_proxies,
+// which is a YAML sequence rather than a scalar.
+func setSequenceFieldIfAbsent(mapping *yaml.Node, key string, values []string) {
+	if nodeMappingValue(mapping, key) != nil {
+		return
+	}
+	seq := &yaml.Node{Kind: yaml.SequenceNode}
+	for _, v := range values {
+		seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: v, Tag: "!!str"})
+	}
+	mapping.Content = append(mapping.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Value: key},
+		seq,
+	)
+}
+
 // shouldInjectRecorder reports whether injectRecorder has any fields to write.
 // Returns false when recorder is nil, explicitly disabled, or there is nothing to inject.
 func shouldInjectRecorder(recorder *hav1.RecorderConfig, dbURL string) bool {

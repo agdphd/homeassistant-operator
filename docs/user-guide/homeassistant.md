@@ -89,6 +89,58 @@ spec:
       secretName: ha-tls
 ```
 
+#### Default trusted proxies
+
+Home Assistant rejects every request with `400 Bad Request` unless it is told
+to trust the proxy in front of it. Whenever `spec.ingress.enabled` or
+`spec.gateway.enabled` is `true`, the operator automatically adds the
+following to the generated `configuration.yaml`, unless the keys are already
+present:
+
+```yaml
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+```
+
+These are the RFC1918 private address ranges — a conservative default, not an
+autodetection of the real cluster pod/service CIDR (which cannot be reliably
+read from the Kubernetes API). Each key is added independently: if you have
+already set either `http.use_x_forwarded_for` or `http.trusted_proxies`
+yourself in `HomeAssistantConfiguration`, the operator leaves your value
+untouched and only fills in the missing key. If `http:` itself is an
+externally managed tagged block (for example `http: !include http.yaml`),
+the operator leaves it completely untouched — set the keys in that included
+file, or move the section into `HomeAssistantConfiguration.spec.configuration`
+directly, if you want the operator to manage them.
+
+**Security note**: because these are broad RFC1918 ranges, in most Kubernetes
+clusters they cover every pod on the network, not just your actual Ingress
+controller or Gateway. Any reachable workload can then set its own
+`X-Forwarded-For` header and have Home Assistant trust it as the real client
+IP, weakening IP-based bans, rate limiting, and audit-log attribution. If
+other workloads in the cluster aren't trusted, replace the default
+`trusted_proxies` with the actual CIDR of your Ingress/Gateway proxy (for
+example, the ingress controller's pod or Service CIDR) in
+`HomeAssistantConfiguration`, or disable the defaults below and configure
+`http.trusted_proxies`/`http.use_x_forwarded_for` yourself.
+
+To opt out entirely (for example, if your cluster's pod/service network isn't
+RFC1918, or you want to set narrower proxy ranges yourself), set:
+
+```yaml
+spec:
+  disableDefaultTrustedProxies: true
+```
+
+The `HomeAssistant` resource's `ExposureReady` condition message reports
+which of the three states applies: `default trusted proxies applied`, `using
+user-configured trusted proxies`, or `default trusted proxies disabled
+(opt-out)`.
+
 ### `spec.resources`
 
 CPU and memory requests/limits for the HA container.

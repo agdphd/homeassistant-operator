@@ -82,6 +82,23 @@ type HomeAssistantSpec struct {
 	// +optional
 	Backup *BackupSpec `json:"backup,omitempty"`
 
+	// DisableDefaultTrustedProxies opts out of the operator's automatic
+	// http.trusted_proxies / http.use_x_forwarded_for defaults. When Ingress or
+	// Gateway API exposure is enabled, Home Assistant rejects every request
+	// through that endpoint with 400 Bad Request until it trusts the proxy
+	// forwarding the request. Unless this is set to true, and unless the user
+	// has already set these keys themselves in HomeAssistantConfiguration (or
+	// manages http: entirely externally, e.g. via an !include tag), the
+	// operator injects the RFC1918 private address ranges (10.0.0.0/8,
+	// 172.16.0.0/12, 192.168.0.0/16) as sensible defaults — this cannot be a
+	// reliable autodetection of the real cluster CIDR, only a conservative
+	// guess, so this field exists to opt out entirely for clusters where it
+	// doesn't apply (e.g. non-RFC1918 pod/service networks, or where other
+	// workloads on the pod network should not be trusted to set
+	// X-Forwarded-For for the actual Ingress/Gateway proxy).
+	// +optional
+	DisableDefaultTrustedProxies bool `json:"disableDefaultTrustedProxies,omitempty"`
+
 	// Alpha groups experimental, unstable fields. Fields here may change or be
 	// removed without a deprecation notice.
 	// +optional
@@ -210,6 +227,7 @@ type GatewayParentRef struct {
 // set; the webhook rejects any other combination.
 type HTTPRouteFilter struct {
 	// Type selects which of the sub-objects below applies.
+	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=RequestHeaderModifier;ResponseHeaderModifier;RequestRedirect;URLRewrite
 	Type string `json:"type"`
 
@@ -253,9 +271,14 @@ type HTTPHeaderFilter struct {
 // HTTPHeader is a single HTTP header name/value pair.
 type HTTPHeader struct {
 	// Name of the header.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9!#$%&'*+\-.^_\x60|~]+$`
 	Name string `json:"name"`
 
 	// Value of the header.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
 	Value string `json:"value"`
 }
 
@@ -300,6 +323,7 @@ type HTTPURLRewriteFilter struct {
 // or HTTPURLRewriteFilter.
 type HTTPPathModifier struct {
 	// Type selects which of the fields below applies.
+	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=ReplaceFullPath;ReplacePrefixMatch
 	Type string `json:"type"`
 

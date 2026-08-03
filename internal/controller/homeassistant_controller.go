@@ -526,20 +526,14 @@ func (r *HomeAssistantReconciler) getGeneratedConfigMapName(
 ) (string, error) {
 	log := logf.FromContext(ctx)
 
-	// List all HomeAssistantConfigurations in the same namespace
-	haConfigList := &hav1.HomeAssistantConfigurationList{}
-	if err := r.List(ctx, haConfigList, client.InNamespace(ha.Namespace)); err != nil {
+	haConfig, err := r.findHomeAssistantConfiguration(ctx, ha)
+	if err != nil {
 		return "", err
 	}
-
-	// Find HomeAssistantConfiguration that references this HomeAssistant
-	for _, haConfig := range haConfigList.Items {
-		if haConfig.Spec.HomeAssistantRef.Name == ha.Name {
-			// Found a HomeAssistantConfiguration for this HA
-			generatedConfigMapName := ha.Name + "-configuration"
-			log.V(1).Info("Found HomeAssistantConfiguration, using generated ConfigMap", "configmap", generatedConfigMapName)
-			return generatedConfigMapName, nil
-		}
+	if haConfig != nil {
+		generatedConfigMapName := ha.Name + "-configuration"
+		log.V(1).Info("Found HomeAssistantConfiguration, using generated ConfigMap", "configmap", generatedConfigMapName)
+		return generatedConfigMapName, nil
 	}
 
 	return "", nil

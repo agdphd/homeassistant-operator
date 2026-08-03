@@ -166,7 +166,7 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	// injection) once so that hash, ConfigMap data, sync detection, and needsRestart all use
 	// identical bytes. Using buildEffectiveConfig here would exclude the recorder section,
 	// causing syncConfigMapFromCRD to see a permanent mismatch and trigger spurious reloads.
-	canonicalContent, err := r.buildConfigContent(ctx, config, ha)
+	canonicalContent, trustedProxiesResult, err := r.buildConfigContent(ctx, config, ha)
 	if err != nil {
 		log.Error(err, "Failed to build canonical configuration content")
 		meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
@@ -245,6 +245,8 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	// Update status
 	config.Status.ConfigHash = configHash
 	config.Status.ObservedGeneration = config.Generation
+	trustedProxiesDefaulted := trustedProxiesResult == trustedProxiesApplied
+	config.Status.TrustedProxiesDefaulted = &trustedProxiesDefaulted
 	meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
 		Type:               conditionTypeReady,
 		Status:             metav1.ConditionTrue,
@@ -403,6 +405,13 @@ func needsRestart(oldConfig, newConfig string) (bool, error) {
 			if reloadableSections[key] {
 				continue // Can be hot-reloaded
 			}
+			// http gets its own per-key classification below (sectionChanged),
+			// even when the section itself is appearing for the first time —
+			// otherwise injectTrustedProxies creating http: from scratch would
+			// always force a restart regardless of which keys it added.
+			if key == "http" {
+				continue
+			}
 			// Unknown or critical section added - requires restart
 			return true, nil
 		}
@@ -411,6 +420,12 @@ func needsRestart(oldConfig, newConfig string) (bool, error) {
 	// Check for removed sections
 	for key := range oldYAML {
 		if _, exists := newYAML[key]; !exists {
+			// http is deferred to sectionChanged below for the same reason as
+			// above — removing it (e.g. exposure disabled, defaults no longer
+			// applied) must follow the same per-key classification.
+			if key == "http" {
+				continue
+			}
 			// Section removed - always requires restart
 			return true, nil
 		}
@@ -438,6 +453,26 @@ func sectionChanged(old, new map[string]interface{}, section string) (changed bo
 		return false, false
 	}
 
+	// http is classified per-key even when the section is being added or
+	// removed wholesale (the missing side is treated as empty), so that
+	// injectTrustedProxies creating/removing the section from scratch stays
+	// subject to the same hot-reload-vs-restart rules as changing an
+	// already-present key — see httpSectionChanged.
+	if section == "http" {
+		oldMap, oldIsMap := oldSection.(map[string]interface{})
+		newMap, newIsMap := newSection.(map[string]interface{})
+		if (oldExists && !oldIsMap) || (newExists && !newIsMap) {
+			return true, true // tagged scalar or other unexpected shape — safe default
+		}
+		if oldMap == nil {
+			oldMap = map[string]interface{}{}
+		}
+		if newMap == nil {
+			newMap = map[string]interface{}{}
+		}
+		return httpSectionChanged(oldMap, newMap)
+	}
+
 	if !oldExists || !newExists {
 		return true, true // Section added or removed
 	}
@@ -445,11 +480,6 @@ func sectionChanged(old, new map[string]interface{}, section string) (changed bo
 	// Special handling for homeassistant section
 	if section == "homeassistant" {
 		return homeassistantSectionChanged(oldSection, newSection)
-	}
-
-	// Special handling for http section
-	if section == "http" {
-		return httpSectionChanged(oldSection, newSection)
 	}
 
 	// For other sections, just check if reloadable
@@ -514,27 +544,37 @@ func httpSectionChanged(old, new interface{}) (changed bool, critical bool) {
 		return true, true
 	}
 
-	// Check for critical HTTP key changes
-	for key := range criticalHttpKeys {
+	allKeys := make(map[string]bool)
+	for key := range oldMap {
+		allKeys[key] = true
+	}
+	for key := range newMap {
+		allKeys[key] = true
+	}
+
+	reloadableChanged := false
+	for key := range allKeys {
 		oldVal, oldHas := oldMap[key]
 		newVal, newHas := newMap[key]
+		if oldHas == newHas && fmt.Sprintf("%v", oldVal) == fmt.Sprintf("%v", newVal) {
+			continue // unchanged
+		}
 
-		if oldHas != newHas || fmt.Sprintf("%v", oldVal) != fmt.Sprintf("%v", newVal) {
+		switch {
+		case criticalHttpKeys[key]:
 			return true, true // Critical change
+		case reloadableHttpKeys[key]:
+			reloadableChanged = true
+		default:
+			// A key outside both classifications changed (added, removed, or
+			// modified) — this project has no hot-reload rule for it, so the
+			// safe default is to require a restart rather than silently
+			// ignoring the change or assuming hot-reload applies.
+			return true, true
 		}
 	}
 
-	// Check for reloadable HTTP key changes
-	for key := range reloadableHttpKeys {
-		oldVal, oldHas := oldMap[key]
-		newVal, newHas := newMap[key]
-
-		if oldHas != newHas || fmt.Sprintf("%v", oldVal) != fmt.Sprintf("%v", newVal) {
-			return true, false // Reloadable change
-		}
-	}
-
-	return false, false
+	return reloadableChanged, false
 }
 
 // buildHomeAssistantURL constructs the URL for Home Assistant service
@@ -1070,7 +1110,7 @@ func (r *HomeAssistantConfigurationReconciler) buildConfigContent(
 	ctx context.Context,
 	config *hav1.HomeAssistantConfiguration,
 	ha *hav1.HomeAssistant,
-) (string, error) {
+) (string, trustedProxiesOutcome, error) {
 	content := buildEffectiveConfig(config.Spec.Configuration, ha)
 	rec := config.Spec.Recorder
 	if rec == nil || (rec.Enabled != nil && !*rec.Enabled) {
@@ -1078,17 +1118,17 @@ func (r *HomeAssistantConfigurationReconciler) buildConfigContent(
 		if err := r.cleanupRecorderDBSecret(ctx, config); err != nil {
 			logf.FromContext(ctx).Error(err, "Failed to clean up recorder-db secret (best-effort)")
 		}
-		return r.applyNativeTLS(ctx, ha, content)
+		return r.applyNativeTLSAndTrustedProxies(ctx, ha, content)
 	}
 
 	dbURL, fromSecretRef, err := r.resolveRecorderDB(ctx, config)
 	if err != nil {
-		return "", err
+		return "", trustedProxiesNotExposed, err
 	}
 
 	if fromSecretRef {
 		if err := r.reconcileRecorderDBSecret(ctx, config, dbURL); err != nil {
-			return "", fmt.Errorf("reconcile recorder-db secret: %w", err)
+			return "", trustedProxiesNotExposed, fmt.Errorf("reconcile recorder-db secret: %w", err)
 		}
 	} else {
 		// Plain database string or empty — remove any leftover Secret from a previous
@@ -1100,9 +1140,26 @@ func (r *HomeAssistantConfigurationReconciler) buildConfigContent(
 
 	content, err = injectRecorder(content, rec, dbURL, fromSecretRef)
 	if err != nil {
-		return "", err
+		return "", trustedProxiesNotExposed, err
 	}
-	return r.applyNativeTLS(ctx, ha, content)
+	return r.applyNativeTLSAndTrustedProxies(ctx, ha, content)
+}
+
+// applyNativeTLSAndTrustedProxies applies native-TLS injection (unchanged
+// behavior) and then trusted-proxies injection, returning the latter's
+// outcome for the caller to persist to status.
+func (r *HomeAssistantConfigurationReconciler) applyNativeTLSAndTrustedProxies(
+	ctx context.Context, ha *hav1.HomeAssistant, content string,
+) (string, trustedProxiesOutcome, error) {
+	content, err := r.applyNativeTLS(ctx, ha, content)
+	if err != nil {
+		return "", trustedProxiesNotExposed, err
+	}
+	content, outcome, err := injectTrustedProxies(content, ha)
+	if err != nil {
+		return "", trustedProxiesNotExposed, err
+	}
+	return content, outcome, nil
 }
 
 // applyNativeTLS injects http.ssl_certificate/ssl_key into the configuration when

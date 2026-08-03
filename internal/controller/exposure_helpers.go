@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -111,6 +112,14 @@ func (r *HomeAssistantReconciler) reconcileExposure(ctx context.Context, ha *hav
 func (r *HomeAssistantReconciler) updateExposureReady(ctx context.Context, ha *hav1.HomeAssistant, exposed bool) error {
 	if exposed {
 		log := logf.FromContext(ctx)
+		message := "Exposure resources reconciled"
+		haConfig, err := r.findHomeAssistantConfiguration(ctx, ha)
+		if err != nil {
+			log.V(1).Info("updateExposureReady: failed to look up HomeAssistantConfiguration for trusted-proxies status",
+				"error", err)
+			haConfig = nil
+		}
+		message += "; " + trustedProxiesStatusMessage(ha, haConfig)
 		var changed bool
 		if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
 			changed = meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
@@ -118,7 +127,7 @@ func (r *HomeAssistantReconciler) updateExposureReady(ctx context.Context, ha *h
 				Status:             metav1.ConditionTrue,
 				ObservedGeneration: h.Generation,
 				Reason:             reasonExposureReady,
-				Message:            "Exposure resources reconciled",
+				Message:            message,
 			})
 			log.V(1).Info("updateExposureReady: condition mutate",
 				"changed", changed, "resourceVersion", h.ResourceVersion, "generation", h.Generation)
@@ -136,6 +145,49 @@ func (r *HomeAssistantReconciler) updateExposureReady(ctx context.Context, ha *h
 	return r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
 		return meta.RemoveStatusCondition(&h.Status.Conditions, conditionExposureReady)
 	})
+}
+
+// findHomeAssistantConfiguration returns the HomeAssistantConfiguration that
+// references the given HomeAssistant (spec.homeAssistantRef.name), or nil if
+// none exists yet. Shared with getGeneratedConfigMapName so both read the same
+// sibling lookup rather than duplicating the List call.
+func (r *HomeAssistantReconciler) findHomeAssistantConfiguration(
+	ctx context.Context, ha *hav1.HomeAssistant,
+) (*hav1.HomeAssistantConfiguration, error) {
+	haConfigList := &hav1.HomeAssistantConfigurationList{}
+	if err := r.List(ctx, haConfigList, client.InNamespace(ha.Namespace)); err != nil {
+		return nil, err
+	}
+	for i := range haConfigList.Items {
+		if haConfigList.Items[i].Spec.HomeAssistantRef.Name == ha.Name {
+			return &haConfigList.Items[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// trustedProxiesStatusMessage phrases the trusted-proxies outcome for the
+// ExposureReady condition message, covering all outcomes an exposed
+// HomeAssistant can be in. The opt-out check reads ha.Spec directly
+// (no cross-CRD read needed); distinguishing "applied" from "user-managed"
+// requires the sibling HomeAssistantConfiguration's status, since only its
+// reconciler knows whether the user had already set the keys themselves. A
+// nil haConfig (lookup failed, or not created yet) or a haConfig that hasn't
+// completed a reconcile yet (TrustedProxiesDefaulted still nil — the two
+// controllers reconcile independently, so this is reachable in normal
+// operation, not just on error) is reported as pending rather than
+// misreported as "user-configured".
+func trustedProxiesStatusMessage(ha *hav1.HomeAssistant, haConfig *hav1.HomeAssistantConfiguration) string {
+	if ha.Spec.DisableDefaultTrustedProxies {
+		return "default trusted proxies disabled (opt-out)"
+	}
+	if haConfig == nil || haConfig.Status.TrustedProxiesDefaulted == nil {
+		return "trusted proxies status pending (HomeAssistantConfiguration not yet reconciled)"
+	}
+	if *haConfig.Status.TrustedProxiesDefaulted {
+		return "default trusted proxies applied"
+	}
+	return "using user-configured trusted proxies"
 }
 
 // reconcileIngress creates/updates the operator-managed Ingress and its
