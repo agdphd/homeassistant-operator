@@ -235,7 +235,7 @@ var _ = Describe("HomeAssistant device passthrough (spec.alpha.devices)", func()
 			ha := &hav1.HomeAssistant{
 				ObjectMeta: metav1.ObjectMeta{Name: "devcond-none", Namespace: devicePassthroughTestNamespace},
 			}
-			cond := reconciler.buildDevicesReadyCondition(ctx, ha, false)
+			cond := reconciler.buildDevicesReadyCondition(ctx, ha, false, nil)
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(cond.Reason).To(Equal(reasonNoDevicesDeclared))
 		})
@@ -247,7 +247,7 @@ var _ = Describe("HomeAssistant device passthrough (spec.alpha.devices)", func()
 					Alpha: &hav1.AlphaSpec{Devices: []hav1.DevicePassthroughEntry{{HostPath: "/dev/ttyACM0"}}},
 				},
 			}
-			cond := reconciler.buildDevicesReadyCondition(ctx, ha, true)
+			cond := reconciler.buildDevicesReadyCondition(ctx, ha, true, nil)
 			Expect(cond.Status).To(Equal(metav1.ConditionTrue))
 			Expect(cond.Reason).To(Equal(reasonDevicesMounted))
 		})
@@ -295,7 +295,7 @@ var _ = Describe("HomeAssistant device passthrough (spec.alpha.devices)", func()
 				_ = k8sClient.Delete(ctx, event)
 			})
 
-			cond := reconciler.buildDevicesReadyCondition(ctx, ha, false)
+			cond := reconciler.buildDevicesReadyCondition(ctx, ha, false, pod)
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(reasonDeviceUnavailable))
 			Expect(cond.Message).To(ContainSubstring("/dev/does-not-exist-0"))
@@ -308,7 +308,7 @@ var _ = Describe("HomeAssistant device passthrough (spec.alpha.devices)", func()
 					Alpha: &hav1.AlphaSpec{Devices: []hav1.DevicePassthroughEntry{{HostPath: "/dev/ttyACM0"}}},
 				},
 			}
-			cond := reconciler.buildDevicesReadyCondition(ctx, ha, false)
+			cond := reconciler.buildDevicesReadyCondition(ctx, ha, false, nil)
 			Expect(cond.Status).To(Equal(metav1.ConditionUnknown))
 			Expect(cond.Reason).To(Equal(reasonDevicesPending))
 		})
@@ -357,7 +357,7 @@ var _ = Describe("HomeAssistant device passthrough (spec.alpha.devices)", func()
 				_ = k8sClient.Delete(ctx, pod)
 			})
 
-			cond := reconciler.buildDevicesReadyCondition(ctx, ha, false)
+			cond := reconciler.buildDevicesReadyCondition(ctx, ha, false, pod)
 			Expect(cond.Status).To(Equal(metav1.ConditionUnknown))
 			Expect(cond.Reason).To(Equal(reasonDevicesPending))
 		})
@@ -405,7 +405,7 @@ var _ = Describe("HomeAssistant device passthrough (spec.alpha.devices)", func()
 				_ = k8sClient.Delete(ctx, event)
 			})
 
-			cond := reconciler.buildDevicesReadyCondition(ctx, ha, false)
+			cond := reconciler.buildDevicesReadyCondition(ctx, ha, false, pod)
 			Expect(cond.Status).To(Equal(metav1.ConditionUnknown))
 			Expect(cond.Reason).To(Equal(reasonDevicesPending))
 		})

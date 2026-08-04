@@ -21,7 +21,10 @@ import (
 	"fmt"
 	"strings"
 
+	schedulingv1 "k8s.io/api/scheduling/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -34,7 +37,7 @@ import (
 // concern reported via status, not an admission-time rejection).
 func SetupHomeAssistantWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr, &hav1.HomeAssistant{}).
-		WithValidator(&HomeAssistantCustomValidator{}).
+		WithValidator(&HomeAssistantCustomValidator{APIReader: mgr.GetAPIReader()}).
 		Complete()
 }
 
@@ -44,20 +47,30 @@ func SetupHomeAssistantWebhookWithManager(mgr ctrl.Manager) error {
 // +kubebuilder:webhook:path=/validate-ha-homeassistant-io-v1-homeassistant,mutating=false,failurePolicy=ignore,sideEffects=None,groups=ha.homeassistant.io,resources=homeassistants,verbs=create;update,versions=v1,name=vhomeassistant-v1.kb.io,admissionReviewVersions=v1
 
 // HomeAssistantCustomValidator validates HomeAssistant resources on admission.
-type HomeAssistantCustomValidator struct{}
+// APIReader is used only by validateScheduling's spec.scheduling.priorityClassName
+// existence check — every other validate* helper stays a pure function over
+// the spec, needing no cluster access. Deliberately the manager's uncached
+// direct-to-API-server reader (mgr.GetAPIReader()), not mgr.GetClient(): the
+// cached client's informer for a resource type it has never watched before
+// (PriorityClass) can lag behind a just-created object — confirmed against a
+// real cluster, where a PriorityClass created moments earlier was still
+// reported "not found" via the cached client.
+type HomeAssistantCustomValidator struct {
+	APIReader client.Reader
+}
 
 var _ admission.Validator[*hav1.HomeAssistant] = &HomeAssistantCustomValidator{}
 
 func (v *HomeAssistantCustomValidator) ValidateCreate(
-	_ context.Context, ha *hav1.HomeAssistant,
+	ctx context.Context, ha *hav1.HomeAssistant,
 ) (admission.Warnings, error) {
-	return validateHomeAssistant(ha)
+	return validateHomeAssistant(ctx, v.APIReader, ha)
 }
 
 func (v *HomeAssistantCustomValidator) ValidateUpdate(
-	_ context.Context, _, newObj *hav1.HomeAssistant,
+	ctx context.Context, _, newObj *hav1.HomeAssistant,
 ) (admission.Warnings, error) {
-	return validateHomeAssistant(newObj)
+	return validateHomeAssistant(ctx, v.APIReader, newObj)
 }
 
 func (v *HomeAssistantCustomValidator) ValidateDelete(
@@ -66,11 +79,13 @@ func (v *HomeAssistantCustomValidator) ValidateDelete(
 	return nil, nil
 }
 
-func validateHomeAssistant(ha *hav1.HomeAssistant) (admission.Warnings, error) {
+func validateHomeAssistant(ctx context.Context, cl client.Reader, ha *hav1.HomeAssistant) (admission.Warnings, error) {
 	log := logf.Log.WithName("homeassistant-webhook")
 	warnings, msgs := validateHomeAssistantTLS(&ha.Spec)
 	msgs = append(msgs, validateGatewayFilters(&ha.Spec)...)
 	msgs = append(msgs, validateDevices(&ha.Spec)...)
+	msgs = append(msgs, validateNodeSelector(&ha.Spec)...)
+	msgs = append(msgs, validateScheduling(ctx, cl, &ha.Spec)...)
 	if len(msgs) > 0 {
 		log.Info("rejecting HomeAssistant with invalid configuration", "name", ha.Name, "reasons", msgs)
 		return warnings, fmt.Errorf("invalid HomeAssistant %q: %s", ha.Name, strings.Join(msgs, "; "))
@@ -248,6 +263,56 @@ func validateDevicePath(fieldPath, value string) []string {
 		}
 	}
 	return nil
+}
+
+// validateNodeSelector validates spec.scheduling.nodeSelector: the CRD's
+// structural schema only guarantees a map[string]string shape, not that
+// entries are valid Kubernetes label syntax (a nodeSelector this malformed
+// would simply never match any real node, silently leaving the pod
+// unschedulable with no explanation — reject it up front instead).
+func validateNodeSelector(spec *hav1.HomeAssistantSpec) []string {
+	if spec.Scheduling == nil || len(spec.Scheduling.NodeSelector) == 0 {
+		return nil
+	}
+	var errs []string
+	for key, value := range spec.Scheduling.NodeSelector {
+		if msgs := validation.IsQualifiedName(key); len(msgs) > 0 {
+			errs = append(errs, fmt.Sprintf(
+				"spec.scheduling.nodeSelector key %q is not a valid label key: %s", key, strings.Join(msgs, "; ")))
+		}
+		if msgs := validation.IsValidLabelValue(value); len(msgs) > 0 {
+			errs = append(errs, fmt.Sprintf(
+				"spec.scheduling.nodeSelector[%q] value %q is not a valid label value: %s",
+				key, value, strings.Join(msgs, "; ")))
+		}
+	}
+	return errs
+}
+
+// validateScheduling validates spec.scheduling fields that need more than
+// structural checks. Currently just priorityClassName: Kubernetes itself
+// only rejects a nonexistent PriorityClass at pod creation time, one level
+// too late to catch the mistake at the moment the user actually submits the
+// change — this performs the equivalent check at admission time instead,
+// via a live, read-only, cluster-scoped list.
+func validateScheduling(ctx context.Context, cl client.Reader, spec *hav1.HomeAssistantSpec) []string {
+	if spec.Scheduling == nil || spec.Scheduling.PriorityClassName == "" {
+		return nil
+	}
+
+	var list schedulingv1.PriorityClassList
+	if err := cl.List(ctx, &list); err != nil {
+		logf.Log.WithName("homeassistant-webhook").Error(err, "failed to list PriorityClass objects for validation")
+		return nil
+	}
+	for _, pc := range list.Items {
+		if pc.Name == spec.Scheduling.PriorityClassName {
+			return nil
+		}
+	}
+	return []string{fmt.Sprintf(
+		"spec.scheduling.priorityClassName %q does not name an existing PriorityClass",
+		spec.Scheduling.PriorityClassName)}
 }
 
 func validateHeaderFilter(path string, h *hav1.HTTPHeaderFilter) []string {

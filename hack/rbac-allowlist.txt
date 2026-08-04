@@ -90,3 +90,10 @@ ha.homeassistant.io/homeassistantcommunityrepositories/status/update
 /events/get
 /events/list
 /events/watch
+
+# Pod scheduling controls (spec.scheduling.priorityClassName). Read-only,
+# cluster-scoped: the validating webhook checks a declared priorityClassName
+# against real PriorityClass objects at admission time, since Kubernetes
+# itself only rejects a nonexistent one later, at pod creation.
+scheduling.k8s.io/priorityclasses/get
+scheduling.k8s.io/priorityclasses/list

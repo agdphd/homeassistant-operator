@@ -63,10 +63,10 @@ jobs:
           path: ha-image.tar
           retention-days: 1
 
-  # Jobs 2-8: the e2e suite split across seven jobs that run concurrently,
+  # Jobs 2-9: the e2e suite split across eight jobs that run concurrently,
   # each selecting a scoped subset of ./test/e2e/ via Ginkgo's --label-filter.
-  # Because all seven `needs: build`, the workflow's real end-to-end time is
-  # build's own duration PLUS the slowest of the seven e2e jobs — not just
+  # Because all eight `needs: build`, the workflow's real end-to-end time is
+  # build's own duration PLUS the slowest of the eight e2e jobs — not just
   # the slowest job in isolation. See docs/development/testing.md (the sole
   # source of truth for e2e suite/job duration) for the current target and
   # the rationale behind this split (previously one long sequential job).
@@ -328,6 +328,116 @@ jobs:
       - name: Cleanup k3d cluster
         if: always()
         run: k3d cluster delete e2e-critical-b
+
+  e2e-scheduling:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Cache Ginkgo CLI
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: bin/ginkgo*
+          key: ginkgo-${{ hashFiles('go.mod', 'Makefile') }}
+          restore-keys: |
+            ginkgo-
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/${{ env.K3D_VERSION }}/install.sh | bash
+
+      - name: Verify k3d installation
+        run: k3d version
+
+      - name: Download operator image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: operator-image
+
+      - name: Download Home Assistant image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ha-image
+
+      - name: Create k3d cluster
+        run: |
+          k3d cluster create e2e-scheduling \
+            --image rancher/k3s:${{ env.K3S_VERSION }} \
+            --agents 1 \
+            --servers-memory 4g \
+            --agents-memory 2g \
+            --wait \
+            --timeout 5m
+
+      - name: Load operator image into k3d
+        run: |
+          docker load -i operator-e2e.tar
+          k3d image import operator:e2e -c e2e-scheduling
+
+      - name: Load Home Assistant image into k3d
+        run: |
+          docker load -i ha-image.tar
+          k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-scheduling
+
+      - name: Verify cluster is ready
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Run E2E scheduling tests
+        env:
+          K3D_CLUSTER: e2e-scheduling
+          HA_VERSION: ${{ env.HA_VERSION }}
+          CERT_MANAGER_INSTALL_SKIP: "true"
+          E2E_IMG: "operator:e2e"
+          E2E_SKIP_IMAGE_BUILD: "true"
+        run: |
+          make ginkgo
+          ./bin/ginkgo run \
+            -v \
+            --label-filter=scheduling \
+            --timeout=7m \
+            ./test/e2e/
+
+      - name: Collect controller logs on failure
+        if: failure()
+        run: |
+          kubectl logs -n homeassistant-operator-system \
+            -l control-plane=controller-manager \
+            --tail=-1 --prefix | tee controller-manager.log || true
+
+      - name: Upload controller logs artifact on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: controller-manager-logs-scheduling
+          path: controller-manager.log
+          retention-days: 7
+
+      - name: Collect resource status on failure
+        if: failure()
+        run: |
+          echo "=== Nodes ==="
+          kubectl get nodes --show-labels -o wide || true
+          echo "=== Pods ==="
+          kubectl get pods --all-namespaces -o wide || true
+          echo "=== HomeAssistant Resources ==="
+          kubectl get homeassistants --all-namespaces -o wide || true
+
+      - name: Cleanup k3d cluster
+        if: always()
+        run: k3d cluster delete e2e-scheduling
 
   e2e-tls:
     needs: build

@@ -297,6 +297,47 @@ func TestValidateDevices(t *testing.T) {
 	}
 }
 
+func TestValidateNodeSelector(t *testing.T) {
+	tests := []struct {
+		name         string
+		nodeSelector map[string]string
+		wantErrs     int
+	}{
+		{name: "no nodeSelector is valid"},
+		{
+			name:         "valid nodeSelector is accepted",
+			nodeSelector: map[string]string{"ha-device-node": "zigbee"},
+		},
+		{
+			name:         "valid prefixed key is accepted",
+			nodeSelector: map[string]string{"example.com/ha-device-node": "zigbee"},
+		},
+		{
+			name:         "key containing a space is rejected",
+			nodeSelector: map[string]string{"ha device node": "zigbee"},
+			wantErrs:     1,
+		},
+		{
+			name:         "value starting with a hyphen is rejected",
+			nodeSelector: map[string]string{"ha-device-node": "-zigbee"},
+			wantErrs:     1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := &hav1.HomeAssistantSpec{}
+			if tc.nodeSelector != nil {
+				spec.Scheduling = &hav1.SchedulingSpec{NodeSelector: tc.nodeSelector}
+			}
+			errs := validateNodeSelector(spec)
+			if len(errs) != tc.wantErrs {
+				t.Fatalf("errs = %d (%v), want %d", len(errs), errs, tc.wantErrs)
+			}
+		})
+	}
+}
+
 func TestValidatorRejectsAndAccepts(t *testing.T) {
 	v := &HomeAssistantCustomValidator{}
 

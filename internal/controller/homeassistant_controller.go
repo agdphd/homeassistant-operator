@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"reflect"
 	"strings"
@@ -73,15 +74,22 @@ const (
 	labelAppManagedBy = "app.kubernetes.io/managed-by"
 
 	// Condition types
-	conditionTypeReady        = "Ready"
-	conditionTypeBanRecovery  = "BanRecoveryFailed"
-	conditionTypeDevicesReady = "DevicesReady"
+	conditionTypeReady           = "Ready"
+	conditionTypeBanRecovery     = "BanRecoveryFailed"
+	conditionTypeDevicesReady    = "DevicesReady"
+	conditionTypeSchedulingReady = "SchedulingReady"
 
 	// DevicesReady condition reasons
 	reasonNoDevicesDeclared = "NoDevicesDeclared"
 	reasonDevicesMounted    = "DevicesMounted"
 	reasonDeviceUnavailable = "DeviceUnavailable"
 	reasonDevicesPending    = "Pending"
+
+	// SchedulingReady condition reasons
+	reasonNoConstraintsDeclared = "NoConstraintsDeclared"
+	reasonScheduled             = "Scheduled"
+	reasonUnschedulable         = "Unschedulable"
+	reasonSchedulingPending     = "Pending"
 
 	// failedMountEventReason is the Kubernetes Event reason emitted by the
 	// kubelet when a volume (including a spec.alpha.devices hostPath) fails
@@ -159,6 +167,11 @@ type HomeAssistantReconciler struct {
 // Webhook serving certificate self-management (cert-controller): the operator
 // injects the CA bundle into its own ValidatingWebhookConfiguration.
 // +kubebuilder:rbac:groups=admissionregistration.k8s.io,resources=validatingwebhookconfigurations,verbs=get;list;watch;update;patch
+// Read-only, cluster-scoped: used by the validating webhook (not this
+// reconciler) to reject a spec.scheduling.priorityClassName referencing a
+// PriorityClass that doesn't exist, at admission time rather than letting it
+// fail later as an opaque StatefulSet/Pod creation error.
+// +kubebuilder:rbac:groups=scheduling.k8s.io,resources=priorityclasses,verbs=get;list
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -1003,6 +1016,16 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 		sts.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
 	}
 
+	// Apply pod scheduling constraints if specified. Every field is copied
+	// verbatim onto the pod template — Kubernetes' own scheduler applies them,
+	// this operator implements no scheduling logic of its own.
+	if ha.Spec.Scheduling != nil {
+		sts.Spec.Template.Spec.NodeSelector = ha.Spec.Scheduling.NodeSelector
+		sts.Spec.Template.Spec.Affinity = ha.Spec.Scheduling.Affinity
+		sts.Spec.Template.Spec.Tolerations = ha.Spec.Scheduling.Tolerations
+		sts.Spec.Template.Spec.PriorityClassName = ha.Spec.Scheduling.PriorityClassName
+	}
+
 	return sts, nil
 }
 
@@ -1297,7 +1320,28 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 	}
 
 	stsReady := sts.Status.ReadyReplicas > 0 && sts.Status.ReadyReplicas == sts.Status.Replicas
-	devicesCondition := r.buildDevicesReadyCondition(ctx, ha, stsReady)
+
+	// Fetched once and shared by both condition builders below (rather than
+	// each independently re-fetching the same object) whenever either might
+	// need it — skipped entirely once the StatefulSet is ready, since both
+	// conditions short-circuit to their "healthy" state in that case without
+	// consulting the pod.
+	var pod *corev1.Pod
+	devicesDeclared := ha.Spec.Alpha != nil && len(ha.Spec.Alpha.Devices) > 0
+	schedulingDeclared := schedulingConstraintsDeclared(ha.Spec.Scheduling)
+	if !stsReady && (devicesDeclared || schedulingDeclared) {
+		p := &corev1.Pod{}
+		if err := r.Get(ctx, types.NamespacedName{Name: ha.Name + "-0", Namespace: ha.Namespace}, p); err != nil {
+			if !errors.IsNotFound(err) {
+				log.V(1).Info("updateStatusFromStatefulSet: failed to get pod", "error", err)
+			}
+		} else {
+			pod = p
+		}
+	}
+
+	devicesCondition := r.buildDevicesReadyCondition(ctx, ha, stsReady, pod)
+	schedulingCondition := r.buildSchedulingReadyCondition(ha, stsReady, pod)
 
 	if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
 		h.Status.Version = version
@@ -1333,6 +1377,9 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 
 		devicesCondition.ObservedGeneration = h.Generation
 		meta.SetStatusCondition(&h.Status.Conditions, devicesCondition)
+
+		schedulingCondition.ObservedGeneration = h.Generation
+		meta.SetStatusCondition(&h.Status.Conditions, schedulingCondition)
 		return true
 	}); err != nil {
 		log.Error(err, "Failed to update HomeAssistant status")
@@ -1355,7 +1402,7 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 // kubelet-emitted "FailedMount" Event on the pod, which is why this reads
 // Events directly (see internal/controller RBAC: core/events get;list;watch).
 func (r *HomeAssistantReconciler) buildDevicesReadyCondition(
-	ctx context.Context, ha *hav1.HomeAssistant, stsReady bool,
+	ctx context.Context, ha *hav1.HomeAssistant, stsReady bool, pod *corev1.Pod,
 ) metav1.Condition {
 	log := logf.FromContext(ctx)
 
@@ -1379,13 +1426,10 @@ func (r *HomeAssistantReconciler) buildDevicesReadyCondition(
 
 	podName := ha.Name + "-0"
 
-	// No pod yet means no FailedMount events to explain either; skip straight
-	// to Pending rather than paying for an event lookup that can't find anything.
-	pod := &corev1.Pod{}
-	if err := r.Get(ctx, types.NamespacedName{Name: podName, Namespace: ha.Namespace}, pod); err != nil {
-		if !errors.IsNotFound(err) {
-			log.V(1).Info("buildDevicesReadyCondition: failed to get pod", "error", err)
-		}
+	// No pod yet (or the caller's fetch failed) means no FailedMount events to
+	// explain either; skip straight to Pending rather than paying for an
+	// event lookup that can't find anything.
+	if pod == nil {
 		return metav1.Condition{
 			Type:    conditionTypeDevicesReady,
 			Status:  metav1.ConditionUnknown,
@@ -1428,6 +1472,85 @@ func (r *HomeAssistantReconciler) buildDevicesReadyCondition(
 		Status:  metav1.ConditionUnknown,
 		Reason:  reasonDevicesPending,
 		Message: "Waiting for the pod to determine device availability",
+	}
+}
+
+// schedulingConstraintsDeclared reports whether spec.scheduling declares any
+// actual constraint — a non-nil but all-zero-value SchedulingSpec (e.g.
+// `spec: {scheduling: {}}`) is equivalent to it being unset.
+func schedulingConstraintsDeclared(s *hav1.SchedulingSpec) bool {
+	if s == nil {
+		return false
+	}
+	return len(s.NodeSelector) > 0 || s.Affinity != nil || len(s.Tolerations) > 0 || s.PriorityClassName != ""
+}
+
+// buildSchedulingReadyCondition reports whether spec.scheduling's declared
+// constraints are currently satisfiable, so an unschedulable pod is
+// diagnosable straight from `kubectl describe homeassistant` instead of a
+// generic "not ready". Unlike buildDevicesReadyCondition, this needs no new
+// event-parsing logic: Kubernetes itself already maintains a structured
+// PodScheduled condition on every pod the moment the scheduler can't place
+// it — this only reads and mirrors that.
+func (r *HomeAssistantReconciler) buildSchedulingReadyCondition(
+	ha *hav1.HomeAssistant, stsReady bool, pod *corev1.Pod,
+) metav1.Condition {
+	if !schedulingConstraintsDeclared(ha.Spec.Scheduling) {
+		return metav1.Condition{
+			Type:    conditionTypeSchedulingReady,
+			Status:  metav1.ConditionTrue,
+			Reason:  reasonNoConstraintsDeclared,
+			Message: "No scheduling constraints declared in spec.scheduling",
+		}
+	}
+
+	if stsReady {
+		return metav1.Condition{
+			Type:    conditionTypeSchedulingReady,
+			Status:  metav1.ConditionTrue,
+			Reason:  reasonScheduled,
+			Message: "Pod satisfies all declared scheduling constraints",
+		}
+	}
+
+	if pod == nil {
+		return metav1.Condition{
+			Type:    conditionTypeSchedulingReady,
+			Status:  metav1.ConditionUnknown,
+			Reason:  reasonSchedulingPending,
+			Message: "Waiting for the pod to be scheduled",
+		}
+	}
+
+	for _, cond := range pod.Status.Conditions {
+		if cond.Type != corev1.PodScheduled {
+			continue
+		}
+		switch cond.Status {
+		case corev1.ConditionTrue:
+			return metav1.Condition{
+				Type:    conditionTypeSchedulingReady,
+				Status:  metav1.ConditionTrue,
+				Reason:  reasonScheduled,
+				Message: "Pod satisfies all declared scheduling constraints",
+			}
+		case corev1.ConditionFalse:
+			return metav1.Condition{
+				Type:    conditionTypeSchedulingReady,
+				Status:  metav1.ConditionFalse,
+				Reason:  reasonUnschedulable,
+				Message: cond.Message,
+			}
+		default:
+			// ConditionUnknown falls through to the Pending default below.
+		}
+	}
+
+	return metav1.Condition{
+		Type:    conditionTypeSchedulingReady,
+		Status:  metav1.ConditionUnknown,
+		Reason:  reasonSchedulingPending,
+		Message: "Waiting for the pod to be scheduled",
 	}
 }
 
@@ -1544,6 +1667,14 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 		return true
 	}
 
+	// Check spec.scheduling.* (NodeSelector/Affinity/Tolerations/PriorityClassName).
+	// Extracted to its own function to keep this function's cyclomatic
+	// complexity in check, matching the volumeContentDiffers precedent.
+	if schedulingFieldsDiffer(current, desired) {
+		log.V(1).Info("Scheduling fields differ")
+		return true
+	}
+
 	// Check security context (e.g. spec.alpha.devices toggling Privileged).
 	// Count-only checks below wouldn't catch this: the device count can stay
 	// the same while this flips (or vice versa isn't possible today, but
@@ -1642,29 +1773,36 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 		return true
 	}
 
-	// Check host networking
-	if current.Spec.Template.Spec.HostNetwork != desired.Spec.Template.Spec.HostNetwork {
-		log.V(1).Info("HostNetwork differs",
-			"current", current.Spec.Template.Spec.HostNetwork,
-			"desired", desired.Spec.Template.Spec.HostNetwork)
-		return true
-	}
-	if current.Spec.Template.Spec.DNSPolicy != desired.Spec.Template.Spec.DNSPolicy {
-		log.V(1).Info("DNSPolicy differs",
-			"current", current.Spec.Template.Spec.DNSPolicy,
-			"desired", desired.Spec.Template.Spec.DNSPolicy)
-		return true
-	}
-
-	currentAutomount := current.Spec.Template.Spec.AutomountServiceAccountToken
-	desiredAutomount := desired.Spec.Template.Spec.AutomountServiceAccountToken
-	if (currentAutomount == nil) != (desiredAutomount == nil) ||
-		(currentAutomount != nil && desiredAutomount != nil && *currentAutomount != *desiredAutomount) {
-		log.V(1).Info("AutomountServiceAccountToken differs")
+	// Check host networking, DNS policy, and service account token automount.
+	// Extracted to its own function to keep this function's cyclomatic
+	// complexity in check, matching the volumeContentDiffers precedent.
+	if podLevelFieldsDiffer(current, desired) {
+		log.V(1).Info("Pod-level fields (HostNetwork/DNSPolicy/AutomountServiceAccountToken) differ")
 		return true
 	}
 
 	return false
+}
+
+// podLevelFieldsDiffer compares HostNetwork, DNSPolicy, and
+// AutomountServiceAccountToken between the current and desired pod
+// templates. Split out of needsUpdate to keep its cyclomatic complexity in
+// check, matching the volumeContentDiffers precedent.
+func podLevelFieldsDiffer(current, desired *appsv1.StatefulSet) bool {
+	currentSpec := current.Spec.Template.Spec
+	desiredSpec := desired.Spec.Template.Spec
+
+	if currentSpec.HostNetwork != desiredSpec.HostNetwork {
+		return true
+	}
+	if currentSpec.DNSPolicy != desiredSpec.DNSPolicy {
+		return true
+	}
+
+	currentAutomount := currentSpec.AutomountServiceAccountToken
+	desiredAutomount := desiredSpec.AutomountServiceAccountToken
+	return (currentAutomount == nil) != (desiredAutomount == nil) ||
+		(currentAutomount != nil && desiredAutomount != nil && *currentAutomount != *desiredAutomount)
 }
 
 // initContainersEqual compares init containers on the fields our builders
@@ -1807,6 +1945,35 @@ func volumeContentDiffers(
 		}
 	}
 	return false
+}
+
+// schedulingFieldsDiffer compares spec.scheduling's four fields
+// (NodeSelector/Affinity/Tolerations/PriorityClassName) between the current
+// and desired pod templates. Kubernetes only evaluates these at pod
+// creation, so an edit here must trigger a rollout or it silently has no
+// effect on the already-running pod. Split out of needsUpdate to keep its
+// cyclomatic complexity in check, matching the volumeContentDiffers
+// precedent.
+func schedulingFieldsDiffer(current, desired *appsv1.StatefulSet) bool {
+	currentSpec := current.Spec.Template.Spec
+	desiredSpec := desired.Spec.Template.Spec
+
+	if !maps.Equal(currentSpec.NodeSelector, desiredSpec.NodeSelector) {
+		return true
+	}
+	// Affinity/Tolerations: DeepEqual, not a length+index loop — Toleration's
+	// TolerationSeconds is a *int64, so comparing elements with == would
+	// compare pointer identity, not the pointed-to value. Safe to DeepEqual
+	// directly: unlike SchedulerName/container defaulting fields, neither the
+	// API server nor any admission plugin mutates Affinity/Tolerations at
+	// StatefulSet-persistence time, only at Pod-realization time.
+	if !reflect.DeepEqual(currentSpec.Affinity, desiredSpec.Affinity) {
+		return true
+	}
+	if !reflect.DeepEqual(currentSpec.Tolerations, desiredSpec.Tolerations) {
+		return true
+	}
+	return currentSpec.PriorityClassName != desiredSpec.PriorityClassName
 }
 
 // SetupWithManager sets up the controller with the Manager.

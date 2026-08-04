@@ -439,7 +439,7 @@ func TestLoadNativeTLSCA(t *testing.T) {
 	}
 }
 
-// TestInjectNativeTLS (T016): http.ssl_certificate/ssl_key are injected into the
+// TestInjectNativeTLS: http.ssl_certificate/ssl_key are injected into the
 // configuration, preserving other http keys, and !include http sections untouched.
 func TestInjectNativeTLS(t *testing.T) {
 	t.Run("adds http section when missing", func(t *testing.T) {
