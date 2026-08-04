@@ -122,9 +122,12 @@ spec:
 		originalUID := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
 		Expect(originalUID).NotTo(BeEmpty())
 
-		By("Declaring two devices: /dev/null and /dev/zero")
+		By("Declaring two devices: /dev/null and /dev/zero, mounted at distinct container paths")
 		Expect(utils.PatchResource("homeassistants", haName, namespace, "merge",
-			`{"spec":{"alpha":{"devices":[{"hostPath":"/dev/null"},{"hostPath":"/dev/zero"}]}}}`)).To(Succeed())
+			`{"spec":{"alpha":{"devices":[`+
+				`{"hostPath":"/dev/null","containerPath":"/dev/e2e-passthrough-0"},`+
+				`{"hostPath":"/dev/zero","containerPath":"/dev/e2e-passthrough-1"}`+
+				`]}}}`)).To(Succeed())
 
 		By("Waiting for the pod to restart onto the new template and become Ready with both devices mounted")
 		Eventually(func(g Gomega) {
@@ -148,11 +151,14 @@ spec:
 			"-o", `jsonpath={.spec.containers[?(@.name=="home-assistant")].securityContext.privileged}`)
 		Expect(privileged).To(Equal("false"), "spec.alpha.devices must set privileged:false explicitly, never leave it unset")
 
-		By("Verifying both devices are present inside the container")
+		By("Verifying both devices are present inside the container at their declared containerPath")
+		// Checking the containerPath (not the default /dev/null, /dev/zero every
+		// container already has from its own devtmpfs) proves the hostPath mount
+		// itself worked, rather than trivially passing regardless.
 		cmd := exec.Command("kubectl", "exec", "-n", namespace, haName+"-0", "-c", "home-assistant",
-			"--", "sh", "-c", "test -c /dev/null && test -c /dev/zero")
+			"--", "sh", "-c", "test -c /dev/e2e-passthrough-0 && test -c /dev/e2e-passthrough-1")
 		_, err := utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "/dev/null and /dev/zero should both be character devices inside the container")
+		Expect(err).NotTo(HaveOccurred(), "declared containerPaths should both be character devices inside the container")
 
 		By("Declaring a device path that does not exist on this node")
 		Expect(utils.PatchResource("homeassistants", haName, namespace, "merge",

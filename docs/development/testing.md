@@ -174,7 +174,8 @@ Eventually(func(g Gomega) {
 **Framework**: Ginkgo v2 + real k3d cluster
 **Strategy**: Seven independently-labeled suites, run as seven concurrent
 GitHub Actions jobs (`.github/workflows/test-e2e-parallel.yml`), so the whole
-workflow — not any single job — completes within a **10-minute** budget.
+workflow — not any single job — targets a **10-minute** budget (see the
+Known gap below: not currently met in practice, closer to 15-20 minutes).
 
 **This section is the sole source of truth in this repository for e2e
 suite/job duration** (per this project's testing policy). Any other file that
