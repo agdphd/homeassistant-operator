@@ -63,11 +63,11 @@ jobs:
           path: ha-image.tar
           retention-days: 1
 
-  # Jobs 2-7: the e2e suite split across six jobs that run concurrently, each
-  # selecting a scoped subset of ./test/e2e/ via Ginkgo's --label-filter.
-  # Because all six `needs: build`, the workflow's real end-to-end time is
-  # build's own duration PLUS the slowest of the six e2e jobs — not just the
-  # slowest job in isolation. See docs/development/testing.md (the sole
+  # Jobs 2-8: the e2e suite split across seven jobs that run concurrently,
+  # each selecting a scoped subset of ./test/e2e/ via Ginkgo's --label-filter.
+  # Because all seven `needs: build`, the workflow's real end-to-end time is
+  # build's own duration PLUS the slowest of the seven e2e jobs — not just
+  # the slowest job in isolation. See docs/development/testing.md (the sole
   # source of truth for e2e suite/job duration) for the current target and
   # the rationale behind this split (previously one long sequential job).
   #
@@ -80,7 +80,7 @@ jobs:
   # are the ones to re-tighten first once more real completion-time data is
   # available; every other job's timeout is close to its measured cost.
 
-  e2e-critical-path:
+  e2e-critical-a:
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 9
@@ -121,7 +121,7 @@ jobs:
 
       - name: Create k3d cluster
         run: |
-          k3d cluster create e2e-critical-path \
+          k3d cluster create e2e-critical-a \
             --image rancher/k3s:${{ env.K3S_VERSION }} \
             --agents 0 \
             --servers-memory 4g \
@@ -131,21 +131,21 @@ jobs:
       - name: Load operator image into k3d
         run: |
           docker load -i operator-e2e.tar
-          k3d image import operator:e2e -c e2e-critical-path
+          k3d image import operator:e2e -c e2e-critical-a
 
       - name: Load Home Assistant image into k3d
         run: |
           docker load -i ha-image.tar
-          k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-critical-path
+          k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-critical-a
 
       - name: Verify cluster is ready
         run: |
           kubectl cluster-info
           kubectl get nodes
 
-      - name: Run E2E critical-path tests
+      - name: Run E2E critical-path group-a tests
         env:
-          K3D_CLUSTER: e2e-critical-path
+          K3D_CLUSTER: e2e-critical-a
           HA_VERSION: ${{ env.HA_VERSION }}
           CERT_MANAGER_VERSION: ${{ env.CERT_MANAGER_VERSION }}
           CERT_MANAGER_INSTALL_SKIP: "true"
@@ -155,7 +155,7 @@ jobs:
           make ginkgo
           ./bin/ginkgo run \
             -v \
-            --label-filter=critical-path \
+            --label-filter="critical-path && group-a" \
             --timeout=7m \
             ./test/e2e/
 
@@ -175,7 +175,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: controller-manager-logs-critical-path
+          name: controller-manager-logs-critical-a
           path: controller-manager.log
           retention-days: 7
 
@@ -216,7 +216,118 @@ jobs:
 
       - name: Cleanup k3d cluster
         if: always()
-        run: k3d cluster delete e2e-critical-path
+        run: k3d cluster delete e2e-critical-a
+
+  e2e-critical-b:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Cache Ginkgo CLI
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: bin/ginkgo*
+          key: ginkgo-${{ hashFiles('go.mod', 'Makefile') }}
+          restore-keys: |
+            ginkgo-
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/${{ env.K3D_VERSION }}/install.sh | bash
+
+      - name: Verify k3d installation
+        run: k3d version
+
+      - name: Download operator image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: operator-image
+
+      - name: Download Home Assistant image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ha-image
+
+      - name: Create k3d cluster
+        run: |
+          k3d cluster create e2e-critical-b \
+            --image rancher/k3s:${{ env.K3S_VERSION }} \
+            --agents 0 \
+            --servers-memory 4g \
+            --wait \
+            --timeout 5m
+
+      - name: Load operator image into k3d
+        run: |
+          docker load -i operator-e2e.tar
+          k3d image import operator:e2e -c e2e-critical-b
+
+      - name: Load Home Assistant image into k3d
+        run: |
+          docker load -i ha-image.tar
+          k3d image import ghcr.io/home-assistant/home-assistant:${{ env.HA_VERSION }} -c e2e-critical-b
+
+      - name: Verify cluster is ready
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Run E2E critical-path group-b tests
+        env:
+          K3D_CLUSTER: e2e-critical-b
+          HA_VERSION: ${{ env.HA_VERSION }}
+          CERT_MANAGER_INSTALL_SKIP: "true"
+          E2E_IMG: "operator:e2e"
+          E2E_SKIP_IMAGE_BUILD: "true"
+        run: |
+          make ginkgo
+          ./bin/ginkgo run \
+            -v \
+            --label-filter="critical-path && group-b" \
+            --timeout=7m \
+            ./test/e2e/
+
+      - name: Collect controller logs on failure
+        if: failure()
+        run: |
+          kubectl logs -n homeassistant-operator-system \
+            -l control-plane=controller-manager \
+            --tail=-1 --prefix | tee controller-manager.log || true
+
+      - name: Upload controller logs artifact on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: controller-manager-logs-critical-b
+          path: controller-manager.log
+          retention-days: 7
+
+      - name: Collect resource status on failure
+        if: failure()
+        run: |
+          echo "=== Pods ==="
+          kubectl get pods --all-namespaces -o wide || true
+          echo "=== StatefulSets ==="
+          kubectl get statefulsets --all-namespaces -o wide || true
+          echo "=== HomeAssistant Resources ==="
+          kubectl get homeassistants --all-namespaces -o wide || true
+          echo "=== Kubernetes Events ==="
+          kubectl get events --all-namespaces --sort-by=.lastTimestamp || true
+
+      - name: Cleanup k3d cluster
+        if: always()
+        run: k3d cluster delete e2e-critical-b
 
   e2e-tls:
     needs: build

@@ -170,10 +170,10 @@ Eventually(func(g Gomega) {
 
 ## E2E Tests
 
-**Location**: `test/e2e/*_test.go` (8 files, 26 specs total)
+**Location**: `test/e2e/*_test.go` (9 files, 26 specs total)
 **Framework**: Ginkgo v2 + real k3d cluster
-**Strategy**: Six independently-labeled suites, run as six concurrent GitHub
-Actions jobs (`.github/workflows/test-e2e-parallel.yml`), so the whole
+**Strategy**: Seven independently-labeled suites, run as seven concurrent
+GitHub Actions jobs (`.github/workflows/test-e2e-parallel.yml`), so the whole
 workflow — not any single job — completes within a **10-minute** budget.
 
 **This section is the sole source of truth in this repository for e2e
@@ -182,12 +182,13 @@ needs to reference how long the suite takes should point here rather than
 restating a number.
 
 **Goal**: the whole e2e workflow completes in about 10 minutes, split across
-the six concurrent jobs below.
+the seven concurrent jobs below.
 
 ### Running E2E locally
 
 ```bash
-make test-e2e-critical-path              # HomeAssistant + sibling CRDs (11 specs)
+make test-e2e-critical-a                 # HomeAssistant + sibling CRDs (10 specs)
+make test-e2e-critical-b                 # spec.alpha.devices device passthrough (1 spec)
 make test-e2e-tls                        # TLS ingress/gateway/native/webhook (5 specs)
 make test-e2e-network-policy             # NetworkPolicy enforcement (1 spec)
 make test-e2e-pod-security                # Pod Security Standards (2 specs)
@@ -206,16 +207,34 @@ and every e2e job downloads and loads that same artifact — set
 `E2E_SKIP_IMAGE_BUILD=true` and `E2E_IMG=<tag>` to reproduce that
 skip-the-rebuild behavior locally against a pre-built image.
 
-### The six e2e jobs
+### The seven e2e jobs
 
 | Job | Label filter | Specs | What is verified |
 |---|---|---|---|
-| `e2e-critical-path` | `critical-path` | 11 | All CRDs' core lifecycle plus device passthrough (see table below) — shares one HA bootstrap |
+| `e2e-critical-a` | `critical-path && group-a` | 10 | All CRDs' core lifecycle (see table below) — shares one HA bootstrap |
+| `e2e-critical-b` | `critical-path && group-b` | 1 | `spec.alpha.devices` device passthrough — own cluster/instance, no shared bootstrap |
 | `e2e-tls` | `tls` | 5 | TLS via Ingress, Gateway API, native HA TLS, and the validating webhook |
 | `e2e-network-policy` | `network-policy` | 1 | `spec.alpha.networkPolicy` actually restricts traffic, not just that the object exists |
 | `e2e-pod-security` | `pod-security` | 2 | Operator namespace enforces the `restricted` Pod Security Standard |
 | `e2e-community-repository-a` | `community-repository && group-a` | 3 | `HomeAssistantCommunityRepository`: integration + theme install, theme ref-update |
 | `e2e-community-repository-b` | `community-repository && group-b` | 4 | `HomeAssistantCommunityRepository`: python_script + template + plugin install, deletion |
+
+`critical-path` and `community-repository` both use the generic
+`group-a`/`group-b` (and, if a group ever fills up, `group-c`, ...) label
+convention instead of a one-off job name per new spec — a future spec joins
+whichever group has time-budget/setup-cost headroom rather than requiring a
+brand-new CI job. **The two features are NOT symmetric in how groups share
+state**, though: community-repository's group-a and group-b specs live in one
+file/one `Ordered` block and share a single `BeforeAll` (their setup cost is
+similar either way), while critical-path's group-a (`e2e_critical_path_test.go`)
+and group-b (`e2e_device_passthrough_test.go`) are deliberately two separate
+files/`Describe` blocks with independent setup — group-a's specs need a fully
+real-onboarded HA instance (expensive, worth sharing across many specs),
+group-b's don't need onboarding at all (worth keeping cheap and independent).
+Adding a new group-a spec means a new `It` in the existing file; adding a new
+group-b-shaped spec (no onboarding needed) means either a new `It` in
+`e2e_device_passthrough_test.go` or, if its setup is different again, a new
+file with the same `critical-path`+`group-b` (or a new group) labels.
 
 The community-repository split (not an arbitrary half-and-half) keeps two
 spec pairs together: "keeps installedVersion..." reuses the CR created by the
@@ -223,6 +242,17 @@ theme-install spec, and "removes the ConfigMap entry..." reuses the CR
 created by the python_script-install spec — each pair must run in the same
 Ginkgo process since separate CI jobs use separate clusters and cannot see
 each other's resources.
+
+`e2e-critical-b` exists because a first attempt folded its one spec into
+`e2e-critical-a` (then still named `e2e-critical-path`) as an 11th spec, to
+avoid a new CI job, instead of giving it its own job from the start. A real CI
+run showed the combined job hitting its `timeout-minutes` and getting
+cancelled outright — no Ginkgo failure output, no diagnostic artifacts, since
+`if: failure()` steps don't run on cancellation. Splitting it into its own job
+(its bootstrap skips `spec.bootstrap` entirely, so it's cheaper to stand up
+than group-a's real-onboarding instance) both removed the time pressure from
+`e2e-critical-a` and made a future failure of this spec actually diagnosable
+instead of silently killed.
 
 **Known gap**: real CI runs showed every job's cold-start overhead — and the
 community-repository specs' own runtime — running noticeably longer than
@@ -237,16 +267,7 @@ the per-spec activation-confirmation polling in community-repository, or the
 "Load Home Assistant image" step's own variability) or accepting a revised,
 honest target — not just more timeout increases.
 
-`e2e-critical-path`'s new 11th spec (device passthrough) adds two StatefulSet
-rolling restarts to a job whose `ginkgo run --timeout=7m` had no headroom
-built in for this — a rolling restart of an already-onboarded instance is
-expected to be much faster than the initial bootstrap (no onboarding wizard),
-but this hasn't been confirmed against a real CI run yet. If real CI timing
-shows this job needs more room, widen its `--timeout` in
-`.github/workflows/test-e2e-parallel.yml` the same way the jobs above already
-were, rather than letting it fail intermittently.
-
-### `e2e-critical-path` tests (11 specs)
+### `e2e-critical-a` tests (10 specs)
 
 | # | CRD | What is verified |
 |---|-----|-----------------|
@@ -260,19 +281,32 @@ were, rather than letting it fail intermittently.
 | 8 | `HomeAssistantFloor` | Created via WebSocket registry API, deleted |
 | 9 | `HomeAssistantLabel` | Created via WebSocket registry API, deleted |
 | 10 | `HomeAssistantArea` | Created via WebSocket registry API, deleted |
-| 11 | `HomeAssistant` (`spec.alpha.devices`) | Device mounted without `privileged: true` (`/dev/null`/`/dev/zero` stand-ins), missing device surfaced via `DevicesReady` |
 
 This job's specs share one Home Assistant bootstrap (real onboarding) and run
 sequentially (`Ordered`), continuing even if one fails (`ContinueOnFailure`)
-so later CRDs are still exercised. Spec 11 reuses this same shared instance
-(no second bootstrap) and is deliberately last, since its final step leaves
-the instance in a broken state (an intentionally unmountable device) to
-exercise the missing-device diagnostics.
+so later CRDs are still exercised.
+
+### `e2e-critical-b` tests (1 spec)
+
+| # | CRD | What is verified |
+|---|-----|-----------------|
+| 1 | `HomeAssistant` (`spec.alpha.devices`) | Device mounted without `privileged: true` (`/dev/null`/`/dev/zero` stand-ins), missing device surfaced via `DevicesReady` |
+
+Originally folded into `e2e-critical-a` as an 11th spec to avoid a new CI
+job, but a real CI run showed the combined job exceeding its `timeout-minutes`
+and getting cancelled outright — no Ginkgo failure output, no diagnostic
+artifacts (`if: failure()` steps don't run on cancellation). Split into its
+own job/cluster instead: it skips `spec.bootstrap` entirely (the readiness
+probe only needs HTTP 200 on `/`, which HA serves before onboarding), so its
+own bootstrap cost is much lower than critical-path's real-onboarding
+instance, and its final step is free to leave the instance in a broken state
+(an intentionally unmountable device, to exercise the missing-device
+diagnostics) without affecting any other spec.
 
 ## Coverage Gap Record
 
 No e2e scenario has been intentionally dropped from the gating workflow — all
-26 specs are still verified, split across the six jobs above.
+26 specs are still verified, split across the seven jobs above.
 This section exists as the place to record it if a future change ever needs
 to drop a scenario from the gating path rather than fitting it into an
 existing (or new) job:

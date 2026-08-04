@@ -164,12 +164,19 @@ cleanup-test-e2e: ## Tear down the k3d cluster used for e2e tests
 # (this Makefile's `bash -o pipefail`/`-e` settings mean a failing pipeline
 # would otherwise skip straight past an un-trapped cleanup call).
 
-.PHONY: test-e2e-critical-path
-test-e2e-critical-path: manifests generate fmt vet ginkgo ## Run the critical-path e2e job locally
+.PHONY: test-e2e-critical-a
+test-e2e-critical-a: manifests generate fmt vet ginkgo ## Run the critical-path group-a e2e job locally
 	trap '$(MAKE) cleanup-test-e2e' EXIT INT TERM; \
 	$(MAKE) setup-test-e2e; \
 	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) $(GINKGO) run \
-		-v --label-filter=critical-path --timeout=8m ./test/e2e/ | tee test-e2e.log
+		-v --label-filter="critical-path && group-a" --timeout=8m ./test/e2e/ | tee test-e2e.log
+
+.PHONY: test-e2e-critical-b
+test-e2e-critical-b: manifests generate fmt vet ginkgo ## Run the critical-path group-b e2e job locally
+	trap '$(MAKE) cleanup-test-e2e' EXIT INT TERM; \
+	$(MAKE) setup-test-e2e; \
+	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) $(GINKGO) run \
+		-v --label-filter="critical-path && group-b" --timeout=7m ./test/e2e/ | tee test-e2e.log
 
 .PHONY: test-e2e-tls
 test-e2e-tls: manifests generate fmt vet ginkgo ## Run the tls e2e job locally (installs cert-manager)
