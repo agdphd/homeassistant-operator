@@ -119,6 +119,32 @@ type AlphaSpec struct {
 	// spec.alpha until it stabilizes.
 	// +optional
 	TLS *TLSAlphaSpec `json:"tls,omitempty"`
+
+	// Devices declares host device nodes (e.g. /dev/ttyACM0 for a Zigbee/
+	// Z-Wave USB coordinator) to mount into the Home Assistant container.
+	// Each entry is mounted via a hostPath volume typed as a character
+	// device; the container is never granted `privileged: true` for this.
+	// Declaring at least one entry changes the pod's security context, so
+	// this starts in spec.alpha until it stabilizes. This does not affect
+	// where the pod is scheduled — the declared device(s) must already
+	// exist on whichever node the pod lands on (see node pinning, a
+	// separate capability) for this to be useful.
+	// +optional
+	Devices []DevicePassthroughEntry `json:"devices,omitempty"`
+}
+
+// DevicePassthroughEntry declares one host device node to expose inside the
+// Home Assistant container.
+type DevicePassthroughEntry struct {
+	// HostPath is the device node's path on the host, e.g. /dev/ttyACM0.
+	// Must be an absolute path under /dev.
+	// +kubebuilder:validation:Required
+	HostPath string `json:"hostPath"`
+
+	// ContainerPath is the path the device is mounted at inside the Home
+	// Assistant container. Defaults to HostPath when omitted.
+	// +optional
+	ContainerPath string `json:"containerPath,omitempty"`
 }
 
 // TLSAlphaSpec groups the (alpha) TLS integration modes backed by cert-manager.

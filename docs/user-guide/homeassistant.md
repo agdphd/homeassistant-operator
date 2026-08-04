@@ -187,6 +187,29 @@ spec:
 !!! warning
     The operator-namespace ingress peer is only added when the controller knows its own namespace via the `OPERATOR_NAMESPACE` environment variable (set automatically by the shipped manifests). If it is unset, the operator silently omits that peer and only logs a warning — the resulting policy blocks the operator from reaching the HA API, breaking bootstrap, hot-reload, and health checks. Ensure `OPERATOR_NAMESPACE` is set on the controller before enabling this.
 
+### `spec.alpha.devices`
+
+!!! note "Alpha"
+    Opt-in, off by default. Fields under `spec.alpha` are experimental and may change or be removed without a deprecation notice.
+
+Mounts one or more host device nodes (e.g. `/dev/ttyACM0` for a Zigbee/Z-Wave USB coordinator such as a Conbee2 or SkyConnect) into the Home Assistant container, so integrations like Zigbee2MQTT, Z-Wave JS, or ZHA can open the serial port. Each entry is mounted as a `hostPath` volume typed as a character device — the operator never sets `privileged: true` on the pod for this.
+
+```yaml
+spec:
+  alpha:
+    devices:
+      - hostPath: /dev/ttyACM0
+        # containerPath defaults to hostPath when omitted
+```
+
+Fields per entry:
+
+- `hostPath` (required): the device node's path on the host. Must be an absolute path under `/dev`.
+- `containerPath` (optional): the path the device is mounted at inside the container. Defaults to `hostPath`.
+
+!!! warning
+    This does **not** pin the pod to the node the device is physically attached to. A USB coordinator only exists on one specific node, so declaring it here is only useful once you've separately ensured the pod is scheduled there (e.g. via `nodeSelector`/affinity/tolerations — node pinning is a separate capability). If the declared device isn't present on whichever node the pod lands on, the pod fails to start and the `HomeAssistant` resource's `DevicesReady` status condition names the missing path.
+
 ### `spec.secretsFrom`
 
 Direct reference to a Kubernetes Secret containing a `secrets.yaml` blob. Prefer `HomeAssistantSecrets` CR for managed secret composition.

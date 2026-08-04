@@ -37,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -72,8 +73,20 @@ const (
 	labelAppManagedBy = "app.kubernetes.io/managed-by"
 
 	// Condition types
-	conditionTypeReady       = "Ready"
-	conditionTypeBanRecovery = "BanRecoveryFailed"
+	conditionTypeReady        = "Ready"
+	conditionTypeBanRecovery  = "BanRecoveryFailed"
+	conditionTypeDevicesReady = "DevicesReady"
+
+	// DevicesReady condition reasons
+	reasonNoDevicesDeclared = "NoDevicesDeclared"
+	reasonDevicesMounted    = "DevicesMounted"
+	reasonDeviceUnavailable = "DeviceUnavailable"
+	reasonDevicesPending    = "Pending"
+
+	// failedMountEventReason is the Kubernetes Event reason emitted by the
+	// kubelet when a volume (including a spec.alpha.devices hostPath) fails
+	// to mount.
+	failedMountEventReason = "FailedMount"
 
 	// Ban-recovery sliding window: at most banRestartMaxCount pod restarts within
 	// banRestartWindow before the operator stops retrying and requires manual action.
@@ -90,11 +103,21 @@ const (
 	reasonBanRecoveryInProgress    = "RecoveryInProgress"
 )
 
+// charDeviceHostPathType makes the kubelet itself verify a spec.alpha.devices
+// hostPath is actually a character device before starting the pod, on top of
+// the validating webhook's own path checks.
+var charDeviceHostPathType = corev1.HostPathCharDev
+
 // HomeAssistantReconciler reconciles a HomeAssistant object
 type HomeAssistantReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder events.EventRecorder
+
+	// APIReader bypasses the informer cache for reads that must not pin an
+	// unbounded, high-churn resource (Events) in memory just to serve an
+	// occasional lookup. See buildDevicesReadyCondition.
+	APIReader client.Reader
 
 	// NewHAClient overrides the default haclient constructor (for testing)
 	NewHAClient func(baseURL string) *haclient.Client
@@ -119,6 +142,11 @@ type HomeAssistantReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;delete
+// Read-only, namespaced: lets the operator surface *why* a pod isn't
+// starting (e.g. a FailedMount event for a spec.alpha.devices entry) on
+// HomeAssistant status, instead of requiring the user to inspect raw pod
+// events themselves.
+// +kubebuilder:rbac:groups=core,resources=events,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
@@ -801,6 +829,37 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 		}
 	}
 
+	// Device passthrough (spec.alpha.devices): mount declared host device
+	// nodes (e.g. /dev/ttyACM0 for a Zigbee/Z-Wave USB coordinator) into the
+	// home-assistant container. Volumes are named by index rather than
+	// content, since nothing needs name stability across reorders. Never
+	// sets `privileged: true` — the container already runs as root with the
+	// runtime's default capabilities (which include DAC_OVERRIDE), enough to
+	// open a root-owned device node without broader escalation.
+	var homeAssistantSecurityContext *corev1.SecurityContext
+	if ha.Spec.Alpha != nil && len(ha.Spec.Alpha.Devices) > 0 {
+		for i, dev := range ha.Spec.Alpha.Devices {
+			containerPath := dev.ContainerPath
+			if containerPath == "" {
+				containerPath = dev.HostPath
+			}
+			volumes = append(volumes, corev1.Volume{
+				Name: fmt.Sprintf("device-%d", i),
+				VolumeSource: corev1.VolumeSource{
+					HostPath: &corev1.HostPathVolumeSource{
+						Path: dev.HostPath,
+						Type: &charDeviceHostPathType,
+					},
+				},
+			})
+			volumeMounts = append(volumeMounts, corev1.VolumeMount{
+				Name:      fmt.Sprintf("device-%d", i),
+				MountPath: containerPath,
+			})
+		}
+		homeAssistantSecurityContext = &corev1.SecurityContext{Privileged: ptr.To(false)}
+	}
+
 	// Preserve existing pod template annotations from current StatefulSet
 	// This is critical to avoid infinite reconciliation loops when config hash annotations exist
 	existingAnnotations := make(map[string]string)
@@ -882,6 +941,7 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 				SuccessThreshold:    1,
 				FailureThreshold:    3,
 			},
+			SecurityContext: homeAssistantSecurityContext,
 		},
 	}
 	hasCR, err := hasCommunityRepositories(ctx, r.Client, ha)
@@ -1236,12 +1296,15 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 		version = ha.Spec.Version
 	}
 
+	stsReady := sts.Status.ReadyReplicas > 0 && sts.Status.ReadyReplicas == sts.Status.Replicas
+	devicesCondition := r.buildDevicesReadyCondition(ctx, ha, stsReady)
+
 	if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
 		h.Status.Version = version
 		h.Status.ObservedGeneration = h.Generation
 
 		// Check if StatefulSet is ready
-		if sts.Status.ReadyReplicas > 0 && sts.Status.ReadyReplicas == sts.Status.Replicas {
+		if stsReady {
 			h.Status.Phase = hav1.PhaseRunning
 			h.Status.Ready = true
 
@@ -1267,6 +1330,9 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 				ObservedGeneration: h.Generation,
 			})
 		}
+
+		devicesCondition.ObservedGeneration = h.Generation
+		meta.SetStatusCondition(&h.Status.Conditions, devicesCondition)
 		return true
 	}); err != nil {
 		log.Error(err, "Failed to update HomeAssistant status")
@@ -1279,6 +1345,139 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// buildDevicesReadyCondition reports whether spec.alpha.devices entries are
+// usable, so a device missing on the scheduled node is diagnosable straight
+// from `kubectl describe homeassistant` rather than requiring the user to
+// inspect raw pod events. StatefulSet-level readiness alone never surfaces
+// *why* a pod isn't Ready — a failed hostPath mount only shows up as a
+// kubelet-emitted "FailedMount" Event on the pod, which is why this reads
+// Events directly (see internal/controller RBAC: core/events get;list;watch).
+func (r *HomeAssistantReconciler) buildDevicesReadyCondition(
+	ctx context.Context, ha *hav1.HomeAssistant, stsReady bool,
+) metav1.Condition {
+	log := logf.FromContext(ctx)
+
+	if ha.Spec.Alpha == nil || len(ha.Spec.Alpha.Devices) == 0 {
+		return metav1.Condition{
+			Type:    conditionTypeDevicesReady,
+			Status:  metav1.ConditionTrue,
+			Reason:  reasonNoDevicesDeclared,
+			Message: "No devices declared in spec.alpha.devices",
+		}
+	}
+
+	if stsReady {
+		return metav1.Condition{
+			Type:    conditionTypeDevicesReady,
+			Status:  metav1.ConditionTrue,
+			Reason:  reasonDevicesMounted,
+			Message: "All declared devices are mounted",
+		}
+	}
+
+	podName := ha.Name + "-0"
+
+	// No pod yet means no FailedMount events to explain either; skip straight
+	// to Pending rather than paying for an event lookup that can't find anything.
+	pod := &corev1.Pod{}
+	if err := r.Get(ctx, types.NamespacedName{Name: podName, Namespace: ha.Namespace}, pod); err != nil {
+		if !errors.IsNotFound(err) {
+			log.V(1).Info("buildDevicesReadyCondition: failed to get pod", "error", err)
+		}
+		return metav1.Condition{
+			Type:    conditionTypeDevicesReady,
+			Status:  metav1.ConditionUnknown,
+			Reason:  reasonDevicesPending,
+			Message: "Waiting for the pod to determine device availability",
+		}
+	}
+	// Events older than the current pod incarnation are from a previous
+	// generation (e.g. a since-fixed device) and must not be reported as
+	// current — Events have no owner reference to the pod and can outlive it.
+	podStart := pod.CreationTimestamp.Time
+
+	eventList := &corev1.EventList{}
+	listErr := r.eventReader().List(ctx, eventList,
+		client.InNamespace(ha.Namespace), client.MatchingFields{"involvedObject.name": podName})
+	if listErr != nil {
+		log.V(1).Info("buildDevicesReadyCondition: failed to list events", "error", listErr)
+	} else {
+		for _, ev := range eventList.Items {
+			if ev.Reason != failedMountEventReason || ev.LastTimestamp.Time.Before(podStart) {
+				continue
+			}
+			for _, dev := range ha.Spec.Alpha.Devices {
+				if hostPathReferencedIn(ev.Message, dev.HostPath) {
+					return metav1.Condition{
+						Type:   conditionTypeDevicesReady,
+						Status: metav1.ConditionFalse,
+						Reason: reasonDeviceUnavailable,
+						Message: fmt.Sprintf(
+							"Device %q unavailable: %s", dev.HostPath, ev.Message,
+						),
+					}
+				}
+			}
+		}
+	}
+
+	return metav1.Condition{
+		Type:    conditionTypeDevicesReady,
+		Status:  metav1.ConditionUnknown,
+		Reason:  reasonDevicesPending,
+		Message: "Waiting for the pod to determine device availability",
+	}
+}
+
+// eventReader returns the uncached, direct-to-API-server reader for Event
+// lookups so the controller-runtime cache never has to hold an informer over
+// every Event in the namespace (a high-churn resource) just for this
+// occasional diagnostic read. Falls back to the regular (cached) client if
+// APIReader was not wired up, e.g. in tests that construct the reconciler
+// directly against an uncached envtest client.
+func (r *HomeAssistantReconciler) eventReader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
+}
+
+// hostPathReferencedIn reports whether hostPath appears in message as a
+// standalone path rather than as a substring of a longer, unrelated path
+// (e.g. declared device "/dev/ttyACM1" must not match a message referencing
+// "/dev/ttyACM10").
+func hostPathReferencedIn(message, hostPath string) bool {
+	searchFrom := 0
+	for {
+		idx := strings.Index(message[searchFrom:], hostPath)
+		if idx < 0 {
+			return false
+		}
+		start := searchFrom + idx
+		end := start + len(hostPath)
+		before := byte(0)
+		if start > 0 {
+			before = message[start-1]
+		}
+		after := byte(0)
+		if end < len(message) {
+			after = message[end]
+		}
+		if !isPathBoundaryByte(before) && !isPathBoundaryByte(after) {
+			return true
+		}
+		searchFrom = start + 1
+	}
+}
+
+// isPathBoundaryByte reports whether b could be part of the same filesystem
+// path segment as its neighbor, i.e. it is NOT a boundary between the
+// matched hostPath and surrounding text.
+func isPathBoundaryByte(b byte) bool {
+	return b == '/' || b == '.' || b == '-' || b == '_' ||
+		(b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 // needsUpdate checks if the StatefulSet needs to be updated
@@ -1345,6 +1544,15 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 		return true
 	}
 
+	// Check security context (e.g. spec.alpha.devices toggling Privileged).
+	// Count-only checks below wouldn't catch this: the device count can stay
+	// the same while this flips (or vice versa isn't possible today, but
+	// don't rely on that).
+	if !securityContextsEqual(currentContainer.SecurityContext, desiredContainer.SecurityContext) {
+		log.V(1).Info("SecurityContext differs")
+		return true
+	}
+
 	// Check volumes count (ConfigMap/Secret added or removed)
 	if len(current.Spec.Template.Spec.Volumes) != len(desired.Spec.Template.Spec.Volumes) {
 		log.V(1).Info("Volume count differs",
@@ -1358,6 +1566,14 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 		log.V(1).Info("VolumeMount count differs",
 			"current", len(currentContainer.VolumeMounts),
 			"desired", len(desiredContainer.VolumeMounts))
+		return true
+	}
+
+	// Check volume/mount content (e.g. a spec.alpha.devices entry's hostPath
+	// or containerPath edited in place — the counts above stay unchanged, so
+	// this must be compared separately). Extracted to its own function to
+	// keep this function's cyclomatic complexity in check.
+	if volumeContentDiffers(current, desired, currentContainer, desiredContainer) {
 		return true
 	}
 
@@ -1529,6 +1745,68 @@ func probesEqual(current, desired *corev1.Probe) bool {
 	}
 
 	return true
+}
+
+// securityContextsEqual compares the fields buildStatefulSet actually sets
+// (currently just Privileged, for spec.alpha.devices) rather than doing a
+// raw reflect.DeepEqual, matching the style of resourcesEqual/probesEqual.
+func securityContextsEqual(current, desired *corev1.SecurityContext) bool {
+	if (current == nil) != (desired == nil) {
+		return false
+	}
+	if current == nil {
+		return true
+	}
+	currentPrivileged := current.Privileged != nil && *current.Privileged
+	desiredPrivileged := desired.Privileged != nil && *desired.Privileged
+	return currentPrivileged == desiredPrivileged
+}
+
+// hostPathsEqual compares the fields of a hostPath volume source that
+// buildStatefulSet sets for spec.alpha.devices entries (Path, Type).
+func hostPathsEqual(current, desired *corev1.HostPathVolumeSource) bool {
+	if (current == nil) != (desired == nil) {
+		return false
+	}
+	if current == nil {
+		return true
+	}
+	currentType := corev1.HostPathUnset
+	if current.Type != nil {
+		currentType = *current.Type
+	}
+	desiredType := corev1.HostPathUnset
+	if desired.Type != nil {
+		desiredType = *desired.Type
+	}
+	return current.Path == desired.Path && currentType == desiredType
+}
+
+// volumeContentDiffers compares volume HostPath and VolumeMount MountPath
+// content index-by-index across all of the pod template's volumes/mounts
+// (e.g. a spec.alpha.devices entry's hostPath or containerPath edited in
+// place, where the volume count itself is unchanged). Callers must already
+// have confirmed the volume and mount counts match. Split out of
+// needsUpdate to keep its cyclomatic complexity in check.
+func volumeContentDiffers(
+	current, desired *appsv1.StatefulSet, currentContainer, desiredContainer corev1.Container,
+) bool {
+	log := logf.Log.WithName("needsUpdate")
+	for i, cv := range current.Spec.Template.Spec.Volumes {
+		dv := desired.Spec.Template.Spec.Volumes[i]
+		if !hostPathsEqual(cv.HostPath, dv.HostPath) {
+			log.V(1).Info("Volume HostPath differs", "index", i)
+			return true
+		}
+	}
+	for i, cm := range currentContainer.VolumeMounts {
+		if cm.MountPath != desiredContainer.VolumeMounts[i].MountPath {
+			log.V(1).Info("VolumeMount MountPath differs",
+				"index", i, "current", cm.MountPath, "desired", desiredContainer.VolumeMounts[i].MountPath)
+			return true
+		}
+	}
+	return false
 }
 
 // SetupWithManager sets up the controller with the Manager.

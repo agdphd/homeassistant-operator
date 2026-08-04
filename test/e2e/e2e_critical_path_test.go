@@ -44,7 +44,7 @@ const (
 	bootstrapInterval  = 10 * time.Second
 )
 
-var _ = Describe("Critical Path E2E", Ordered, ContinueOnFailure, Label("critical-path"), func() {
+var _ = Describe("Critical Path E2E", Ordered, ContinueOnFailure, Label("critical-path", "group-a"), func() {
 	// Shared state across all tests — set in BeforeAll, used by every It block.
 	var (
 		namespace   string

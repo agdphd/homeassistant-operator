@@ -49,6 +49,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `networkPolicy` _[NetworkPolicyAlphaSpec](#networkpolicyalphaspec)_ | NetworkPolicy controls whether the operator creates a NetworkPolicy<br />restricting ingress to the Home Assistant pod. |  | Optional: \{\} <br /> |
 | `tls` _[TLSAlphaSpec](#tlsalphaspec)_ | TLS groups experimental TLS integration with cert-manager. Native TLS<br />changes the Home Assistant pod networking/config, so it starts in<br />spec.alpha until it stabilizes. |  | Optional: \{\} <br /> |
+| `devices` _[DevicePassthroughEntry](#devicepassthroughentry) array_ | Devices declares host device nodes (e.g. /dev/ttyACM0 for a Zigbee/<br />Z-Wave USB coordinator) to mount into the Home Assistant container.<br />Each entry is mounted via a hostPath volume typed as a character<br />device; the container is never granted `privileged: true` for this.<br />Declaring at least one entry changes the pod's security context, so<br />this starts in spec.alpha until it stabilizes. This does not affect<br />where the pod is scheduled — the declared device(s) must already<br />exist on whichever node the pod lands on (see node pinning, a<br />separate capability) for this to be useful. |  | Optional: \{\} <br /> |
 
 
 #### AutomationAction
@@ -231,6 +232,24 @@ _Appears in:_
 | `name` _string_ | Name of the Secret |  |  |
 | `usernameKey` _string_ | UsernameKey is the key in the Secret containing the username | username | Optional: \{\} <br /> |
 | `passwordKey` _string_ | PasswordKey is the key in the Secret containing the password | password | Optional: \{\} <br /> |
+
+
+#### DevicePassthroughEntry
+
+
+
+DevicePassthroughEntry declares one host device node to expose inside the
+Home Assistant container.
+
+
+
+_Appears in:_
+- [AlphaSpec](#alphaspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `hostPath` _string_ | HostPath is the device node's path on the host, e.g. /dev/ttyACM0.<br />Must be an absolute path under /dev. |  | Required: \{\} <br /> |
+| `containerPath` _string_ | ContainerPath is the path the device is mounted at inside the Home<br />Assistant container. Defaults to HostPath when omitted. |  | Optional: \{\} <br /> |
 
 
 #### GatewayParentRef

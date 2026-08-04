@@ -70,6 +70,7 @@ func validateHomeAssistant(ha *hav1.HomeAssistant) (admission.Warnings, error) {
 	log := logf.Log.WithName("homeassistant-webhook")
 	warnings, msgs := validateHomeAssistantTLS(&ha.Spec)
 	msgs = append(msgs, validateGatewayFilters(&ha.Spec)...)
+	msgs = append(msgs, validateDevices(&ha.Spec)...)
 	if len(msgs) > 0 {
 		log.Info("rejecting HomeAssistant with invalid configuration", "name", ha.Name, "reasons", msgs)
 		return warnings, fmt.Errorf("invalid HomeAssistant %q: %s", ha.Name, strings.Join(msgs, "; "))
@@ -190,6 +191,63 @@ func validateGatewayFilter(index int, f hav1.HTTPRouteFilter) []string {
 		errs = append(errs, validateURLRewrite(path+".urlRewrite", f.URLRewrite)...)
 	}
 	return errs
+}
+
+// validateDevices validates spec.alpha.devices: each entry's hostPath (and
+// containerPath, when set) must be a non-empty absolute path under /dev with
+// no ".." traversal segments, no two entries may declare the same hostPath,
+// and no two entries may resolve to the same effective container mount path
+// (an omitted containerPath defaults to hostPath — see buildStatefulSet).
+// Returns one message per problem found, empty when valid.
+func validateDevices(spec *hav1.HomeAssistantSpec) []string {
+	if spec.Alpha == nil || len(spec.Alpha.Devices) == 0 {
+		return nil
+	}
+	var errs []string
+	seenHostPaths := make(map[string]bool, len(spec.Alpha.Devices))
+	seenContainerPaths := make(map[string]bool, len(spec.Alpha.Devices))
+	for i, d := range spec.Alpha.Devices {
+		path := fmt.Sprintf("spec.alpha.devices[%d]", i)
+		errs = append(errs, validateDevicePath(path+".hostPath", d.HostPath)...)
+		if d.ContainerPath != "" {
+			errs = append(errs, validateDevicePath(path+".containerPath", d.ContainerPath)...)
+		}
+		if d.HostPath != "" {
+			if seenHostPaths[d.HostPath] {
+				errs = append(errs, fmt.Sprintf("%s.hostPath %q is declared more than once", path, d.HostPath))
+			}
+			seenHostPaths[d.HostPath] = true
+
+			effectiveContainerPath := d.ContainerPath
+			if effectiveContainerPath == "" {
+				effectiveContainerPath = d.HostPath
+			}
+			if seenContainerPaths[effectiveContainerPath] {
+				errs = append(errs, fmt.Sprintf(
+					"%s resolves to container mount path %q, already used by another device",
+					path, effectiveContainerPath))
+			}
+			seenContainerPaths[effectiveContainerPath] = true
+		}
+	}
+	return errs
+}
+
+// validateDevicePath rejects an empty path, a path not rooted under /dev, or
+// a path containing a ".." traversal segment.
+func validateDevicePath(fieldPath, value string) []string {
+	if value == "" {
+		return []string{fmt.Sprintf("%s must not be empty", fieldPath)}
+	}
+	if !strings.HasPrefix(value, "/dev/") {
+		return []string{fmt.Sprintf("%s must be an absolute path under /dev, got %q", fieldPath, value)}
+	}
+	for _, segment := range strings.Split(value, "/") {
+		if segment == ".." {
+			return []string{fmt.Sprintf("%s must not contain \"..\" path segments, got %q", fieldPath, value)}
+		}
+	}
+	return nil
 }
 
 func validateHeaderFilter(path string, h *hav1.HTTPHeaderFilter) []string {

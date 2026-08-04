@@ -82,3 +82,11 @@ ha.homeassistant.io/homeassistantcommunityrepositories/finalizers/update
 ha.homeassistant.io/homeassistantcommunityrepositories/status/get
 ha.homeassistant.io/homeassistantcommunityrepositories/status/patch
 ha.homeassistant.io/homeassistantcommunityrepositories/status/update
+
+# Device passthrough diagnosability (spec.alpha.devices). Read-only: lists
+# namespace Events to detect FailedMount for a declared hostPath and surface
+# it via the DevicesReady status condition, instead of a generic "Pod not
+# ready" with no indication which device is missing on the node.
+/events/get
+/events/list
+/events/watch
