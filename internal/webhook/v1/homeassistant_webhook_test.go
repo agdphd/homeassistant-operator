@@ -258,7 +258,8 @@ func TestValidateDevices(t *testing.T) {
 				{HostPath: "/dev/ttyACM0"},
 				{HostPath: "/dev/ttyACM0"},
 			},
-			wantErrs: 1,
+			// Both hostPath and its defaulted effective containerPath collide.
+			wantErrs: 2,
 		},
 		{
 			name: "two distinct valid devices are accepted",
@@ -266,6 +267,22 @@ func TestValidateDevices(t *testing.T) {
 				{HostPath: "/dev/ttyACM0"},
 				{HostPath: "/dev/ttyACM1", ContainerPath: "/dev/zigbee"},
 			},
+		},
+		{
+			name: "duplicate explicit containerPath is rejected",
+			devices: []hav1.DevicePassthroughEntry{
+				{HostPath: "/dev/ttyACM0", ContainerPath: "/dev/zigbee"},
+				{HostPath: "/dev/ttyACM1", ContainerPath: "/dev/zigbee"},
+			},
+			wantErrs: 1,
+		},
+		{
+			name: "omitted containerPath colliding with another device's explicit containerPath is rejected",
+			devices: []hav1.DevicePassthroughEntry{
+				{HostPath: "/dev/ttyACM0"},
+				{HostPath: "/dev/ttyACM1", ContainerPath: "/dev/ttyACM0"},
+			},
+			wantErrs: 1,
 		},
 	}
 

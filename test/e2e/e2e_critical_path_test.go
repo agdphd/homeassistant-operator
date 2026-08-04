@@ -850,16 +850,30 @@ spec:
 	// every Linux node) stand in for a real Zigbee/Z-Wave coordinator.
 	// -------------------------------------------------------------------------
 	It("Device passthrough (spec.alpha.devices) — mount, multi-device, and missing-device diagnostics", func() {
-		By("Verifying no device volume exists by default")
+		By("Verifying the StatefulSet is reachable and has no device volume by default")
+		Expect(utils.Kubectl("get", "statefulset", haName, "-n", namespace,
+			"-o", "jsonpath={.metadata.name}")).To(Equal(haName), "sanity check that the get command itself succeeded")
 		Expect(utils.Kubectl("get", "statefulset", haName, "-n", namespace,
 			"-o", "jsonpath={.spec.template.spec.volumes[?(@.name=='device-0')].name}")).To(BeEmpty())
+
+		By("Recording the pre-patch pod UID to detect the restart")
+		originalUID := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
+		Expect(originalUID).NotTo(BeEmpty())
 
 		By("Declaring two devices: /dev/null and /dev/zero")
 		Expect(utils.PatchResource("homeassistants", haName, namespace, "merge",
 			`{"spec":{"alpha":{"devices":[{"hostPath":"/dev/null"},{"hostPath":"/dev/zero"}]}}}`)).To(Succeed())
 
-		By("Waiting for the pod to restart and become Ready with both devices mounted")
+		By("Waiting for the pod to restart onto the new template and become Ready with both devices mounted")
 		Eventually(func(g Gomega) {
+			uid := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.metadata.uid}")
+			g.Expect(uid).NotTo(BeEmpty())
+			g.Expect(uid).NotTo(Equal(originalUID), "pod must have been recreated onto the new template")
+
+			deviceVol := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
+				"-o", "jsonpath={.spec.volumes[?(@.name=='device-0')].name}")
+			g.Expect(deviceVol).To(Equal("device-0"), "new pod template must carry the declared device volume")
+
 			phase := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace, "-o", "jsonpath={.status.phase}")
 			g.Expect(phase).To(Equal("Running"))
 			ready := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
@@ -870,7 +884,7 @@ spec:
 		By("Verifying the container is never privileged")
 		privileged := utils.Kubectl("get", "pod", haName+"-0", "-n", namespace,
 			"-o", `jsonpath={.spec.containers[?(@.name=="home-assistant")].securityContext.privileged}`)
-		Expect(privileged).NotTo(Equal("true"))
+		Expect(privileged).To(Equal("false"), "spec.alpha.devices must set privileged:false explicitly, never leave it unset")
 
 		By("Verifying both devices are present inside the container")
 		cmd := exec.Command("kubectl", "exec", "-n", namespace, haName+"-0", "-c", "home-assistant",

@@ -114,6 +114,11 @@ type HomeAssistantReconciler struct {
 	Scheme   *runtime.Scheme
 	Recorder events.EventRecorder
 
+	// APIReader bypasses the informer cache for reads that must not pin an
+	// unbounded, high-churn resource (Events) in memory just to serve an
+	// occasional lookup. See buildDevicesReadyCondition.
+	APIReader client.Reader
+
 	// NewHAClient overrides the default haclient constructor (for testing)
 	NewHAClient func(baseURL string) *haclient.Client
 
@@ -1373,16 +1378,38 @@ func (r *HomeAssistantReconciler) buildDevicesReadyCondition(
 	}
 
 	podName := ha.Name + "-0"
+
+	// No pod yet means no FailedMount events to explain either; skip straight
+	// to Pending rather than paying for an event lookup that can't find anything.
+	pod := &corev1.Pod{}
+	if err := r.Get(ctx, types.NamespacedName{Name: podName, Namespace: ha.Namespace}, pod); err != nil {
+		if !errors.IsNotFound(err) {
+			log.V(1).Info("buildDevicesReadyCondition: failed to get pod", "error", err)
+		}
+		return metav1.Condition{
+			Type:    conditionTypeDevicesReady,
+			Status:  metav1.ConditionUnknown,
+			Reason:  reasonDevicesPending,
+			Message: "Waiting for the pod to determine device availability",
+		}
+	}
+	// Events older than the current pod incarnation are from a previous
+	// generation (e.g. a since-fixed device) and must not be reported as
+	// current — Events have no owner reference to the pod and can outlive it.
+	podStart := pod.CreationTimestamp.Time
+
 	eventList := &corev1.EventList{}
-	if err := r.List(ctx, eventList, client.InNamespace(ha.Namespace)); err != nil {
-		log.V(1).Info("buildDevicesReadyCondition: failed to list events", "error", err)
+	listErr := r.eventReader().List(ctx, eventList,
+		client.InNamespace(ha.Namespace), client.MatchingFields{"involvedObject.name": podName})
+	if listErr != nil {
+		log.V(1).Info("buildDevicesReadyCondition: failed to list events", "error", listErr)
 	} else {
 		for _, ev := range eventList.Items {
-			if ev.Reason != failedMountEventReason || ev.InvolvedObject.Name != podName {
+			if ev.Reason != failedMountEventReason || ev.LastTimestamp.Time.Before(podStart) {
 				continue
 			}
 			for _, dev := range ha.Spec.Alpha.Devices {
-				if strings.Contains(ev.Message, dev.HostPath) {
+				if hostPathReferencedIn(ev.Message, dev.HostPath) {
 					return metav1.Condition{
 						Type:   conditionTypeDevicesReady,
 						Status: metav1.ConditionFalse,
@@ -1402,6 +1429,55 @@ func (r *HomeAssistantReconciler) buildDevicesReadyCondition(
 		Reason:  reasonDevicesPending,
 		Message: "Waiting for the pod to determine device availability",
 	}
+}
+
+// eventReader returns the uncached, direct-to-API-server reader for Event
+// lookups so the controller-runtime cache never has to hold an informer over
+// every Event in the namespace (a high-churn resource) just for this
+// occasional diagnostic read. Falls back to the regular (cached) client if
+// APIReader was not wired up, e.g. in tests that construct the reconciler
+// directly against an uncached envtest client.
+func (r *HomeAssistantReconciler) eventReader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
+}
+
+// hostPathReferencedIn reports whether hostPath appears in message as a
+// standalone path rather than as a substring of a longer, unrelated path
+// (e.g. declared device "/dev/ttyACM1" must not match a message referencing
+// "/dev/ttyACM10").
+func hostPathReferencedIn(message, hostPath string) bool {
+	searchFrom := 0
+	for {
+		idx := strings.Index(message[searchFrom:], hostPath)
+		if idx < 0 {
+			return false
+		}
+		start := searchFrom + idx
+		end := start + len(hostPath)
+		before := byte(0)
+		if start > 0 {
+			before = message[start-1]
+		}
+		after := byte(0)
+		if end < len(message) {
+			after = message[end]
+		}
+		if !isPathBoundaryByte(before) && !isPathBoundaryByte(after) {
+			return true
+		}
+		searchFrom = start + 1
+	}
+}
+
+// isPathBoundaryByte reports whether b could be part of the same filesystem
+// path segment as its neighbor, i.e. it is NOT a boundary between the
+// matched hostPath and surrounding text.
+func isPathBoundaryByte(b byte) bool {
+	return b == '/' || b == '.' || b == '-' || b == '_' ||
+		(b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
 // needsUpdate checks if the StatefulSet needs to be updated
@@ -1497,7 +1573,7 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 	// or containerPath edited in place — the counts above stay unchanged, so
 	// this must be compared separately). Extracted to its own function to
 	// keep this function's cyclomatic complexity in check.
-	if deviceContentDiffers(current, desired, currentContainer, desiredContainer) {
+	if volumeContentDiffers(current, desired, currentContainer, desiredContainer) {
 		return true
 	}
 
@@ -1706,13 +1782,13 @@ func hostPathsEqual(current, desired *corev1.HostPathVolumeSource) bool {
 	return current.Path == desired.Path && currentType == desiredType
 }
 
-// deviceContentDiffers compares volume HostPath and VolumeMount MountPath
-// content index-by-index (e.g. a spec.alpha.devices entry's hostPath or
-// containerPath edited in place, where the device count itself is
-// unchanged). Callers must already have confirmed the volume and mount
-// counts match. Split out of needsUpdate to keep its cyclomatic complexity
-// in check.
-func deviceContentDiffers(
+// volumeContentDiffers compares volume HostPath and VolumeMount MountPath
+// content index-by-index across all of the pod template's volumes/mounts
+// (e.g. a spec.alpha.devices entry's hostPath or containerPath edited in
+// place, where the volume count itself is unchanged). Callers must already
+// have confirmed the volume and mount counts match. Split out of
+// needsUpdate to keep its cyclomatic complexity in check.
+func volumeContentDiffers(
 	current, desired *appsv1.StatefulSet, currentContainer, desiredContainer corev1.Container,
 ) bool {
 	log := logf.Log.WithName("needsUpdate")

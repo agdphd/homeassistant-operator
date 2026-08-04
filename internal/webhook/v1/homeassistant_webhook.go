@@ -195,14 +195,17 @@ func validateGatewayFilter(index int, f hav1.HTTPRouteFilter) []string {
 
 // validateDevices validates spec.alpha.devices: each entry's hostPath (and
 // containerPath, when set) must be a non-empty absolute path under /dev with
-// no ".." traversal segments, and no two entries may declare the same
-// hostPath. Returns one message per problem found, empty when valid.
+// no ".." traversal segments, no two entries may declare the same hostPath,
+// and no two entries may resolve to the same effective container mount path
+// (an omitted containerPath defaults to hostPath — see buildStatefulSet).
+// Returns one message per problem found, empty when valid.
 func validateDevices(spec *hav1.HomeAssistantSpec) []string {
 	if spec.Alpha == nil || len(spec.Alpha.Devices) == 0 {
 		return nil
 	}
 	var errs []string
-	seen := make(map[string]bool, len(spec.Alpha.Devices))
+	seenHostPaths := make(map[string]bool, len(spec.Alpha.Devices))
+	seenContainerPaths := make(map[string]bool, len(spec.Alpha.Devices))
 	for i, d := range spec.Alpha.Devices {
 		path := fmt.Sprintf("spec.alpha.devices[%d]", i)
 		errs = append(errs, validateDevicePath(path+".hostPath", d.HostPath)...)
@@ -210,10 +213,21 @@ func validateDevices(spec *hav1.HomeAssistantSpec) []string {
 			errs = append(errs, validateDevicePath(path+".containerPath", d.ContainerPath)...)
 		}
 		if d.HostPath != "" {
-			if seen[d.HostPath] {
+			if seenHostPaths[d.HostPath] {
 				errs = append(errs, fmt.Sprintf("%s.hostPath %q is declared more than once", path, d.HostPath))
 			}
-			seen[d.HostPath] = true
+			seenHostPaths[d.HostPath] = true
+
+			effectiveContainerPath := d.ContainerPath
+			if effectiveContainerPath == "" {
+				effectiveContainerPath = d.HostPath
+			}
+			if seenContainerPaths[effectiveContainerPath] {
+				errs = append(errs, fmt.Sprintf(
+					"%s resolves to container mount path %q, already used by another device",
+					path, effectiveContainerPath))
+			}
+			seenContainerPaths[effectiveContainerPath] = true
 		}
 	}
 	return errs

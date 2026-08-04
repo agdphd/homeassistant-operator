@@ -17,6 +17,9 @@ limitations under the License.
 package controller
 
 import (
+	"strconv"
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -32,7 +35,7 @@ const devicePassthroughTestNamespace = "default"
 // deviceVolume returns the volume named "device-<index>" from a built pod
 // spec, or nil if absent.
 func deviceVolume(volumes []corev1.Volume, index int) *corev1.Volume {
-	name := "device-" + string(rune('0'+index))
+	name := "device-" + strconv.Itoa(index)
 	for i := range volumes {
 		if volumes[i].Name == name {
 			return &volumes[i]
@@ -46,8 +49,9 @@ var _ = Describe("HomeAssistant device passthrough (spec.alpha.devices)", func()
 
 	BeforeEach(func() {
 		reconciler = &HomeAssistantReconciler{
-			Client: k8sClient,
-			Scheme: k8sClient.Scheme(),
+			Client:    k8sClient,
+			Scheme:    k8sClient.Scheme(),
+			APIReader: k8sClient,
 		}
 	})
 
@@ -257,6 +261,17 @@ var _ = Describe("HomeAssistant device passthrough (spec.alpha.devices)", func()
 				},
 			}
 
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: haName + "-0", Namespace: devicePassthroughTestNamespace},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "home-assistant", Image: "busybox"}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+			DeferCleanup(func() {
+				_ = k8sClient.Delete(ctx, pod)
+			})
+
 			failedMountMsg := `MountVolume.SetUp failed for volume "device-0": ` +
 				`hostPath type check failed: /dev/does-not-exist-0 is not a character device`
 			event := &corev1.Event{
@@ -293,6 +308,103 @@ var _ = Describe("HomeAssistant device passthrough (spec.alpha.devices)", func()
 					Alpha: &hav1.AlphaSpec{Devices: []hav1.DevicePassthroughEntry{{HostPath: "/dev/ttyACM0"}}},
 				},
 			}
+			cond := reconciler.buildDevicesReadyCondition(ctx, ha, false)
+			Expect(cond.Status).To(Equal(metav1.ConditionUnknown))
+			Expect(cond.Reason).To(Equal(reasonDevicesPending))
+		})
+
+		It("ignores a FailedMount event predating the current pod (stale, previous incarnation)", func() {
+			haName := "devcond-stale-event"
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: haName, Namespace: devicePassthroughTestNamespace},
+				Spec: hav1.HomeAssistantSpec{
+					Alpha: &hav1.AlphaSpec{Devices: []hav1.DevicePassthroughEntry{{HostPath: "/dev/ttyACM0"}}},
+				},
+			}
+
+			staleMsg := `MountVolume.SetUp failed for volume "device-0": ` +
+				`hostPath type check failed: /dev/ttyACM0 is not a character device`
+			event := &corev1.Event{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "devcond-stale-event-",
+					Namespace:    devicePassthroughTestNamespace,
+				},
+				InvolvedObject: corev1.ObjectReference{
+					Kind:      "Pod",
+					Name:      haName + "-0",
+					Namespace: devicePassthroughTestNamespace,
+				},
+				Reason:         failedMountEventReason,
+				Message:        staleMsg,
+				Type:           corev1.EventTypeWarning,
+				FirstTimestamp: metav1.NewTime(time.Now().Add(-time.Hour)),
+				LastTimestamp:  metav1.NewTime(time.Now().Add(-time.Hour)),
+			}
+			Expect(k8sClient.Create(ctx, event)).To(Succeed())
+			DeferCleanup(func() {
+				_ = k8sClient.Delete(ctx, event)
+			})
+
+			// The pod is (re)created after the stale event above.
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: haName + "-0", Namespace: devicePassthroughTestNamespace},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "home-assistant", Image: "busybox"}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+			DeferCleanup(func() {
+				_ = k8sClient.Delete(ctx, pod)
+			})
+
+			cond := reconciler.buildDevicesReadyCondition(ctx, ha, false)
+			Expect(cond.Status).To(Equal(metav1.ConditionUnknown))
+			Expect(cond.Reason).To(Equal(reasonDevicesPending))
+		})
+
+		It("does not match a declared hostPath against an unrelated longer path", func() {
+			haName := "devcond-prefix-safe"
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: haName, Namespace: devicePassthroughTestNamespace},
+				Spec: hav1.HomeAssistantSpec{
+					Alpha: &hav1.AlphaSpec{Devices: []hav1.DevicePassthroughEntry{{HostPath: "/dev/ttyACM1"}}},
+				},
+			}
+
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: haName + "-0", Namespace: devicePassthroughTestNamespace},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "home-assistant", Image: "busybox"}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+			DeferCleanup(func() {
+				_ = k8sClient.Delete(ctx, pod)
+			})
+
+			unrelatedMsg := `MountVolume.SetUp failed for volume "device-1": ` +
+				`hostPath type check failed: /dev/ttyACM10 is not a character device`
+			event := &corev1.Event{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "devcond-prefix-safe-event-",
+					Namespace:    devicePassthroughTestNamespace,
+				},
+				InvolvedObject: corev1.ObjectReference{
+					Kind:      "Pod",
+					Name:      haName + "-0",
+					Namespace: devicePassthroughTestNamespace,
+				},
+				Reason:         failedMountEventReason,
+				Message:        unrelatedMsg,
+				Type:           corev1.EventTypeWarning,
+				FirstTimestamp: metav1.Now(),
+				LastTimestamp:  metav1.Now(),
+			}
+			Expect(k8sClient.Create(ctx, event)).To(Succeed())
+			DeferCleanup(func() {
+				_ = k8sClient.Delete(ctx, event)
+			})
+
 			cond := reconciler.buildDevicesReadyCondition(ctx, ha, false)
 			Expect(cond.Status).To(Equal(metav1.ConditionUnknown))
 			Expect(cond.Reason).To(Equal(reasonDevicesPending))
