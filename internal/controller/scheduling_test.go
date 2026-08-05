@@ -17,11 +17,16 @@ limitations under the License.
 package controller
 
 import (
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 )
@@ -466,6 +471,89 @@ var _ = Describe("HomeAssistant pod scheduling controls (spec.scheduling)", func
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Reason).To(Equal(reasonUnschedulable))
 			Expect(cond.Message).To(Equal(unschedulableMsg))
+		})
+	})
+
+	Context("publishSchedulingReadyEarly (full Reconcile)", func() {
+		It("publishes SchedulingReady=False even while bootstrap keeps requeuing on PodScheduled=False", func() {
+			haName := "sched-early-bootstrap"
+
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: haName + "-creds", Namespace: devicePassthroughTestNamespace},
+				Data: map[string][]byte{
+					"username": []byte("admin"),
+					"password": []byte("testpass123"),
+				},
+			}
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, secret) })
+
+			ha := &hav1.HomeAssistant{
+				ObjectMeta: metav1.ObjectMeta{Name: haName, Namespace: devicePassthroughTestNamespace},
+				Spec: hav1.HomeAssistantSpec{
+					Version:    "2024.1.0",
+					Scheduling: &hav1.SchedulingSpec{NodeSelector: map[string]string{"ha-device-node": "does-not-exist"}},
+					Bootstrap: &hav1.BootstrapSpec{
+						Enabled: true,
+						Credentials: &hav1.BootstrapCredentials{
+							SecretRef: &hav1.CredentialsSecretRef{Name: secret.Name},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, ha)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, ha) })
+
+			haConfig := &hav1.HomeAssistantConfiguration{
+				ObjectMeta: metav1.ObjectMeta{Name: haName + "-config", Namespace: devicePassthroughTestNamespace},
+				Spec: hav1.HomeAssistantConfigurationSpec{
+					HomeAssistantRef: hav1.HomeAssistantReference{Name: haName},
+					Configuration:    "homeassistant:\n  name: Home\n",
+				},
+			}
+			Expect(k8sClient.Create(ctx, haConfig)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, haConfig) })
+
+			haKey := types.NamespacedName{Name: haName, Namespace: devicePassthroughTestNamespace}
+
+			By("reconciling once to create the StatefulSet")
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: haKey})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("simulating an unschedulable pod, as a real scheduler would report it")
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: haName + "-0", Namespace: devicePassthroughTestNamespace},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: "home-assistant", Image: "busybox"}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+			DeferCleanup(func() { _ = k8sClient.Delete(ctx, pod) })
+			pod.Status.Conditions = []corev1.PodCondition{
+				{
+					Type:    corev1.PodScheduled,
+					Status:  corev1.ConditionFalse,
+					Reason:  "Unschedulable",
+					Message: "0/1 nodes are available: 1 node(s) didn't match Pod's node affinity/selector.",
+				},
+			}
+			Expect(k8sClient.Status().Update(ctx, pod)).To(Succeed())
+
+			By("reconciling again: bootstrap's health check fails (no real HA server) and requeues, " +
+				"short-circuiting Reconcile before updateStatusFromStatefulSet would normally run")
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: haKey})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+
+			By("verifying SchedulingReady=False was published anyway")
+			Eventually(func(g Gomega) {
+				fetched := &hav1.HomeAssistant{}
+				g.Expect(k8sClient.Get(ctx, haKey, fetched)).To(Succeed())
+				cond := meta.FindStatusCondition(fetched.Status.Conditions, conditionTypeSchedulingReady)
+				g.Expect(cond).NotTo(BeNil())
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).To(Equal(reasonUnschedulable))
+			}, time.Second*10, time.Millisecond*250).Should(Succeed())
 		})
 	})
 })

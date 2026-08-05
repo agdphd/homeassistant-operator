@@ -96,4 +96,3 @@ ha.homeassistant.io/homeassistantcommunityrepositories/status/update
 # against real PriorityClass objects at admission time, since Kubernetes
 # itself only rejects a nonexistent one later, at pod creation.
 scheduling.k8s.io/priorityclasses/get
-scheduling.k8s.io/priorityclasses/list

@@ -190,4 +190,3 @@ rules:
   - priorityclasses
   verbs:
   - get
-  - list

@@ -22,6 +22,8 @@ import (
 	"strings"
 
 	schedulingv1 "k8s.io/api/scheduling/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -300,19 +302,19 @@ func validateScheduling(ctx context.Context, cl client.Reader, spec *hav1.HomeAs
 		return nil
 	}
 
-	var list schedulingv1.PriorityClassList
-	if err := cl.List(ctx, &list); err != nil {
-		logf.Log.WithName("homeassistant-webhook").Error(err, "failed to list PriorityClass objects for validation")
+	var pc schedulingv1.PriorityClass
+	err := cl.Get(ctx, types.NamespacedName{Name: spec.Scheduling.PriorityClassName}, &pc)
+	switch {
+	case err == nil:
+		return nil
+	case apierrors.IsNotFound(err):
+		return []string{fmt.Sprintf(
+			"spec.scheduling.priorityClassName %q does not name an existing PriorityClass",
+			spec.Scheduling.PriorityClassName)}
+	default:
+		logf.Log.WithName("homeassistant-webhook").Error(err, "failed to get PriorityClass for validation")
 		return nil
 	}
-	for _, pc := range list.Items {
-		if pc.Name == spec.Scheduling.PriorityClassName {
-			return nil
-		}
-	}
-	return []string{fmt.Sprintf(
-		"spec.scheduling.priorityClassName %q does not name an existing PriorityClass",
-		spec.Scheduling.PriorityClassName)}
 }
 
 func validateHeaderFilter(path string, h *hav1.HTTPHeaderFilter) []string {

@@ -171,7 +171,7 @@ type HomeAssistantReconciler struct {
 // reconciler) to reject a spec.scheduling.priorityClassName referencing a
 // PriorityClass that doesn't exist, at admission time rather than letting it
 // fail later as an opaque StatefulSet/Pod creation error.
-// +kubebuilder:rbac:groups=scheduling.k8s.io,resources=priorityclasses,verbs=get;list
+// +kubebuilder:rbac:groups=scheduling.k8s.io,resources=priorityclasses,verbs=get
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -284,6 +284,14 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if tlsResult.RequeueAfter > 0 {
 		return tlsResult, nil
+	}
+
+	// Publish SchedulingReady before reconcileBootstrap, since an unschedulable
+	// pod (PodScheduled=False) never becomes healthy — bootstrap's own health
+	// check would otherwise requeue indefinitely below without this reconcile
+	// ever reaching updateStatusFromStatefulSet, hiding the reason from status.
+	if err := r.publishSchedulingReadyEarly(ctx, ha); err != nil {
+		log.Error(err, "Failed to publish early SchedulingReady condition")
 	}
 
 	// Reconcile Bootstrap - let bootstrap controller decide when HA is ready
@@ -1342,6 +1350,12 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 
 	devicesCondition := r.buildDevicesReadyCondition(ctx, ha, stsReady, pod)
 	schedulingCondition := r.buildSchedulingReadyCondition(ha, stsReady, pod)
+	// schedulingCondition was computed from ha/pod state as observed at this
+	// generation. If a conflict forces updateHAStatusWithRetry to re-fetch ha
+	// at a newer generation, that computation is stale for the new spec — skip
+	// publishing it under the newer generation and let the next reconcile
+	// (triggered by the spec change) recompute it correctly instead.
+	schedulingEvaluatedGeneration := ha.Generation
 
 	if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
 		h.Status.Version = version
@@ -1378,8 +1392,10 @@ func (r *HomeAssistantReconciler) updateStatusFromStatefulSet(
 		devicesCondition.ObservedGeneration = h.Generation
 		meta.SetStatusCondition(&h.Status.Conditions, devicesCondition)
 
-		schedulingCondition.ObservedGeneration = h.Generation
-		meta.SetStatusCondition(&h.Status.Conditions, schedulingCondition)
+		if h.Generation == schedulingEvaluatedGeneration {
+			schedulingCondition.ObservedGeneration = h.Generation
+			meta.SetStatusCondition(&h.Status.Conditions, schedulingCondition)
+		}
 		return true
 	}); err != nil {
 		log.Error(err, "Failed to update HomeAssistant status")
@@ -1483,6 +1499,50 @@ func schedulingConstraintsDeclared(s *hav1.SchedulingSpec) bool {
 		return false
 	}
 	return len(s.NodeSelector) > 0 || s.Affinity != nil || len(s.Tolerations) > 0 || s.PriorityClassName != ""
+}
+
+// publishSchedulingReadyEarly best-effort publishes SchedulingReady ahead of
+// reconcileBootstrap. Bootstrap's own health-check loop keeps requeuing
+// (never reaching updateStatusFromStatefulSet, which republishes this same
+// condition as part of the full status update) as long as HA never becomes
+// ready — which never happens for a pod stuck Pending on an unsatisfiable
+// nodeSelector/affinity/toleration. Without this early publish, that state
+// would never surface on status at all.
+func (r *HomeAssistantReconciler) publishSchedulingReadyEarly(ctx context.Context, ha *hav1.HomeAssistant) error {
+	if !schedulingConstraintsDeclared(ha.Spec.Scheduling) {
+		return nil
+	}
+
+	sts := &appsv1.StatefulSet{}
+	if err := r.Get(ctx, types.NamespacedName{Name: ha.Name, Namespace: ha.Namespace}, sts); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	stsReady := sts.Status.ReadyReplicas > 0 && sts.Status.ReadyReplicas == sts.Status.Replicas
+
+	var pod *corev1.Pod
+	if !stsReady {
+		p := &corev1.Pod{}
+		if err := r.Get(ctx, types.NamespacedName{Name: ha.Name + "-0", Namespace: ha.Namespace}, p); err != nil {
+			if !errors.IsNotFound(err) {
+				logf.FromContext(ctx).V(1).Info("publishSchedulingReadyEarly: failed to get pod", "error", err)
+			}
+		} else {
+			pod = p
+		}
+	}
+
+	cond := r.buildSchedulingReadyCondition(ha, stsReady, pod)
+	evaluatedGeneration := ha.Generation
+	return r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
+		if h.Generation != evaluatedGeneration {
+			return false
+		}
+		cond.ObservedGeneration = h.Generation
+		return meta.SetStatusCondition(&h.Status.Conditions, cond)
+	})
 }
 
 // buildSchedulingReadyCondition reports whether spec.scheduling's declared
