@@ -102,9 +102,21 @@ jobs:
           restore-keys: |
             ginkgo-
 
+      - name: Cache k3d binary
+        id: cache-k3d
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/bin/k3d
+          key: k3d-${{ env.K3D_VERSION }}
+
       - name: Install k3d
+        if: steps.cache-k3d.outputs.cache-hit != 'true'
         run: |
-          curl -s https://raw.githubusercontent.com/k3d-io/k3d/${{ env.K3D_VERSION }}/install.sh | bash
+          go install -ldflags "-s -w -X github.com/k3d-io/k3d/v5/version.Version=${{ env.K3D_VERSION }}" \
+            github.com/k3d-io/k3d/v5@${{ env.K3D_VERSION }}
+
+      - name: Add k3d to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Verify k3d installation
         run: k3d version
@@ -242,9 +254,21 @@ jobs:
           restore-keys: |
             ginkgo-
 
+      - name: Cache k3d binary
+        id: cache-k3d
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/bin/k3d
+          key: k3d-${{ env.K3D_VERSION }}
+
       - name: Install k3d
+        if: steps.cache-k3d.outputs.cache-hit != 'true'
         run: |
-          curl -s https://raw.githubusercontent.com/k3d-io/k3d/${{ env.K3D_VERSION }}/install.sh | bash
+          go install -ldflags "-s -w -X github.com/k3d-io/k3d/v5/version.Version=${{ env.K3D_VERSION }}" \
+            github.com/k3d-io/k3d/v5@${{ env.K3D_VERSION }}
+
+      - name: Add k3d to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Verify k3d installation
         run: k3d version
@@ -353,9 +377,21 @@ jobs:
           restore-keys: |
             ginkgo-
 
+      - name: Cache k3d binary
+        id: cache-k3d
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/bin/k3d
+          key: k3d-${{ env.K3D_VERSION }}
+
       - name: Install k3d
+        if: steps.cache-k3d.outputs.cache-hit != 'true'
         run: |
-          curl -s https://raw.githubusercontent.com/k3d-io/k3d/${{ env.K3D_VERSION }}/install.sh | bash
+          go install -ldflags "-s -w -X github.com/k3d-io/k3d/v5/version.Version=${{ env.K3D_VERSION }}" \
+            github.com/k3d-io/k3d/v5@${{ env.K3D_VERSION }}
+
+      - name: Add k3d to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Verify k3d installation
         run: k3d version
@@ -490,9 +526,21 @@ jobs:
           restore-keys: |
             ginkgo-
 
+      - name: Cache k3d binary
+        id: cache-k3d
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/bin/k3d
+          key: k3d-${{ env.K3D_VERSION }}
+
       - name: Install k3d
+        if: steps.cache-k3d.outputs.cache-hit != 'true'
         run: |
-          curl -s https://raw.githubusercontent.com/k3d-io/k3d/${{ env.K3D_VERSION }}/install.sh | bash
+          go install -ldflags "-s -w -X github.com/k3d-io/k3d/v5/version.Version=${{ env.K3D_VERSION }}" \
+            github.com/k3d-io/k3d/v5@${{ env.K3D_VERSION }}
+
+      - name: Add k3d to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Verify k3d installation
         run: k3d version
@@ -597,9 +645,21 @@ jobs:
           restore-keys: |
             ginkgo-
 
+      - name: Cache k3d binary
+        id: cache-k3d
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/bin/k3d
+          key: k3d-${{ env.K3D_VERSION }}
+
       - name: Install k3d
+        if: steps.cache-k3d.outputs.cache-hit != 'true'
         run: |
-          curl -s https://raw.githubusercontent.com/k3d-io/k3d/${{ env.K3D_VERSION }}/install.sh | bash
+          go install -ldflags "-s -w -X github.com/k3d-io/k3d/v5/version.Version=${{ env.K3D_VERSION }}" \
+            github.com/k3d-io/k3d/v5@${{ env.K3D_VERSION }}
+
+      - name: Add k3d to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Verify k3d installation
         run: k3d version
@@ -693,9 +753,21 @@ jobs:
           restore-keys: |
             ginkgo-
 
+      - name: Cache k3d binary
+        id: cache-k3d
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/bin/k3d
+          key: k3d-${{ env.K3D_VERSION }}
+
       - name: Install k3d
+        if: steps.cache-k3d.outputs.cache-hit != 'true'
         run: |
-          curl -s https://raw.githubusercontent.com/k3d-io/k3d/${{ env.K3D_VERSION }}/install.sh | bash
+          go install -ldflags "-s -w -X github.com/k3d-io/k3d/v5/version.Version=${{ env.K3D_VERSION }}" \
+            github.com/k3d-io/k3d/v5@${{ env.K3D_VERSION }}
+
+      - name: Add k3d to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Verify k3d installation
         run: k3d version
@@ -800,9 +872,21 @@ jobs:
           restore-keys: |
             ginkgo-
 
+      - name: Cache k3d binary
+        id: cache-k3d
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/go/bin/k3d
+          key: k3d-${{ env.K3D_VERSION }}
+
       - name: Install k3d
+        if: steps.cache-k3d.outputs.cache-hit != 'true'
         run: |
-          curl -s https://raw.githubusercontent.com/k3d-io/k3d/${{ env.K3D_VERSION }}/install.sh | bash
+          go install -ldflags "-s -w -X github.com/k3d-io/k3d/v5/version.Version=${{ env.K3D_VERSION }}" \
+            github.com/k3d-io/k3d/v5@${{ env.K3D_VERSION }}
+
+      - name: Add k3d to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Verify k3d installation
         run: k3d version
