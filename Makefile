@@ -120,10 +120,6 @@ test: manifests generate fmt vet setup-envtest ## Run unit tests.
 # E2E tests use k3d (recommended for k3s-like target environments)
 K3D_CLUSTER_E2E ?= homeassistant-operator-test-e2e
 K3D_MEMORY_E2E ?= 12g
-# Overridden to 1 by test-e2e-scheduling: that job needs a second, schedulable
-# node to prove nodeSelector/toleration inclusion and exclusion (a single-node
-# cluster has no alternative node to prove the pod did *not* land on).
-K3D_AGENTS_E2E ?= 0
 # renovate: datasource=docker depName=rancher/k3s
 K3S_VERSION ?= v1.36.2-k3s1
 # renovate: datasource=docker depName=ghcr.io/home-assistant/home-assistant
@@ -134,8 +130,8 @@ setup-test-e2e: ## Set up a k3d cluster for e2e tests (always creates fresh clus
 	@command -v k3d >/dev/null 2>&1 || { echo "k3d is not installed. Install with: curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash"; exit 1; }
 	@echo "Ensuring clean k3d cluster state..."
 	@k3d cluster delete $(K3D_CLUSTER_E2E) 2>/dev/null || true
-	@echo "Creating fresh k3d cluster $(K3D_CLUSTER_E2E) with $(K3D_MEMORY_E2E) memory, $(K3D_AGENTS_E2E) agent(s) (k3s $(K3S_VERSION))..."
-	@k3d cluster create $(K3D_CLUSTER_E2E) --image rancher/k3s:$(K3S_VERSION) --agents $(K3D_AGENTS_E2E) --servers-memory $(K3D_MEMORY_E2E)
+	@echo "Creating fresh k3d cluster $(K3D_CLUSTER_E2E) with $(K3D_MEMORY_E2E) memory (k3s $(K3S_VERSION))..."
+	@k3d cluster create $(K3D_CLUSTER_E2E) --image rancher/k3s:$(K3S_VERSION) --agents 0 --servers-memory $(K3D_MEMORY_E2E)
 	@echo "Ensuring Home Assistant image $(HA_VERSION) is in local Docker cache..."
 	@docker image inspect ghcr.io/home-assistant/home-assistant:$(HA_VERSION) >/dev/null 2>&1 || \
 		docker pull ghcr.io/home-assistant/home-assistant:$(HA_VERSION)
@@ -157,7 +153,7 @@ cleanup-test-e2e: ## Tear down the k3d cluster used for e2e tests
 	@echo "Cleaning up k3d cluster $(K3D_CLUSTER_E2E)..."
 	@k3d cluster delete $(K3D_CLUSTER_E2E) 2>/dev/null || true
 
-# Local, single-job reproductions of the eight concurrent CI jobs defined in
+# Local, single-job reproductions of the seven concurrent CI jobs defined in
 # .github/workflows/test-e2e-parallel.yml. See docs/development/testing.md
 # for what each label-filter subset covers.
 #
@@ -181,13 +177,6 @@ test-e2e-critical-b: manifests generate fmt vet ginkgo ## Run the critical-path 
 	$(MAKE) setup-test-e2e; \
 	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) $(GINKGO) run \
 		-v --label-filter="critical-path && group-b" --timeout=7m ./test/e2e/ | tee test-e2e.log
-
-.PHONY: test-e2e-scheduling
-test-e2e-scheduling: manifests generate fmt vet ginkgo ## Run the scheduling e2e job locally (multi-node cluster)
-	trap '$(MAKE) cleanup-test-e2e' EXIT INT TERM; \
-	$(MAKE) setup-test-e2e K3D_AGENTS_E2E=1; \
-	CERT_MANAGER_INSTALL_SKIP=true K3D_CLUSTER=$(K3D_CLUSTER_E2E) $(GINKGO) run \
-		-v --label-filter=scheduling --timeout=7m ./test/e2e/ | tee test-e2e.log
 
 .PHONY: test-e2e-tls
 test-e2e-tls: manifests generate fmt vet ginkgo ## Run the tls e2e job locally (installs cert-manager)

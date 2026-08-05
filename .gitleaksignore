@@ -1,5 +1,0 @@
-# Gitleaks false positives — see .gitleaks.toml for path-based allowlisting.
-# One fingerprint per line (from `gitleaks detect -v` output).
-
-# Kubernetes label key constant, not a secret — flagged purely on string entropy.
-test/e2e/e2e_scheduling_test.go:generic-api-key:61

@@ -170,9 +170,9 @@ Eventually(func(g Gomega) {
 
 ## E2E Tests
 
-**Location**: `test/e2e/*_test.go` (10 files, 27 specs total)
+**Location**: `test/e2e/*_test.go` (9 files, 26 specs total)
 **Framework**: Ginkgo v2 + real k3d cluster
-**Strategy**: Eight independently-labeled suites, run as eight concurrent
+**Strategy**: Seven independently-labeled suites, run as seven concurrent
 GitHub Actions jobs (`.github/workflows/test-e2e-parallel.yml`), so the whole
 workflow — not any single job — targets a **10-minute** budget (see the
 Known gap below: not currently met in practice, closer to 15-20 minutes).
@@ -183,14 +183,13 @@ needs to reference how long the suite takes should point here rather than
 restating a number.
 
 **Goal**: the whole e2e workflow completes in about 10 minutes, split across
-the eight concurrent jobs below.
+the seven concurrent jobs below.
 
 ### Running E2E locally
 
 ```bash
 make test-e2e-critical-a                 # HomeAssistant + sibling CRDs (10 specs)
 make test-e2e-critical-b                 # spec.alpha.devices device passthrough (1 spec)
-make test-e2e-scheduling                 # spec.scheduling pod scheduling controls (1 spec)
 make test-e2e-tls                        # TLS ingress/gateway/native/webhook (5 specs)
 make test-e2e-network-policy             # NetworkPolicy enforcement (1 spec)
 make test-e2e-pod-security                # Pod Security Standards (2 specs)
@@ -201,10 +200,6 @@ make test-e2e-community-repository-b     # HACS-style installs, group B (4 specs
 Each target creates its own fresh k3d cluster (`K3D_MEMORY_E2E=4g` by
 default), runs its `ginkgo run --label-filter=...` subset, and tears the
 cluster down afterward — mirroring exactly what each CI job does.
-`test-e2e-scheduling` is the one exception: it overrides
-`K3D_AGENTS_E2E=1` (every other target uses the default `0`), since proving
-`nodeSelector`/toleration inclusion and exclusion needs a second, schedulable
-node to prove the pod did — or did not — land there.
 
 Local runs build and use `example.com/homeassistant-operator:v0.0.1` (the
 suite's own default), rebuilding the image each time. CI instead builds the
@@ -213,29 +208,17 @@ and every e2e job downloads and loads that same artifact — set
 `E2E_SKIP_IMAGE_BUILD=true` and `E2E_IMG=<tag>` to reproduce that
 skip-the-rebuild behavior locally against a pre-built image.
 
-### The eight e2e jobs
+### The seven e2e jobs
 
 | Job | Label filter | Specs | What is verified |
 |---|---|---|---|
 | `e2e-critical-a` | `critical-path && group-a` | 10 | All CRDs' core lifecycle (see table below) — shares one HA bootstrap |
 | `e2e-critical-b` | `critical-path && group-b` | 1 | `spec.alpha.devices` device passthrough — own cluster/instance, no shared bootstrap |
-| `e2e-scheduling` | `scheduling` | 1 | `spec.scheduling` node selector/affinity/tolerations/priority class actually influence real placement, not just that the fields round-trip |
 | `e2e-tls` | `tls` | 5 | TLS via Ingress, Gateway API, native HA TLS, and the validating webhook |
 | `e2e-network-policy` | `network-policy` | 1 | `spec.alpha.networkPolicy` actually restricts traffic, not just that the object exists |
 | `e2e-pod-security` | `pod-security` | 2 | Operator namespace enforces the `restricted` Pod Security Standard |
 | `e2e-community-repository-a` | `community-repository && group-a` | 3 | `HomeAssistantCommunityRepository`: integration + theme install, theme ref-update |
 | `e2e-community-repository-b` | `community-repository && group-b` | 4 | `HomeAssistantCommunityRepository`: python_script + template + plugin install, deletion |
-
-`e2e-scheduling` is its own standalone label (not folded into
-`critical-path`'s group-a/b scheme) because it's a genuinely new domain, not
-a time-budget split of an existing job's specs — same precedent as
-`network-policy`/`pod-security` being their own single-purpose jobs. It is
-also this suite's **first multi-node cluster** (`k3d cluster create
---agents 1`, every other job uses `--agents 0`): proving a `nodeSelector`
-or toleration actually includes or excludes the pod needs an alternative
-node it must (or must not) land on. Its cold-start time against this new
-cluster shape is unproven against real CI yet — flag for re-tightening the
-same way the "Known gap" jobs below were, once real timing data exists.
 
 `critical-path` and `community-repository` both use the generic
 `group-a`/`group-b` (and, if a group ever fills up, `group-c`, ...) label
@@ -321,27 +304,13 @@ instance, and its final step is free to leave the instance in a broken state
 (an intentionally unmountable device, to exercise the missing-device
 diagnostics) without affecting any other spec.
 
-### `e2e-scheduling` tests (1 spec)
-
-| # | CRD | What is verified |
-|---|-----|-----------------|
-| 1 | `HomeAssistant` (`spec.scheduling`) | `nodeSelector` pins the pod to a labeled node and only that node; an unsatisfiable selector surfaces `SchedulingReady=False`; a taint + matching toleration lets the pod on where an untolerating pod is excluded; a preferred (soft) node-affinity rule is honored when its favored node is available |
-
-One `It(...)` walks through all four scenarios sequentially against the
-same instance (baseline → pin → unsatisfiable → taint/toleration →
-preferred affinity), mirroring `e2e-critical-b`'s single-spec style.
-Requires a real multi-node cluster (`--agents 1`) — the one thing envtest's
-fake API server structurally cannot provide, since it never runs a real
-`kube-scheduler`.
-
 ## Coverage Gap Record
 
-No e2e scenario has been intentionally dropped from the gating workflow — all
-27 specs are still verified, split across the eight jobs above.
-This section exists as the place to record it if a future change ever needs
-to drop a scenario from the gating path rather than fitting it into an
-existing (or new) job:
+Every remaining e2e scenario is still verified — the 26 specs above are
+split across the seven jobs above. This section exists as the place to
+record it when a scenario is deliberately not e2e-gated, rather than fitting
+it into an existing (or new) job:
 
 | Scenario | Why not gating | Where (if anywhere) it's still verified |
 |---|---|---|
-| _(none currently)_ | | |
+| `spec.scheduling` (nodeSelector/affinity/tolerations actually influencing real placement) | An e2e job for this was built and run successfully, then deliberately removed: every piece of this operator's own logic (field copy onto the pod template, rollout-on-change diffing, the `SchedulingReady` condition mirroring the pod's own `PodScheduled` condition, admission validation) is already covered by envtest without a real scheduler. The only thing a real cluster adds is confirming that Kubernetes' own scheduler honors `nodeSelector`/affinity/taints — a stable, heavily-tested upstream API contract, not something specific to this operator (unlike e.g. device passthrough's hostPath mount, where non-`privileged` access to a device node is a container-runtime-default assumption, not a documented Kubernetes guarantee, and genuinely needs a real kubelet to confirm). | `internal/controller/scheduling_test.go` and `internal/webhook/v1/admission_envtest_test.go` (both envtest, real API server) |
