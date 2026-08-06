@@ -170,6 +170,44 @@ spec:
 
     It also weakens `spec.alpha.networkPolicy.enabled` (see below): NetworkPolicy operates on pod IPs, so it does not restrict traffic arriving via the host's network interface. Combining both gives only partial isolation.
 
+### `spec.scheduling`
+
+Controls where the Home Assistant pod is eligible to run and how it's treated under resource contention, using Kubernetes' own scheduling primitives directly — every field is copied verbatim onto the generated pod template. All fields are optional; leaving `spec.scheduling` unset preserves today's freely-schedulable, default-priority behavior exactly. Unlike other risky capabilities in this operator, this ships on the stable spec, not `spec.alpha.*`: the operator only exposes Kubernetes' own long-stable scheduling API, it doesn't implement any new scheduling behavior of its own.
+
+```yaml
+spec:
+  scheduling:
+    nodeSelector:
+      ha-device-node: zigbee
+    affinity:
+      nodeAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 1
+            preference:
+              matchExpressions:
+                - key: ha-storage
+                  operator: In
+                  values: ["nvme"]
+    tolerations:
+      - key: ha-dedicated
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+    priorityClassName: ha-critical
+```
+
+Fields:
+
+- `nodeSelector` (optional): restricts the pod to nodes matching all of these labels — the simplest way to pin the pod to a specific node (see `spec.alpha.devices` below).
+- `affinity` (optional): node affinity/anti-affinity and pod affinity/anti-affinity rules, using Kubernetes' own `Affinity` semantics unchanged (`nodeAffinity`, `podAffinity`, `podAntiAffinity`).
+- `tolerations` (optional): allows the pod onto nodes with matching taints that would otherwise repel it (e.g. a node pool dedicated to hardware-attached workloads).
+- `priorityClassName` (optional): assigns a `PriorityClass` to the pod, influencing preemption/eviction order under resource contention. Must name an existing `PriorityClass` — the operator rejects the resource at admission time if it doesn't exist.
+
+The `HomeAssistant` resource's `SchedulingReady` status condition reports whether the pod's declared constraints are currently satisfiable (mirroring the pod's own `PodScheduled` condition), so an impossible-to-satisfy `nodeSelector`/`affinity` combination is diagnosable straight from `kubectl describe homeassistant` instead of a generic "not ready".
+
+!!! note
+    Kubernetes only evaluates scheduling constraints when a pod is placed — editing `spec.scheduling` on an already-running instance triggers a pod recreation so the new constraint actually takes effect; it does not live-migrate the running pod.
+
 ### `spec.alpha.networkPolicy`
 
 !!! note "Alpha"
@@ -208,7 +246,7 @@ Fields per entry:
 - `containerPath` (optional): the path the device is mounted at inside the container. Defaults to `hostPath`.
 
 !!! warning
-    This does **not** pin the pod to the node the device is physically attached to. A USB coordinator only exists on one specific node, so declaring it here is only useful once you've separately ensured the pod is scheduled there (e.g. via `nodeSelector`/affinity/tolerations — node pinning is a separate capability). If the declared device isn't present on whichever node the pod lands on, the pod fails to start and the `HomeAssistant` resource's `DevicesReady` status condition names the missing path.
+    This does **not** by itself pin the pod to the node the device is physically attached to. A USB coordinator only exists on one specific node, so declaring it here is only useful once you've separately pinned the pod there via [`spec.scheduling.nodeSelector`](#specscheduling) (label the node, then match that label). If the declared device isn't present on whichever node the pod lands on, the pod fails to start and the `HomeAssistant` resource's `DevicesReady` status condition names the missing path.
 
 ### `spec.secretsFrom`
 

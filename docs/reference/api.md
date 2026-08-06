@@ -1262,6 +1262,7 @@ _Appears in:_
 | `bootstrap` _[BootstrapSpec](#bootstrapspec)_ | Bootstrap configures automatic onboarding and API token creation<br />When enabled, the operator will automatically complete the Home Assistant<br />onboarding process and create a long-lived access token for API access |  | Optional: \{\} <br /> |
 | `backup` _[BackupSpec](#backupspec)_ | Backup configures automatic backups using Home Assistant's built-in backup system.<br />Requires bootstrap with API token enabled. |  | Optional: \{\} <br /> |
 | `disableDefaultTrustedProxies` _boolean_ | DisableDefaultTrustedProxies opts out of the operator's automatic<br />http.trusted_proxies / http.use_x_forwarded_for defaults. When Ingress or<br />Gateway API exposure is enabled, Home Assistant rejects every request<br />through that endpoint with 400 Bad Request until it trusts the proxy<br />forwarding the request. Unless this is set to true, and unless the user<br />has already set these keys themselves in HomeAssistantConfiguration (or<br />manages http: entirely externally, e.g. via an !include tag), the<br />operator injects the RFC1918 private address ranges (10.0.0.0/8,<br />172.16.0.0/12, 192.168.0.0/16) as sensible defaults — this cannot be a<br />reliable autodetection of the real cluster CIDR, only a conservative<br />guess, so this field exists to opt out entirely for clusters where it<br />doesn't apply (e.g. non-RFC1918 pod/service networks, or where other<br />workloads on the pod network should not be trusted to set<br />X-Forwarded-For for the actual Ingress/Gateway proxy). |  | Optional: \{\} <br /> |
+| `scheduling` _[SchedulingSpec](#schedulingspec)_ | Scheduling controls where the Home Assistant pod is eligible to run and<br />how it is treated under resource contention, using Kubernetes' own<br />well-tested scheduling primitives directly (node selector, node/pod<br />affinity and anti-affinity, tolerations, priority class) rather than a<br />project-specific abstraction. Ships on the stable spec (not<br />spec.alpha.*): the operator only passes these fields through to the<br />generated pod template unchanged, it does not implement any new<br />scheduling behavior of its own. |  | Optional: \{\} <br /> |
 | `alpha` _[AlphaSpec](#alphaspec)_ | Alpha groups experimental, unstable fields. Fields here may change or be<br />removed without a deprecation notice. |  | Optional: \{\} <br /> |
 
 
@@ -1534,6 +1535,28 @@ _Appears in:_
 | `entity_id` _string_ | EntityID is the Home Assistant entity identifier in format domain.object_id<br />Examples: light.living_room, switch.fan, climate.bedroom |  | Pattern: `^[a-z_]+\.[a-z0-9_]+$` <br />Required: \{\} <br /> |
 | `state` _string_ | State is the desired state for this entity<br />Examples: "on", "off", numeric values |  | Required: \{\} <br /> |
 | `attributes` _[RawExtension](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#rawextension-runtime-pkg)_ | Attributes contains additional entity-specific attributes<br />Examples: brightness, color_temp, rgb_color for lights<br />This is a flexible structure that accepts any valid Home Assistant entity attributes |  | Type: object <br />Optional: \{\} <br /> |
+
+
+#### SchedulingSpec
+
+
+
+SchedulingSpec declares Kubernetes-native pod scheduling constraints for
+the Home Assistant pod. Every field is optional and copied verbatim onto
+the generated StatefulSet's pod template; leaving all of them unset
+preserves today's freely-schedulable, default-priority behavior.
+
+
+
+_Appears in:_
+- [HomeAssistantSpec](#homeassistantspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `nodeSelector` _object (keys:string, values:string)_ | NodeSelector restricts the pod to nodes matching all of these labels. |  | Optional: \{\} <br /> |
+| `affinity` _[Affinity](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#affinity-v1-core)_ | Affinity declares node affinity/anti-affinity and pod<br />affinity/anti-affinity rules, using Kubernetes' own Affinity semantics<br />unchanged. Both node-level placement (e.g. "prefer nodes with local<br />NVMe storage") and pod-level positioning relative to other workloads<br />(e.g. "never share a node with this other deployment") are expressed<br />through this single field, matching how corev1.Affinity itself groups<br />NodeAffinity/PodAffinity/PodAntiAffinity together. |  | Optional: \{\} <br /> |
+| `tolerations` _[Toleration](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#toleration-v1-core) array_ | Tolerations allows the pod to be scheduled onto nodes with matching<br />taints that would otherwise repel it. |  | Optional: \{\} <br /> |
+| `priorityClassName` _string_ | PriorityClassName assigns a PriorityClass to the pod, influencing<br />scheduling preemption and eviction order under resource contention.<br />Must name an existing PriorityClass — validated at admission time. |  | Optional: \{\} <br /> |
 
 
 #### ScriptAction

@@ -26,6 +26,7 @@ import (
 
 	. "github.com/onsi/gomega"
 
+	schedulingv1 "k8s.io/api/scheduling/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -151,4 +152,51 @@ func TestAdmissionWebhookRejectsInvalidGatewayFilter(t *testing.T) {
 	err := k8sClient.Create(context.Background(), bad)
 	g.Expect(err).To(HaveOccurred(), "webhook should reject a filter missing its declared type's sub-object")
 	g.Expect(err.Error()).To(ContainSubstring("requestHeaderModifier is required"))
+}
+
+// TestAdmissionWebhookRejectsNonexistentPriorityClass exercises the real HTTP
+// admission path end to end for spec.scheduling.priorityClassName. This is
+// the one validateScheduling case that genuinely needs a real API server
+// (validateNodeSelector's cases are covered as pure-function unit tests in
+// homeassistant_webhook_test.go instead) — it must actually list real
+// PriorityClass objects, which only exists here, not in a table test.
+func TestAdmissionWebhookRejectsNonexistentPriorityClass(t *testing.T) {
+	g := NewWithT(t)
+	k8sClient, cleanup := setupWebhookTestEnv(t)
+	defer cleanup()
+
+	bad := &hav1.HomeAssistant{
+		ObjectMeta: metav1.ObjectMeta{Name: "ha-bad-priorityclass", Namespace: "default"},
+		Spec: hav1.HomeAssistantSpec{
+			Scheduling: &hav1.SchedulingSpec{PriorityClassName: "does-not-exist"},
+		},
+	}
+
+	err := k8sClient.Create(context.Background(), bad)
+	g.Expect(err).To(HaveOccurred(), "webhook should reject a priorityClassName naming a nonexistent PriorityClass")
+	g.Expect(err.Error()).To(ContainSubstring("does-not-exist"))
+}
+
+// TestAdmissionWebhookAcceptsExistingPriorityClass is the accepting
+// counterpart to TestAdmissionWebhookRejectsNonexistentPriorityClass: a
+// priorityClassName naming a real PriorityClass must be admitted.
+func TestAdmissionWebhookAcceptsExistingPriorityClass(t *testing.T) {
+	g := NewWithT(t)
+	k8sClient, cleanup := setupWebhookTestEnv(t)
+	defer cleanup()
+
+	pc := &schedulingv1.PriorityClass{
+		ObjectMeta: metav1.ObjectMeta{Name: "ha-critical-test"},
+		Value:      1000000,
+	}
+	g.Expect(k8sClient.Create(context.Background(), pc)).To(Succeed())
+
+	good := &hav1.HomeAssistant{
+		ObjectMeta: metav1.ObjectMeta{Name: "ha-good-priorityclass", Namespace: "default"},
+		Spec: hav1.HomeAssistantSpec{
+			Scheduling: &hav1.SchedulingSpec{PriorityClassName: "ha-critical-test"},
+		},
+	}
+
+	g.Expect(k8sClient.Create(context.Background(), good)).To(Succeed())
 }

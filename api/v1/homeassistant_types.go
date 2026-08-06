@@ -99,10 +99,52 @@ type HomeAssistantSpec struct {
 	// +optional
 	DisableDefaultTrustedProxies bool `json:"disableDefaultTrustedProxies,omitempty"`
 
+	// Scheduling controls where the Home Assistant pod is eligible to run and
+	// how it is treated under resource contention, using Kubernetes' own
+	// well-tested scheduling primitives directly (node selector, node/pod
+	// affinity and anti-affinity, tolerations, priority class) rather than a
+	// project-specific abstraction. Ships on the stable spec (not
+	// spec.alpha.*): the operator only passes these fields through to the
+	// generated pod template unchanged, it does not implement any new
+	// scheduling behavior of its own.
+	// +optional
+	Scheduling *SchedulingSpec `json:"scheduling,omitempty"`
+
 	// Alpha groups experimental, unstable fields. Fields here may change or be
 	// removed without a deprecation notice.
 	// +optional
 	Alpha *AlphaSpec `json:"alpha,omitempty"`
+}
+
+// SchedulingSpec declares Kubernetes-native pod scheduling constraints for
+// the Home Assistant pod. Every field is optional and copied verbatim onto
+// the generated StatefulSet's pod template; leaving all of them unset
+// preserves today's freely-schedulable, default-priority behavior.
+type SchedulingSpec struct {
+	// NodeSelector restricts the pod to nodes matching all of these labels.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// Affinity declares node affinity/anti-affinity and pod
+	// affinity/anti-affinity rules, using Kubernetes' own Affinity semantics
+	// unchanged. Both node-level placement (e.g. "prefer nodes with local
+	// NVMe storage") and pod-level positioning relative to other workloads
+	// (e.g. "never share a node with this other deployment") are expressed
+	// through this single field, matching how corev1.Affinity itself groups
+	// NodeAffinity/PodAffinity/PodAntiAffinity together.
+	// +optional
+	Affinity *corev1.Affinity `json:"affinity,omitempty"`
+
+	// Tolerations allows the pod to be scheduled onto nodes with matching
+	// taints that would otherwise repel it.
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// PriorityClassName assigns a PriorityClass to the pod, influencing
+	// scheduling preemption and eviction order under resource contention.
+	// Must name an existing PriorityClass — validated at admission time.
+	// +optional
+	PriorityClassName string `json:"priorityClassName,omitempty"`
 }
 
 // AlphaSpec groups experimental fields that are not yet stable enough for the

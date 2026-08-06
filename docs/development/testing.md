@@ -306,12 +306,11 @@ diagnostics) without affecting any other spec.
 
 ## Coverage Gap Record
 
-No e2e scenario has been intentionally dropped from the gating workflow — all
-26 specs are still verified, split across the seven jobs above.
-This section exists as the place to record it if a future change ever needs
-to drop a scenario from the gating path rather than fitting it into an
-existing (or new) job:
+Every remaining e2e scenario is still verified — the 26 specs above are
+split across the seven jobs above. This section exists as the place to
+record it when a scenario is deliberately not e2e-gated, rather than fitting
+it into an existing (or new) job:
 
 | Scenario | Why not gating | Where (if anywhere) it's still verified |
 |---|---|---|
-| _(none currently)_ | | |
+| `spec.scheduling` (nodeSelector/affinity/tolerations actually influencing real placement) | An e2e job for this was built and run successfully, then deliberately removed: every piece of this operator's own logic (field copy onto the pod template, rollout-on-change diffing, the `SchedulingReady` condition mirroring the pod's own `PodScheduled` condition, admission validation) is already covered by envtest without a real scheduler. The only thing a real cluster adds is confirming that Kubernetes' own scheduler honors `nodeSelector`/affinity/taints — a stable, heavily-tested upstream API contract, not something specific to this operator (unlike e.g. device passthrough's hostPath mount, where non-`privileged` access to a device node is a container-runtime-default assumption, not a documented Kubernetes guarantee, and genuinely needs a real kubelet to confirm). | `internal/controller/scheduling_test.go` and `internal/webhook/v1/admission_envtest_test.go` (both envtest, real API server) |
