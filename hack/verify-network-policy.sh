@@ -46,6 +46,18 @@ assert_netpol() {
     return 1
   fi
 
+  # control-plane: controller-manager alone would also match any other
+  # operator's controller-manager pod in the same namespace — the name
+  # label is what actually scopes this policy to this operator's pod.
+  # (Not asserted as the *only* two keys: the Helm render legitimately
+  # adds app.kubernetes.io/instance here too, which kustomize doesn't.)
+  local name_label
+  name_label="$("$YQ" eval-all "${sel} | .spec.podSelector.matchLabels[\"app.kubernetes.io/name\"]" "$f")"
+  if [ "$name_label" != "homeassistant-operator" ]; then
+    echo "❌ ${suffix}: podSelector.matchLabels['app.kubernetes.io/name'] = '${name_label}', want 'homeassistant-operator'" >&2
+    return 1
+  fi
+
   rule_count="$("$YQ" eval-all "${sel} | .spec.ingress | length" "$f")"
   if [ "$rule_count" != "1" ]; then
     echo "❌ ${suffix}: expected exactly 1 ingress rule, found ${rule_count}" >&2
