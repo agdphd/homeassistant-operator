@@ -1,0 +1,43 @@
+# This NetworkPolicy allows ingress traffic to the validating admission
+# webhook running as part of the controller-manager, from specific
+# namespaces and pods. CR(s) which trigger the webhook only work when
+# applied from namespaces labeled with 'webhook: enabled'.
+#
+# CAVEAT: this namespaceSelector restricts POD-to-pod traffic on the
+# webhook port. On many clusters the API server's own AdmissionReview
+# calls do not originate from a Pod inside a Namespace at all (e.g. a
+# managed control plane fully outside the pod network, or a self-hosted
+# control plane whose apiserver isn't itself a labeled workload) — such
+# traffic is then either unaffected by this policy (common: it never
+# reaches this policy's enforcement point) or would need a
+# cluster-specific ipBlock/CNI mechanism this generic manifest cannot
+# express portably (there is no single control-plane CIDR that works
+# across cluster types/CNIs). This rule intentionally only closes the
+# genuine pod-to-pod gap on this port, matching the same label-gated shape
+# already used for allow-metrics-traffic.yaml's metrics rule — it does not
+# claim to secure admission-controller routing on every possible cluster
+# topology.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: homeassistant-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: allow-webhook-traffic
+  namespace: system
+spec:
+  podSelector:
+    matchLabels:
+      control-plane: controller-manager
+      app.kubernetes.io/name: homeassistant-operator
+  policyTypes:
+    - Ingress
+  ingress:
+    # This allows ingress traffic from any namespace with the label webhook: enabled
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            webhook: enabled # Only from namespaces with this label
+      ports:
+        - port: 9443
+          protocol: TCP

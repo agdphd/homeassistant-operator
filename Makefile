@@ -418,6 +418,10 @@ helm-verify-equivalence: kustomize ## Fail if Kustomize and Helm renders diverge
 helm-verify-rbac-upgrade: kustomize ## Fail if the chart expands RBAC vs the previous release without justification.
 	@KUSTOMIZE=$(KUSTOMIZE) HELM_CHART_DIR=$(HELM_CHART_DIR) HELM_REGISTRY=$(HELM_REGISTRY) ./hack/verify-rbac-upgrade.sh
 
+.PHONY: verify-network-policy
+verify-network-policy: kustomize ## Fail if the operator's own metrics/webhook NetworkPolicy rules are missing/malformed in Kustomize or Helm.
+	@KUSTOMIZE=$(KUSTOMIZE) HELM_CHART_DIR=$(HELM_CHART_DIR) ./hack/verify-network-policy.sh
+
 ## --- Chart quality gates ---------------------------------------------------------
 
 .PHONY: helm-schema-lint
@@ -439,7 +443,7 @@ helm-verify-docs: helm-docs-bin ## Fail if the committed chart README drifted fr
 	@HELM_DOCS=$(HELM_DOCS) HELM_CHART_DIR=$(HELM_CHART_DIR) ./hack/verify-helm-docs.sh
 
 .PHONY: helm-verify
-helm-verify: helm-verify-sync helm-verify-equivalence helm-verify-rbac-upgrade helm-schema-lint helm-unittest helm-verify-docs ## Fast pre-PR gate: all chart checks that do not need a cluster.
+helm-verify: helm-verify-sync helm-verify-equivalence helm-verify-rbac-upgrade verify-network-policy helm-schema-lint helm-unittest helm-verify-docs ## Fast pre-PR gate: all chart checks that do not need a cluster.
 
 ## --- End-to-end / packaging ------------------------------------------------------
 

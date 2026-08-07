@@ -25,3 +25,38 @@ spec:
         - port: 8443
           protocol: TCP
 {{- end }}
+{{- if and .Values.metricsNetworkPolicy.enabled .Values.webhook.enabled }}
+---
+# Restricts ingress to the operator's validating admission webhook to Pods
+# running in namespaces labeled "webhook: enabled". Only Ingress is
+# restricted here — Egress is intentionally left unrestricted (see
+# values.yaml comment).
+# CAVEAT: this only closes the pod-to-pod gap on this port. On many
+# clusters the API server's own AdmissionReview calls aren't themselves
+# Pod-to-Pod traffic (e.g. a managed control plane outside the pod
+# network), so this rule neither helps nor hurts there — there is no
+# single ipBlock/CNI-specific mechanism this generic chart could express
+# portably across cluster types instead.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "homeassistant-operator.fullname" . }}-allow-webhook-traffic
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "homeassistant-operator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "homeassistant-operator.selectorLabels" . | nindent 6 }}
+      control-plane: controller-manager
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              webhook: enabled
+      ports:
+        - port: {{ .Values.webhook.port }}
+          protocol: TCP
+{{- end }}
