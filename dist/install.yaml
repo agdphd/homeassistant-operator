@@ -3332,3 +3332,27 @@ spec:
       control-plane: controller-manager
   policyTypes:
   - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: homeassistant-operator
+  name: homeassistant-operator-allow-webhook-traffic
+  namespace: homeassistant-operator-system
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          webhook: enabled
+    ports:
+    - port: 9443
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: homeassistant-operator
+      control-plane: controller-manager
+  policyTypes:
+  - Ingress

@@ -25,3 +25,32 @@ spec:
         - port: 8443
           protocol: TCP
 {{- end }}
+{{- if and .Values.metricsNetworkPolicy.enabled .Values.webhook.enabled }}
+---
+# Restricts ingress to the operator's validating admission webhook to Pods
+# running in namespaces labeled "webhook: enabled". Only Ingress is
+# restricted here — Egress is intentionally left unrestricted (see
+# values.yaml comment).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "homeassistant-operator.fullname" . }}-allow-webhook-traffic
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "homeassistant-operator.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "homeassistant-operator.selectorLabels" . | nindent 6 }}
+      control-plane: controller-manager
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              webhook: enabled
+      ports:
+        - port: {{ .Values.webhook.port }}
+          protocol: TCP
+{{- end }}
