@@ -24,37 +24,88 @@ rc=0
 
 # assert_netpol <render-file> <name-suffix> <want-port> <want-label-key>
 # Verifies exactly one NetworkPolicy whose name ends in <name-suffix> exists,
-# selects the operator pod, and allows the given port from namespaces
-# carrying <want-label-key>: enabled.
+# selects the operator pod, and allows the given port — and ONLY that port,
+# via ONLY one ingress rule with ONLY one peer — from namespaces carrying
+# <want-label-key>: enabled (checking both the label key and its value, and
+# rejecting any additional/overly-permissive peers or rules that would slip
+# past a check that only inspected the first entry).
 assert_netpol() {
   local f="$1" suffix="$2" want_port="$3" want_label_key="$4"
-  local count selector port label_key
+  local sel="select(.kind==\"NetworkPolicy\" and (.metadata.name | test(\"${suffix}\$\")))"
+  local count selector rule_count from_count port_count port protocol label_value
 
-  count="$("$YQ" eval-all "[select(.kind==\"NetworkPolicy\" and (.metadata.name | test(\"${suffix}\$\")))] | length" "$f")"
+  count="$("$YQ" eval-all "[${sel}] | length" "$f")"
   if [ "$count" != "1" ]; then
     echo "❌ expected exactly 1 NetworkPolicy named *${suffix}, found ${count}" >&2
     return 1
   fi
 
-  selector="$("$YQ" eval-all "select(.kind==\"NetworkPolicy\" and (.metadata.name | test(\"${suffix}\$\"))) | .spec.podSelector.matchLabels[\"control-plane\"]" "$f")"
+  selector="$("$YQ" eval-all "${sel} | .spec.podSelector.matchLabels[\"control-plane\"]" "$f")"
   if [ "$selector" != "controller-manager" ]; then
     echo "❌ ${suffix}: podSelector.matchLabels.control-plane = '${selector}', want 'controller-manager'" >&2
     return 1
   fi
 
-  port="$("$YQ" eval-all "select(.kind==\"NetworkPolicy\" and (.metadata.name | test(\"${suffix}\$\"))) | .spec.ingress[0].ports[0].port" "$f")"
+  rule_count="$("$YQ" eval-all "${sel} | .spec.ingress | length" "$f")"
+  if [ "$rule_count" != "1" ]; then
+    echo "❌ ${suffix}: expected exactly 1 ingress rule, found ${rule_count}" >&2
+    return 1
+  fi
+
+  from_count="$("$YQ" eval-all "${sel} | .spec.ingress[0].from | length" "$f")"
+  if [ "$from_count" != "1" ]; then
+    echo "❌ ${suffix}: expected exactly 1 ingress peer (from), found ${from_count}" >&2
+    return 1
+  fi
+
+  port_count="$("$YQ" eval-all "${sel} | .spec.ingress[0].ports | length" "$f")"
+  if [ "$port_count" != "1" ]; then
+    echo "❌ ${suffix}: expected exactly 1 ingress port, found ${port_count}" >&2
+    return 1
+  fi
+
+  port="$("$YQ" eval-all "${sel} | .spec.ingress[0].ports[0].port" "$f")"
   if [ "$port" != "$want_port" ]; then
     echo "❌ ${suffix}: ingress port = '${port}', want '${want_port}'" >&2
     return 1
   fi
 
-  label_key="$("$YQ" eval-all "select(.kind==\"NetworkPolicy\" and (.metadata.name | test(\"${suffix}\$\"))) | .spec.ingress[0].from[0].namespaceSelector.matchLabels | keys | .[0]" "$f")"
+  protocol="$("$YQ" eval-all "${sel} | .spec.ingress[0].ports[0].protocol" "$f")"
+  if [ "$protocol" != "TCP" ]; then
+    echo "❌ ${suffix}: ingress protocol = '${protocol}', want 'TCP'" >&2
+    return 1
+  fi
+
+  # The sole peer must be exactly a namespaceSelector on <want-label-key>: enabled
+  # — no podSelector/ipBlock alongside it, no extra label keys, no other value.
+  local peer_keys
+  peer_keys="$("$YQ" eval-all "${sel} | .spec.ingress[0].from[0] | keys | .[]" "$f")"
+  if [ "$peer_keys" != "namespaceSelector" ]; then
+    echo "❌ ${suffix}: ingress peer has fields [${peer_keys}], want exactly [namespaceSelector]" >&2
+    return 1
+  fi
+
+  local label_key_count
+  label_key_count="$("$YQ" eval-all "${sel} | .spec.ingress[0].from[0].namespaceSelector.matchLabels | keys | length" "$f")"
+  if [ "$label_key_count" != "1" ]; then
+    echo "❌ ${suffix}: namespaceSelector.matchLabels has ${label_key_count} keys, want exactly 1" >&2
+    return 1
+  fi
+
+  local label_key
+  label_key="$("$YQ" eval-all "${sel} | .spec.ingress[0].from[0].namespaceSelector.matchLabels | keys | .[0]" "$f")"
   if [ "$label_key" != "$want_label_key" ]; then
     echo "❌ ${suffix}: namespaceSelector label key = '${label_key}', want '${want_label_key}'" >&2
     return 1
   fi
 
-  echo "✅ ${suffix}: podSelector/port/${want_label_key}-label all correct (port ${want_port})"
+  label_value="$("$YQ" eval-all "${sel} | .spec.ingress[0].from[0].namespaceSelector.matchLabels[\"${want_label_key}\"]" "$f")"
+  if [ "$label_value" != "enabled" ]; then
+    echo "❌ ${suffix}: namespaceSelector.matchLabels.${want_label_key} = '${label_value}', want 'enabled'" >&2
+    return 1
+  fi
+
+  echo "✅ ${suffix}: exactly 1 rule, 1 peer (${want_label_key}=enabled), 1 port (${want_port}/TCP), podSelector correct"
 }
 
 # assert_absent <render-file> <name-suffix> — fail if a matching NetworkPolicy exists.
