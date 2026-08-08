@@ -61,6 +61,9 @@ linters:
       - linters:
           - dupl
         path: homeassistant(floor|label|area)_controller\.go$
+      - linters:
+          - dupl
+        path: homeassistant(automation|scene|script)_webhook\.go$
     paths:
       - third_party$
       - builtin$

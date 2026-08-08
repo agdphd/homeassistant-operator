@@ -83,4 +83,60 @@ webhooks:
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["homeassistants"]
+  - name: vhomeassistantautomation-v1.kb.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    clientConfig:
+      service:
+        name: {{ $svcName }}
+        namespace: {{ $ns }}
+        path: /validate-ha-homeassistant-io-v1-homeassistantautomation
+    rules:
+      - apiGroups: ["ha.homeassistant.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["homeassistantautomations"]
+  - name: vhomeassistantscene-v1.kb.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    clientConfig:
+      service:
+        name: {{ $svcName }}
+        namespace: {{ $ns }}
+        path: /validate-ha-homeassistant-io-v1-homeassistantscene
+    rules:
+      - apiGroups: ["ha.homeassistant.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["homeassistantscenes"]
+  - name: vhomeassistantscript-v1.kb.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    clientConfig:
+      service:
+        name: {{ $svcName }}
+        namespace: {{ $ns }}
+        path: /validate-ha-homeassistant-io-v1-homeassistantscript
+    rules:
+      - apiGroups: ["ha.homeassistant.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["homeassistantscripts"]
+  - name: vhomeassistantconfiguration-v1.kb.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    clientConfig:
+      service:
+        name: {{ $svcName }}
+        namespace: {{ $ns }}
+        path: /validate-ha-homeassistant-io-v1-homeassistantconfiguration
+    rules:
+      - apiGroups: ["ha.homeassistant.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["homeassistantconfigurations"]
 {{- end }}

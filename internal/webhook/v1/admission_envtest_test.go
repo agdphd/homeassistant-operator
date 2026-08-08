@@ -28,7 +28,9 @@ import (
 
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -44,7 +46,7 @@ import (
 // the webhook server to accept TLS connections before returning a client
 // pointed at it. Callers must invoke the returned cleanup function (e.g. via
 // defer) to stop the manager and the envtest environment.
-func setupWebhookTestEnv(t *testing.T) (client.Client, func()) {
+func setupWebhookTestEnv(t *testing.T) (client.Client, *rest.Config, func()) {
 	t.Helper()
 	g := NewWithT(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -76,6 +78,10 @@ func setupWebhookTestEnv(t *testing.T) (client.Client, func()) {
 	g.Expect(err).NotTo(HaveOccurred())
 
 	g.Expect(SetupHomeAssistantWebhookWithManager(mgr)).To(Succeed())
+	g.Expect(SetupHomeAssistantAutomationWebhookWithManager(mgr)).To(Succeed())
+	g.Expect(SetupHomeAssistantSceneWebhookWithManager(mgr)).To(Succeed())
+	g.Expect(SetupHomeAssistantScriptWebhookWithManager(mgr)).To(Succeed())
+	g.Expect(SetupHomeAssistantConfigurationWebhookWithManager(mgr)).To(Succeed())
 
 	go func() {
 		_ = mgr.Start(ctx)
@@ -98,7 +104,7 @@ func setupWebhookTestEnv(t *testing.T) (client.Client, func()) {
 		cancel()
 		g.Expect(testEnv.Stop()).To(Succeed())
 	}
-	return k8sClient, cleanup
+	return k8sClient, cfg, cleanup
 }
 
 // TestAdmissionWebhookRejectsInvalidNativeTLS exercises the real HTTP admission
@@ -107,7 +113,7 @@ func setupWebhookTestEnv(t *testing.T) (client.Client, func()) {
 // registration/wiring bug.
 func TestAdmissionWebhookRejectsInvalidNativeTLS(t *testing.T) {
 	g := NewWithT(t)
-	k8sClient, cleanup := setupWebhookTestEnv(t)
+	k8sClient, _, cleanup := setupWebhookTestEnv(t)
 	defer cleanup()
 
 	bad := &hav1.HomeAssistant{
@@ -133,7 +139,7 @@ func TestAdmissionWebhookRejectsInvalidNativeTLS(t *testing.T) {
 // as a pure function and would not catch a registration/wiring bug.
 func TestAdmissionWebhookRejectsInvalidGatewayFilter(t *testing.T) {
 	g := NewWithT(t)
-	k8sClient, cleanup := setupWebhookTestEnv(t)
+	k8sClient, _, cleanup := setupWebhookTestEnv(t)
 	defer cleanup()
 
 	// type is a valid enum value (passes the CRD's own OpenAPI schema check),
@@ -162,7 +168,7 @@ func TestAdmissionWebhookRejectsInvalidGatewayFilter(t *testing.T) {
 // PriorityClass objects, which only exists here, not in a table test.
 func TestAdmissionWebhookRejectsNonexistentPriorityClass(t *testing.T) {
 	g := NewWithT(t)
-	k8sClient, cleanup := setupWebhookTestEnv(t)
+	k8sClient, _, cleanup := setupWebhookTestEnv(t)
 	defer cleanup()
 
 	bad := &hav1.HomeAssistant{
@@ -182,7 +188,7 @@ func TestAdmissionWebhookRejectsNonexistentPriorityClass(t *testing.T) {
 // priorityClassName naming a real PriorityClass must be admitted.
 func TestAdmissionWebhookAcceptsExistingPriorityClass(t *testing.T) {
 	g := NewWithT(t)
-	k8sClient, cleanup := setupWebhookTestEnv(t)
+	k8sClient, _, cleanup := setupWebhookTestEnv(t)
 	defer cleanup()
 
 	pc := &schedulingv1.PriorityClass{
@@ -199,4 +205,409 @@ func TestAdmissionWebhookAcceptsExistingPriorityClass(t *testing.T) {
 	}
 
 	g.Expect(k8sClient.Create(context.Background(), good)).To(Succeed())
+}
+
+// TestAdmissionWebhookAutomationIdentifierCollision exercises the real HTTP
+// admission path for HomeAssistantAutomationCustomValidator end to end. The
+// unit tests in homeassistantautomation_webhook_test.go exercise the same
+// logic against a fake client and would not catch a registration/wiring bug
+// or a real List against objects actually persisted in etcd.
+func TestAdmissionWebhookAutomationIdentifierCollision(t *testing.T) {
+	g := NewWithT(t)
+	k8sClient, _, cleanup := setupWebhookTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+	triggers := []hav1.AutomationTrigger{
+		{RawExtension: runtime.RawExtension{Raw: []byte(`{"platform":"time","at":"07:00:00"}`)}},
+	}
+	actions := []hav1.AutomationAction{
+		{RawExtension: runtime.RawExtension{Raw: []byte(`{"service":"light.turn_on"}`)}},
+	}
+
+	t.Run("explicit id collision with existing sibling is rejected and names it", func(t *testing.T) {
+		first := &hav1.HomeAssistantAutomation{
+			ObjectMeta: metav1.ObjectMeta{Name: "first-automation", Namespace: "default"},
+			Spec: hav1.HomeAssistantAutomationSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "morning_lights",
+				Alias:            "Morning lights",
+				Triggers:         triggers,
+				Actions:          actions,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, first)).To(Succeed())
+
+		second := first.DeepCopy()
+		second.ObjectMeta = metav1.ObjectMeta{Name: "second-automation", Namespace: "default"}
+		err := k8sClient.Create(ctx, second)
+		g.Expect(err).To(HaveOccurred(), "webhook should reject a colliding effective id")
+		g.Expect(err.Error()).To(ContainSubstring("first-automation"))
+	})
+
+	t.Run("name-fallback id collision is rejected", func(t *testing.T) {
+		first := &hav1.HomeAssistantAutomation{
+			ObjectMeta: metav1.ObjectMeta{Name: "sharedname", Namespace: "default"},
+			Spec: hav1.HomeAssistantAutomationSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				Alias:            "First",
+				Triggers:         triggers,
+				Actions:          actions,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, first)).To(Succeed())
+
+		second := &hav1.HomeAssistantAutomation{
+			ObjectMeta: metav1.ObjectMeta{Name: "second-with-explicit-id", Namespace: "default"},
+			Spec: hav1.HomeAssistantAutomationSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "sharedname",
+				Alias:            "Second",
+				Triggers:         triggers,
+				Actions:          actions,
+			},
+		}
+		err := k8sClient.Create(ctx, second)
+		g.Expect(err).To(HaveOccurred(), "webhook should catch a name-fallback collision, not just an explicit spec.id match")
+		g.Expect(err.Error()).To(ContainSubstring("sharedname"))
+	})
+
+	t.Run("same id, different HomeAssistant instance admits", func(t *testing.T) {
+		other := &hav1.HomeAssistantAutomation{
+			ObjectMeta: metav1.ObjectMeta{Name: "other-instance-automation", Namespace: "default"},
+			Spec: hav1.HomeAssistantAutomationSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "away"},
+				ID:               "morning_lights",
+				Alias:            "Also morning lights, different instance",
+				Triggers:         triggers,
+				Actions:          actions,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, other)).To(Succeed())
+	})
+
+	t.Run("sibling marked for deletion is not a conflict", func(t *testing.T) {
+		deleting := &hav1.HomeAssistantAutomation{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "deleting-automation", Namespace: "default",
+				Finalizers: []string{"ha.homeassistant.io/test-hold"},
+			},
+			Spec: hav1.HomeAssistantAutomationSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "recycled_id",
+				Alias:            "Being deleted",
+				Triggers:         triggers,
+				Actions:          actions,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, deleting)).To(Succeed())
+		g.Expect(k8sClient.Delete(ctx, deleting)).To(Succeed())
+
+		replacement := &hav1.HomeAssistantAutomation{
+			ObjectMeta: metav1.ObjectMeta{Name: "replacement-automation", Namespace: "default"},
+			Spec: hav1.HomeAssistantAutomationSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "recycled_id",
+				Alias:            "Replacement",
+				Triggers:         triggers,
+				Actions:          actions,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, replacement)).To(Succeed())
+	})
+
+	t.Run("update does not conflict with its own prior state", func(t *testing.T) {
+		self := &hav1.HomeAssistantAutomation{
+			ObjectMeta: metav1.ObjectMeta{Name: "self-update-automation", Namespace: "default"},
+			Spec: hav1.HomeAssistantAutomationSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "self_update_id",
+				Alias:            "Self",
+				Triggers:         triggers,
+				Actions:          actions,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, self)).To(Succeed())
+		self.Spec.Alias = "Self, renamed"
+		g.Expect(k8sClient.Update(ctx, self)).To(Succeed())
+	})
+}
+
+// TestAdmissionWebhookSceneIdentifierCollision is the HomeAssistantScene
+// equivalent of TestAdmissionWebhookAutomationIdentifierCollision.
+func TestAdmissionWebhookSceneIdentifierCollision(t *testing.T) {
+	g := NewWithT(t)
+	k8sClient, _, cleanup := setupWebhookTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+	entities := []hav1.SceneEntity{{EntityID: "light.living_room", State: "on"}}
+
+	t.Run("explicit id collision with existing sibling is rejected and names it", func(t *testing.T) {
+		first := &hav1.HomeAssistantScene{
+			ObjectMeta: metav1.ObjectMeta{Name: "first-scene", Namespace: "default"},
+			Spec: hav1.HomeAssistantSceneSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "movie_night",
+				Entities:         entities,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, first)).To(Succeed())
+
+		second := first.DeepCopy()
+		second.ObjectMeta = metav1.ObjectMeta{Name: "second-scene", Namespace: "default"}
+		err := k8sClient.Create(ctx, second)
+		g.Expect(err).To(HaveOccurred(), "webhook should reject a colliding effective id")
+		g.Expect(err.Error()).To(ContainSubstring("first-scene"))
+	})
+
+	t.Run("name-fallback id collision is rejected", func(t *testing.T) {
+		first := &hav1.HomeAssistantScene{
+			ObjectMeta: metav1.ObjectMeta{Name: "sharedscenename", Namespace: "default"},
+			Spec: hav1.HomeAssistantSceneSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				Entities:         entities,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, first)).To(Succeed())
+
+		second := &hav1.HomeAssistantScene{
+			ObjectMeta: metav1.ObjectMeta{Name: "second-scene-explicit", Namespace: "default"},
+			Spec: hav1.HomeAssistantSceneSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "sharedscenename",
+				Entities:         entities,
+			},
+		}
+		err := k8sClient.Create(ctx, second)
+		g.Expect(err).To(HaveOccurred(), "webhook should catch a name-fallback collision, not just an explicit spec.id match")
+		g.Expect(err.Error()).To(ContainSubstring("sharedscenename"))
+	})
+
+	t.Run("same id, different HomeAssistant instance admits", func(t *testing.T) {
+		other := &hav1.HomeAssistantScene{
+			ObjectMeta: metav1.ObjectMeta{Name: "other-instance-scene", Namespace: "default"},
+			Spec: hav1.HomeAssistantSceneSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "away"},
+				ID:               "movie_night",
+				Entities:         entities,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, other)).To(Succeed())
+	})
+
+	t.Run("sibling marked for deletion is not a conflict", func(t *testing.T) {
+		deleting := &hav1.HomeAssistantScene{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "deleting-scene", Namespace: "default",
+				Finalizers: []string{"ha.homeassistant.io/test-hold"},
+			},
+			Spec: hav1.HomeAssistantSceneSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "recycled_scene_id",
+				Entities:         entities,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, deleting)).To(Succeed())
+		g.Expect(k8sClient.Delete(ctx, deleting)).To(Succeed())
+
+		replacement := &hav1.HomeAssistantScene{
+			ObjectMeta: metav1.ObjectMeta{Name: "replacement-scene", Namespace: "default"},
+			Spec: hav1.HomeAssistantSceneSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "recycled_scene_id",
+				Entities:         entities,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, replacement)).To(Succeed())
+	})
+
+	t.Run("update does not conflict with its own prior state", func(t *testing.T) {
+		self := &hav1.HomeAssistantScene{
+			ObjectMeta: metav1.ObjectMeta{Name: "self-update-scene", Namespace: "default"},
+			Spec: hav1.HomeAssistantSceneSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "self_update_scene_id",
+				Entities:         entities,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, self)).To(Succeed())
+		self.Spec.Icon = "mdi:movie"
+		g.Expect(k8sClient.Update(ctx, self)).To(Succeed())
+	})
+}
+
+// TestAdmissionWebhookScriptIdentifierCollision is the HomeAssistantScript
+// equivalent of TestAdmissionWebhookAutomationIdentifierCollision.
+func TestAdmissionWebhookScriptIdentifierCollision(t *testing.T) {
+	g := NewWithT(t)
+	k8sClient, _, cleanup := setupWebhookTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+	sequence := []hav1.ScriptAction{{RawExtension: runtime.RawExtension{Raw: []byte(`{"service":"backup.create"}`)}}}
+
+	t.Run("explicit id collision with existing sibling is rejected and names it", func(t *testing.T) {
+		first := &hav1.HomeAssistantScript{
+			ObjectMeta: metav1.ObjectMeta{Name: "first-script", Namespace: "default"},
+			Spec: hav1.HomeAssistantScriptSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "backup_now",
+				Alias:            "Backup now",
+				Sequence:         sequence,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, first)).To(Succeed())
+
+		second := first.DeepCopy()
+		second.ObjectMeta = metav1.ObjectMeta{Name: "second-script", Namespace: "default"}
+		err := k8sClient.Create(ctx, second)
+		g.Expect(err).To(HaveOccurred(), "webhook should reject a colliding effective id")
+		g.Expect(err.Error()).To(ContainSubstring("first-script"))
+	})
+
+	t.Run("name-fallback id collision is rejected", func(t *testing.T) {
+		first := &hav1.HomeAssistantScript{
+			ObjectMeta: metav1.ObjectMeta{Name: "sharedscriptname", Namespace: "default"},
+			Spec: hav1.HomeAssistantScriptSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				Alias:            "First",
+				Sequence:         sequence,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, first)).To(Succeed())
+
+		second := &hav1.HomeAssistantScript{
+			ObjectMeta: metav1.ObjectMeta{Name: "second-script-explicit", Namespace: "default"},
+			Spec: hav1.HomeAssistantScriptSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "sharedscriptname",
+				Alias:            "Second",
+				Sequence:         sequence,
+			},
+		}
+		err := k8sClient.Create(ctx, second)
+		g.Expect(err).To(HaveOccurred(), "webhook should catch a name-fallback collision, not just an explicit spec.id match")
+		g.Expect(err.Error()).To(ContainSubstring("sharedscriptname"))
+	})
+
+	t.Run("same id, different HomeAssistant instance admits", func(t *testing.T) {
+		other := &hav1.HomeAssistantScript{
+			ObjectMeta: metav1.ObjectMeta{Name: "other-instance-script", Namespace: "default"},
+			Spec: hav1.HomeAssistantScriptSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "away"},
+				ID:               "backup_now",
+				Alias:            "Also backup now, different instance",
+				Sequence:         sequence,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, other)).To(Succeed())
+	})
+
+	t.Run("sibling marked for deletion is not a conflict", func(t *testing.T) {
+		deleting := &hav1.HomeAssistantScript{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "deleting-script", Namespace: "default",
+				Finalizers: []string{"ha.homeassistant.io/test-hold"},
+			},
+			Spec: hav1.HomeAssistantScriptSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "recycled_script_id",
+				Alias:            "Being deleted",
+				Sequence:         sequence,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, deleting)).To(Succeed())
+		g.Expect(k8sClient.Delete(ctx, deleting)).To(Succeed())
+
+		replacement := &hav1.HomeAssistantScript{
+			ObjectMeta: metav1.ObjectMeta{Name: "replacement-script", Namespace: "default"},
+			Spec: hav1.HomeAssistantScriptSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "recycled_script_id",
+				Alias:            "Replacement",
+				Sequence:         sequence,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, replacement)).To(Succeed())
+	})
+
+	t.Run("update does not conflict with its own prior state", func(t *testing.T) {
+		self := &hav1.HomeAssistantScript{
+			ObjectMeta: metav1.ObjectMeta{Name: "self-update-script", Namespace: "default"},
+			Spec: hav1.HomeAssistantScriptSpec{
+				HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+				ID:               "self_update_script_id",
+				Alias:            "Self",
+				Sequence:         sequence,
+			},
+		}
+		g.Expect(k8sClient.Create(ctx, self)).To(Succeed())
+		self.Spec.Alias = "Self, renamed"
+		g.Expect(k8sClient.Update(ctx, self)).To(Succeed())
+	})
+}
+
+// capturingWarningHandler records every admission warning surfaced by the
+// API server, the same mechanism kubectl uses to print them to the user.
+type capturingWarningHandler struct {
+	messages []string
+}
+
+func (h *capturingWarningHandler) HandleWarningHeaderWithContext(_ context.Context, _ int, _, message string) {
+	h.messages = append(h.messages, message)
+}
+
+// TestAdmissionWebhookConfigurationRecorderWarning exercises the real HTTP
+// admission path for HomeAssistantConfigurationCustomValidator end to end,
+// confirming the warning set in homeassistantconfiguration_webhook_test.go's
+// pure-function tests actually reaches the client over the wire — the unit
+// tests alone would not catch a registration/wiring bug.
+func TestAdmissionWebhookConfigurationRecorderWarning(t *testing.T) {
+	g := NewWithT(t)
+	baseClient, cfg, cleanup := setupWebhookTestEnv(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// A HomeAssistantConfiguration always requires its own HomeAssistantRef
+	// to point somewhere; existence is deliberately not checked at admission
+	// time (see this feature's documented criteria), so no HomeAssistant
+	// object needs to actually exist for this test.
+	baseConfig := hav1.HomeAssistantConfigurationSpec{
+		HomeAssistantRef: hav1.HomeAssistantReference{Name: "home"},
+		Configuration:    "homeassistant:\n",
+	}
+
+	t.Run("only database set produces no warning", func(t *testing.T) {
+		handler := &capturingWarningHandler{}
+		warnCfg := rest.CopyConfig(cfg)
+		warnCfg.WarningHandlerWithContext = handler
+		warnClient, err := client.New(warnCfg, client.Options{Scheme: baseClient.Scheme()})
+		g.Expect(err).NotTo(HaveOccurred())
+
+		obj := &hav1.HomeAssistantConfiguration{
+			ObjectMeta: metav1.ObjectMeta{Name: "cfg-no-warning", Namespace: "default"},
+			Spec:       baseConfig,
+		}
+		obj.Spec.Recorder = &hav1.RecorderConfig{Database: "sqlite:////config/home-assistant_v2.db"}
+		g.Expect(warnClient.Create(ctx, obj)).To(Succeed())
+		g.Expect(handler.messages).To(BeEmpty())
+	})
+
+	t.Run("both database and databaseSecretRef set produces a warning naming databaseSecretRef", func(t *testing.T) {
+		handler := &capturingWarningHandler{}
+		warnCfg := rest.CopyConfig(cfg)
+		warnCfg.WarningHandlerWithContext = handler
+		warnClient, err := client.New(warnCfg, client.Options{Scheme: baseClient.Scheme()})
+		g.Expect(err).NotTo(HaveOccurred())
+
+		obj := &hav1.HomeAssistantConfiguration{
+			ObjectMeta: metav1.ObjectMeta{Name: "cfg-with-warning", Namespace: "default"},
+			Spec:       baseConfig,
+		}
+		obj.Spec.Recorder = &hav1.RecorderConfig{
+			Database:          "sqlite:////config/home-assistant_v2.db",
+			DatabaseSecretRef: &hav1.SecretKeySelector{Name: "db-secret"},
+		}
+		g.Expect(warnClient.Create(ctx, obj)).To(Succeed())
+		g.Expect(handler.messages).To(HaveLen(1))
+		g.Expect(handler.messages[0]).To(ContainSubstring("databaseSecretRef"))
+	})
 }

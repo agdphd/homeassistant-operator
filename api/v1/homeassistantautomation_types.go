@@ -74,6 +74,8 @@ type HomeAssistantAutomationSpec struct {
 
 	// ID is a unique identifier for the automation (used by Home Assistant)
 	// If not specified, will be auto-generated from the CR name
+	// Must contain only lowercase letters, digits, and underscores
+	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9_]*$`
 	// +optional
 	ID string `json:"id,omitempty"`
 

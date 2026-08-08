@@ -465,7 +465,23 @@ func main() {
 				setupLog.Error(err, "unable to create webhook", "webhook", "HomeAssistant")
 				os.Exit(1)
 			}
-			setupLog.Info("validating webhook registered")
+			if err := webhookhav1.SetupHomeAssistantAutomationWebhookWithManager(mgr); err != nil {
+				setupLog.Error(err, "unable to create webhook", "webhook", "HomeAssistantAutomation")
+				os.Exit(1)
+			}
+			if err := webhookhav1.SetupHomeAssistantSceneWebhookWithManager(mgr); err != nil {
+				setupLog.Error(err, "unable to create webhook", "webhook", "HomeAssistantScene")
+				os.Exit(1)
+			}
+			if err := webhookhav1.SetupHomeAssistantScriptWebhookWithManager(mgr); err != nil {
+				setupLog.Error(err, "unable to create webhook", "webhook", "HomeAssistantScript")
+				os.Exit(1)
+			}
+			if err := webhookhav1.SetupHomeAssistantConfigurationWebhookWithManager(mgr); err != nil {
+				setupLog.Error(err, "unable to create webhook", "webhook", "HomeAssistantConfiguration")
+				os.Exit(1)
+			}
+			setupLog.Info("validating webhooks registered")
 		}()
 	}
 	// +kubebuilder:scaffold:builder

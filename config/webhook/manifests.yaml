@@ -24,3 +24,83 @@ webhooks:
     resources:
     - homeassistants
   sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-ha-homeassistant-io-v1-homeassistantautomation
+  failurePolicy: Ignore
+  name: vhomeassistantautomation-v1.kb.io
+  rules:
+  - apiGroups:
+    - ha.homeassistant.io
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - homeassistantautomations
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-ha-homeassistant-io-v1-homeassistantconfiguration
+  failurePolicy: Ignore
+  name: vhomeassistantconfiguration-v1.kb.io
+  rules:
+  - apiGroups:
+    - ha.homeassistant.io
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - homeassistantconfigurations
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-ha-homeassistant-io-v1-homeassistantscene
+  failurePolicy: Ignore
+  name: vhomeassistantscene-v1.kb.io
+  rules:
+  - apiGroups:
+    - ha.homeassistant.io
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - homeassistantscenes
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-ha-homeassistant-io-v1-homeassistantscript
+  failurePolicy: Ignore
+  name: vhomeassistantscript-v1.kb.io
+  rules:
+  - apiGroups:
+    - ha.homeassistant.io
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - homeassistantscripts
+  sideEffects: None
