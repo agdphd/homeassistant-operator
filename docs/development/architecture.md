@@ -216,6 +216,65 @@ type HomeAssistantAutomationReconciler struct {
 
 Tests wire in an `httptest.Server` instead of a real HA instance, keeping unit tests fast and hermetic.
 
+### Validating webhooks: choosing where a rule belongs
+
+A new field-validation rule for any CRD has three possible homes: a **CRD schema**
+constraint (`Pattern`/`Enum`/`MinLength`, or an in-object `x-kubernetes-validations` CEL
+rule), a **`ValidatingWebhook`** (`internal/webhook/v1/`), or the **reconcile loop**
+(status condition + `RequeueAfter`). A rule is a good webhook candidate only when it
+satisfies all five of the following at once — the more of them it fails, the stronger the
+signal that it belongs somewhere else:
+
+1. **No external state beyond the object and, at most, a simple List of its siblings.**
+   A webhook may read the object under validation and List/Get other objects through the
+   API server (e.g. sibling resources of the same Kind, already held in the manager's
+   cache), but it must never make an outbound network call (an HTTP request to Home
+   Assistant, a fetch from GitHub) or write anything.
+2. **Fast and side-effect-free.** A webhook blocks `kubectl apply` synchronously, inside
+   the default ~10s admission timeout. Anything the reconcilers already do through
+   `haclient` (reload, Config Flow) is disqualified by definition.
+3. **Deterministic, independent of apply ordering.** The outcome must never depend on
+   whether some other, related resource happens to exist yet — that concern belongs to
+   the reconcile loop's status-and-`RequeueAfter` pattern, never to a hard admission
+   reject.
+4. **A false reject costs more than a false accept only when the rule can be wrong.**
+   When a rule's correctness genuinely depends on state that might still change, the
+   webhook must be `failurePolicy: Ignore` and/or return an `admission.Warning` instead of
+   rejecting. A hard reject is reserved for rules that are wrong unconditionally.
+5. **A cheaper mechanism doesn't already express it.** If the rule can be written as a
+   `+kubebuilder:validation:Pattern` or an `x-kubernetes-validations` CEL rule on the
+   field itself (e.g. "exactly one of A/B/C must be set" — see `IntegrationValue` in
+   `api/v1/homeassistantintegration_types.go`), use that instead: a CRD schema constraint
+   is cheaper than a webhook round trip, since it's enforced directly by the API server
+   with no call into the operator at all.
+
+**Worked examples from this repository:**
+
+- `spec.id` on `HomeAssistantAutomation`/`Scene`/`Script`, restricted to a safe character
+  set → **CRD `Pattern`**, not a webhook (criterion 5 — a constraint on the field itself,
+  no need to look at any other object).
+- Two `HomeAssistantAutomation` resources colliding on the same effective identifier
+  (`spec.id`, or `metadata.name` when unset) for the same `HomeAssistant` → **webhook**
+  (`homeassistantautomation_webhook.go`) — needs a List of siblings in the same namespace,
+  but that's still a plain cache read, not a network call (criterion 1); a collision is
+  always wrong, so rejecting it (rather than only warning) is justified (criterion 4).
+  This remains a best-effort check, not a uniqueness guarantee: it reads the manager's
+  cache (which can lag a just-written sibling by a short, bounded window) and fails open
+  under `failurePolicy: Ignore`, so it catches the common case rather than closing every
+  possible race.
+- `HomeAssistantConfiguration.spec.recorder` with both `database` and `databaseSecretRef`
+  set → **webhook, but a warning, not a reject**
+  (`homeassistantconfiguration_webhook.go`) — both fields being set is legitimate,
+  already-documented behavior (`databaseSecretRef` takes precedence), so rejecting it
+  would break a valid configuration (criterion 4 cutting the other way).
+- `spec.homeAssistantRef.name` pointing at a `HomeAssistant` that doesn't exist yet →
+  **reconcile loop**, never a webhook (criterion 3 — apply ordering between related
+  resources is never guaranteed; a missing referent is a transient
+  `WaitingForConfiguration`-style state, not a user error).
+- Validating a `HomeAssistantCommunityRepository`'s repository structure against HACS's
+  expected layout → **reconcile loop**, never a webhook (criterion 1 — requires fetching
+  a tarball from `codeload.github.com`).
+
 ## Package structure
 
 ```
