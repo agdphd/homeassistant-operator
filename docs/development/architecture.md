@@ -257,7 +257,11 @@ signal that it belongs somewhere else:
   (`spec.id`, or `metadata.name` when unset) for the same `HomeAssistant` → **webhook**
   (`homeassistantautomation_webhook.go`) — needs a List of siblings in the same namespace,
   but that's still a plain cache read, not a network call (criterion 1); a collision is
-  always wrong, so a hard reject is justified (criterion 4).
+  always wrong, so rejecting it (rather than only warning) is justified (criterion 4).
+  This remains a best-effort check, not a uniqueness guarantee: it reads the manager's
+  cache (which can lag a just-written sibling by a short, bounded window) and fails open
+  under `failurePolicy: Ignore`, so it catches the common case rather than closing every
+  possible race.
 - `HomeAssistantConfiguration.spec.recorder` with both `database` and `databaseSecretRef`
   set → **webhook, but a warning, not a reject**
   (`homeassistantconfiguration_webhook.go`) — both fields being set is legitimate,

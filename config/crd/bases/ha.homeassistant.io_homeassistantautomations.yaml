@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.18.0
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: homeassistantautomations.ha.homeassistant.io
 spec:
   group: ha.homeassistant.io
@@ -120,7 +120,10 @@ spec:
                 description: |-
                   ID is a unique identifier for the automation (used by Home Assistant)
                   If not specified, will be auto-generated from the CR name
-                  Must contain only lowercase letters, digits, and underscores
+                  Must contain only lowercase letters, digits, and underscores. Existing
+                  resources with an id predating this constraint (uppercase letters or
+                  hyphens) keep working until their next update, which will then be
+                  rejected until id is renamed to a conforming value.
                 pattern: ^[a-z][a-z0-9_]*$
                 type: string
               initialState:
