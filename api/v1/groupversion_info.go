@@ -20,8 +20,9 @@ limitations under the License.
 package v1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
 var (
@@ -29,8 +30,34 @@ var (
 	GroupVersion = schema.GroupVersion{Group: "ha.homeassistant.io", Version: "v1"}
 
 	// SchemeBuilder is used to add go types to the GroupVersionKind scheme.
-	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
+	SchemeBuilder = &schemeBuilder{groupVersion: GroupVersion}
 
 	// AddToScheme adds the types in this group-version to the given scheme.
 	AddToScheme = SchemeBuilder.AddToScheme
 )
+
+// schemeBuilder is a minimal, dependency-free replacement for the deprecated
+// sigs.k8s.io/controller-runtime/pkg/scheme.Builder: api packages should only
+// depend on the standard library, k8s.io/apimachinery and other api packages,
+// not on controller-runtime. It keeps the same Register/AddToScheme call
+// shape so the per-Kind `SchemeBuilder.Register(&X{}, &XList{})` calls in
+// this package's *_types.go files don't need to change.
+type schemeBuilder struct {
+	groupVersion   schema.GroupVersion
+	runtimeBuilder runtime.SchemeBuilder
+}
+
+// Register adds one or more objects to the SchemeBuilder so they can be added to a Scheme.
+func (bld *schemeBuilder) Register(object ...runtime.Object) *schemeBuilder {
+	bld.runtimeBuilder = append(bld.runtimeBuilder, func(scheme *runtime.Scheme) error {
+		scheme.AddKnownTypes(bld.groupVersion, object...)
+		metav1.AddToGroupVersion(scheme, bld.groupVersion)
+		return nil
+	})
+	return bld
+}
+
+// AddToScheme adds all registered types to s.
+func (bld *schemeBuilder) AddToScheme(s *runtime.Scheme) error {
+	return bld.runtimeBuilder.AddToScheme(s)
+}
