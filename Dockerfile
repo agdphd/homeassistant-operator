@@ -3,7 +3,7 @@
 # (never emulated), so `go build` cross-compiles natively for TARGETARCH
 # instead of running the whole compile under QEMU — cuts the arm64 leg of the
 # multi-arch CI build from ~25 min to well under a minute.
-FROM --platform=$BUILDPLATFORM golang:1.26.5@sha256:2005724102f45917a63e9d092fc0e4ea56ea575048ce147caad5f5f61502c365 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.0@sha256:65b6f280bf050ec5af12716857e8ea8439d694dbba8f31ceeb7630670071f2bb AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
@@ -33,7 +33,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a \
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:1b7b9f0f0e0a1d2155f531db587cc48ec26aaf97ab64364225f5bf18a054e66a
 WORKDIR /
 COPY --from=builder /workspace/manager .
 USER 65532:65532
