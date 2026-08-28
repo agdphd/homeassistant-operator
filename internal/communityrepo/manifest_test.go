@@ -25,10 +25,10 @@ import (
 // buildExtractedRepo constructs an in-memory ExtractedRepo directly from a
 // relative-path -> content map, without going through FetchTarball/HTTP.
 func buildExtractedRepo(files map[string]string) *ExtractedRepo {
-	repo := &ExtractedRepo{files: map[string][]byte{}, dirs: map[string]bool{}}
+	repo := &ExtractedRepo{files: map[string]fileEntry{}, dirs: map[string]bool{}}
 	for rel, content := range files {
 		clean := path.Clean(rel)
-		repo.files[clean] = []byte(content)
+		repo.files[clean] = fileEntry{content: []byte(content), retained: true, size: int64(len(content))}
 		markParentDirs(repo.dirs, clean)
 	}
 	return repo
