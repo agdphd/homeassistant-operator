@@ -80,7 +80,7 @@ kubectl get homeassistantcommunityrepository <name> -o jsonpath='{.status.lastEr
 
 There is **no per-file size limit** — a single multi-megabyte source file (some
 integrations ship map or icon assets as base64-encoded Python constants) installs
-normally. Two archive-wide limits can still reject a repository:
+normally. Three archive-wide limits can still reject a repository:
 
 - **`archive exceeds the cumulative extraction limit`** — the repository's contents
   add up to more than **100 MiB** once decompressed. The same limit applies again
@@ -91,12 +91,14 @@ normally. Two archive-wide limits can still reject a repository:
   operator keeps in memory while validating. Large files cost no memory here (only
   their presence is recorded), so this is reached by repositories with thousands of
   small files rather than by large ones.
+- **`archive has too many entries`** — more than 20 000 entries in the tar archive.
+  Every entry counts, not just files: directories, and symlinks and other special
+  entries the operator otherwise skips, all count towards the limit. This is well
+  beyond any HACS-compatible extension; check `spec.repository` points at the
+  extension itself and not at a monorepo or a mirror.
 
-If you hit either, pin `spec.ref` to a release tag rather than a branch: source
+If you hit one of these, pin `spec.ref` to a release tag rather than a branch: source
 tarballs of release tags are usually far smaller than a `main` snapshot carrying full
 documentation and media. Note that raising the operator's own memory limit does not
 lift these limits — they are fixed, so that one oversized repository fails on its own
 resource instead of exhausting the operator process shared by every other resource.
-- **`archive has too many entries`** — more than 20 000 files in the repository,
-  which is well beyond any HACS-compatible extension; check `spec.repository` points
-  at the extension itself and not at a monorepo or a mirror.
