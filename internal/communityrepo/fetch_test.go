@@ -25,12 +25,21 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 // buildTarball builds a gzip-compressed tarball containing files, wrapped in a single
 // top-level directory named prefix (mirroring GitHub codeload's "owner-repo-sha/" layout).
 func buildTarball(t *testing.T, prefix string, files map[string]string) []byte {
+	t.Helper()
+	return buildTarballWith(t, prefix, files, nil)
+}
+
+// buildTarballWith additionally writes entries given only by size, filling them with
+// placeholder bytes streamed in chunks — so a multi-megabyte entry never has to be
+// materialized in the test itself.
+func buildTarballWith(t *testing.T, prefix string, files map[string]string, sized map[string]int64) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -52,6 +61,28 @@ func buildTarball(t *testing.T, prefix string, files map[string]string) []byte {
 		}
 		if _, err := tw.Write([]byte(content)); err != nil {
 			t.Fatalf("write content for %s: %v", full, err)
+		}
+	}
+	chunk := bytes.Repeat([]byte("a"), 1024*1024)
+	for name, size := range sized {
+		full := prefix + "/" + name
+		if err := tw.WriteHeader(&tar.Header{
+			Name:     full,
+			Typeflag: tar.TypeReg,
+			Mode:     0o644,
+			Size:     size,
+		}); err != nil {
+			t.Fatalf("write header for %s: %v", full, err)
+		}
+		for remaining := size; remaining > 0; {
+			n := int64(len(chunk))
+			if remaining < n {
+				n = remaining
+			}
+			if _, err := tw.Write(chunk[:n]); err != nil {
+				t.Fatalf("write content for %s: %v", full, err)
+			}
+			remaining -= n
 		}
 	}
 	if err := tw.Close(); err != nil {
@@ -227,39 +258,103 @@ func TestExtractedRepo_ReadDir_Root(t *testing.T) {
 	}
 }
 
-func TestExtractTarGz_RejectsOversizedEntry(t *testing.T) {
-	oversized := bytes.Repeat([]byte("a"), maxExtractedEntryBytes+1)
+// TestFetchTarball_LargeEntryStaysVisible pins the behavior that makes a real HACS
+// integration installable: a file too large to hold in memory is still part of the
+// repository view (it is listed and it exists), only its content is not retained.
+func TestFetchTarball_LargeEntryStaysVisible(t *testing.T) {
+	tarball := buildTarballWith(t, "owner-repo-abc123",
+		map[string]string{"hacs.json": `{"name":"Test"}`},
+		map[string]int64{"assets/resources.py": maxRetainedEntryBytes + 1},
+	)
+	withMockCodeload(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(tarball)
+	})
 
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	if err := tw.WriteHeader(&tar.Header{
-		Name:     "owner-repo-abc123/big-file",
-		Typeflag: tar.TypeReg,
-		Mode:     0o644,
-		Size:     int64(len(oversized)),
-	}); err != nil {
-		t.Fatalf("write header: %v", err)
-	}
-	if _, err := tw.Write(oversized); err != nil {
-		t.Fatalf("write content: %v", err)
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatalf("close tar: %v", err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatalf("close gzip: %v", err)
+	repo, err := FetchTarball(context.Background(), "owner/repo", "main")
+	if err != nil {
+		t.Fatalf("FetchTarball() error = %v", err)
 	}
 
-	if _, err := extractTarGz(bytes.NewReader(buf.Bytes())); err == nil {
-		t.Fatal("expected extractTarGz to reject an oversized entry")
+	if !repo.Exists("assets/resources.py") {
+		t.Error("expected the large entry to exist in the repository view")
+	}
+	entries, err := repo.ReadDir("assets")
+	if err != nil || len(entries) != 1 || entries[0].Name != "resources.py" {
+		t.Errorf("expected ReadDir to list the large entry, got %+v (err = %v)", entries, err)
+	}
+	if _, err := repo.ReadFile("assets/resources.py"); !errors.Is(err, ErrContentNotRetained) {
+		t.Errorf("expected ErrContentNotRetained reading the large entry, got %v", err)
+	}
+	if data, err := repo.ReadFile("hacs.json"); err != nil || len(data) == 0 {
+		t.Errorf("expected small files to keep their content, got %q (err = %v)", data, err)
+	}
+}
+
+// TestValidateAndResolve_IntegrationWithMultiMegabyteSource mirrors integrations that
+// ship generated Python sources holding tens of megabytes of base64-encoded assets
+// (map tiles, icons) in a single file: validation must resolve them like any other.
+func TestValidateAndResolve_IntegrationWithMultiMegabyteSource(t *testing.T) {
+	tarball := buildTarballWith(t, "owner-repo-abc123",
+		map[string]string{
+			"hacs.json": `{"name":"Test","category":"integration"}`,
+			"custom_components/my_integration/manifest.json": `{"domain":"my_integration"}`,
+			"custom_components/my_integration/__init__.py":   "",
+		},
+		map[string]int64{"custom_components/my_integration/resources.py": 30 * 1024 * 1024},
+	)
+	withMockCodeload(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(tarball)
+	})
+
+	repo, err := FetchTarball(context.Background(), "owner/repo", "main")
+	if err != nil {
+		t.Fatalf("FetchTarball() error = %v", err)
+	}
+	resolved, err := ValidateAndResolve(repo, CategoryIntegration)
+	if err != nil {
+		t.Fatalf("ValidateAndResolve() error = %v", err)
+	}
+	if resolved.ResolvedTarget != "my_integration" {
+		t.Errorf("ResolvedTarget = %q, want %q", resolved.ResolvedTarget, "my_integration")
+	}
+}
+
+// TestExtractTarGz_RejectsExceedingRetainedLimit covers the archive shape the
+// cumulative guard cannot see: every entry is small enough for its content to be
+// kept, so the archive stays under maxExtractedTotalBytes while the memory it needs
+// does not. Rejecting it must be a diagnosable error, not an OOM kill.
+func TestExtractTarGz_RejectsExceedingRetainedLimit(t *testing.T) {
+	const entrySize = maxRetainedEntryBytes // retained, being at the threshold
+	entryCount := int(maxRetainedTotalBytes/entrySize) + 2
+
+	sized := map[string]int64{}
+	for i := 0; i < entryCount; i++ {
+		sized[fmt.Sprintf("file-%d", i)] = entrySize
+	}
+	tarball := buildTarballWith(t, "owner-repo-abc123", nil, sized)
+
+	if int64(entryCount)*entrySize > maxExtractedTotalBytes {
+		t.Fatalf("test archive (%d bytes) must stay under the cumulative limit to be meaningful",
+			int64(entryCount)*entrySize)
+	}
+	_, err := extractTarGz(bytes.NewReader(tarball))
+	if err == nil {
+		t.Fatal("expected extractTarGz to reject an archive holding too much content in memory")
+	}
+	// Assert on the reason, not just on failure: a rejection coming from one of the
+	// other guards would mean this archive shape is still unchecked.
+	if !strings.Contains(err.Error(), "keep in memory") {
+		t.Errorf("expected the retained-content guard to reject, got %v", err)
 	}
 }
 
 func TestExtractTarGz_RejectsExceedingCumulativeLimit(t *testing.T) {
-	// Each entry stays well under maxExtractedEntryBytes, but enough of them
-	// together exceed maxExtractedTotalBytes — this must be rejected on its own,
-	// independent of the per-entry guard.
+	// The cumulative guard counts every regular entry, whether or not its content
+	// is retained in memory — it bounds the archive as a whole. Entries here are
+	// far above maxRetainedEntryBytes, so nothing is retained and this exercises
+	// the cumulative guard alone.
 	const chunkSize = 10 * 1024 * 1024 // 10 MiB
 	chunkCount := int(maxExtractedTotalBytes/chunkSize) + 2
 	chunk := bytes.Repeat([]byte("a"), chunkSize)

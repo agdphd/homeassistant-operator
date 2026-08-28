@@ -46,11 +46,31 @@ var CodeloadBaseURL = "https://codeload.github.com"
 // (or a test fixture server), unlike http.DefaultClient which has none.
 var codeloadHTTPClient = &http.Client{Timeout: 60 * time.Second}
 
-// Limits on in-memory extraction. HACS repos are tiny plain-text source trees
-// (typically kilobytes), so these are generous but still bound worst-case memory
-// use against a malicious or misbehaving upstream repository/host.
+// Limits on extraction, bounding worst-case memory use against a malicious or
+// misbehaving upstream repository/host.
+//
+// maxExtractedTotalBytes matches the cumulative limit the init-container/sidecar
+// enforces while materializing the same archive onto the Home Assistant PVC, so a
+// repository that passes validation here cannot fail later for being too big.
+//
+// maxRetainedEntryBytes is deliberately *not* a rejection threshold: this package
+// only ever reads the content of small metadata files (hacs.json,
+// custom_components/*/manifest.json) and merely checks the existence of everything
+// else, so the content of a larger entry is skipped instead of being held in memory.
+// Rejecting on a per-file size would break legitimate repositories: integrations
+// that render device maps (dreame-vacuum, for one) ship generated Python sources
+// with tens of megabytes of base64-encoded assets in a single file.
+//
+// maxRetainedTotalBytes caps what that skipping leaves behind. Because entries above
+// maxRetainedEntryBytes cost no memory, maxExtractedTotalBytes measures the size of
+// the archive and no longer the memory it needs — an archive of many small files can
+// sit far below it and still be held in full. This second ceiling bounds that: an
+// operator container running at the chart's default 128Mi limit must fail one
+// repository with a diagnosable status rather than be OOM-killed, which would restart
+// every reconciler in the cluster and leave no trace on the resource that caused it.
 const (
-	maxExtractedEntryBytes = 20 * 1024 * 1024  // 20 MiB per file
+	maxRetainedEntryBytes  = 1 * 1024 * 1024   // 1 MiB — above this, content is not kept
+	maxRetainedTotalBytes  = 32 * 1024 * 1024  // 32 MiB of content actually held in memory
 	maxExtractedTotalBytes = 100 * 1024 * 1024 // 100 MiB cumulative across the archive
 	maxExtractedEntries    = 20000             // archive entry count
 )
@@ -60,10 +80,21 @@ const (
 // memory — never written to disk — because the operator container runs with
 // readOnlyRootFilesystem and no writable /tmp (a production deployment default;
 // os.MkdirTemp there fails outright, which is exactly the bug this design avoids).
-// HACS repos are tiny plain-text source trees, so holding them in memory is cheap.
+// Every regular file of the archive is listed, but only content below
+// maxRetainedEntryBytes is held (see that constant), which keeps the memory cost
+// close to the size of the repository's metadata rather than of its assets.
 type ExtractedRepo struct {
-	files map[string][]byte // cleaned relative path -> content, regular files only
-	dirs  map[string]bool   // cleaned relative path -> true, includes intermediate dirs
+	files map[string]fileEntry // cleaned relative path -> entry, regular files only
+	dirs  map[string]bool      // cleaned relative path -> true, includes intermediate dirs
+}
+
+// fileEntry is one regular file of the archive. content is nil and retained is
+// false for a file whose content was skipped as too large to hold in memory; size
+// is the declared size either way, so ReadFile can explain itself.
+type fileEntry struct {
+	content  []byte
+	retained bool
+	size     int64
 }
 
 // DirEntry is one entry returned by ExtractedRepo.ReadDir.
@@ -74,12 +105,19 @@ type DirEntry struct {
 
 // ReadFile returns the content of the file at the given path (relative to the
 // repository root), or an error satisfying errors.Is(err, ErrNotExist) if absent.
+// A file larger than maxRetainedEntryBytes exists but has no content held in
+// memory; reading it returns an error satisfying errors.Is(err, ErrContentNotRetained).
 func (e *ExtractedRepo) ReadFile(p string) ([]byte, error) {
 	clean := path.Clean(p)
-	if data, ok := e.files[clean]; ok {
-		return data, nil
+	entry, ok := e.files[clean]
+	if !ok {
+		return nil, fmt.Errorf("%s: %w", p, ErrNotExist)
 	}
-	return nil, fmt.Errorf("%s: %w", p, ErrNotExist)
+	if !entry.retained {
+		return nil, fmt.Errorf("%s (%d bytes, retained up to %d): %w",
+			p, entry.size, maxRetainedEntryBytes, ErrContentNotRetained)
+	}
+	return entry.content, nil
 }
 
 // ReadDir lists the entries directly inside the given directory (relative to the
@@ -136,14 +174,23 @@ func directChild(parent, childPath string) (name string, ok bool) {
 	return rest, true
 }
 
-// Exists reports whether the given path (file or directory) exists.
+// Exists reports whether the given path (file or directory) exists, regardless of
+// whether the file's content was retained.
 func (e *ExtractedRepo) Exists(p string) bool {
 	clean := path.Clean(p)
-	return e.files[clean] != nil || e.dirs[clean]
+	if _, ok := e.files[clean]; ok {
+		return true
+	}
+	return e.dirs[clean]
 }
 
 // ErrNotExist is returned by ExtractedRepo methods for a missing path.
 var ErrNotExist = errors.New("path does not exist")
+
+// ErrContentNotRetained is returned by ReadFile for a file that exists in the
+// archive but whose content was too large to hold in memory (see
+// maxRetainedEntryBytes).
+var ErrContentNotRetained = errors.New("file content was not retained in memory")
 
 // FetchTarball downloads the tarball for repository ("owner/repo") at ref (tag,
 // branch, or commit) and extracts it entirely in memory, stripping the tarball's
@@ -177,11 +224,12 @@ func FetchTarball(ctx context.Context, repository, ref string) (*ExtractedRepo, 
 	return stripTopLevelDir(extracted)
 }
 
-// extractTarGz reads a gzip-compressed tar stream fully into memory, enforcing
-// bounded extraction (maxExtractedEntryBytes/maxExtractedTotalBytes/
-// maxExtractedEntries) against a decompression bomb or a runaway/malicious
-// archive — decompressed size is what matters here (not the compressed transfer
-// size), since gzip can expand many times over.
+// extractTarGz reads a gzip-compressed tar stream into memory, enforcing bounded
+// extraction (maxExtractedTotalBytes/maxExtractedEntries) against a decompression
+// bomb or a runaway/malicious archive — decompressed size is what matters here
+// (not the compressed transfer size), since gzip can expand many times over.
+// Entries above maxRetainedEntryBytes are indexed by path but their content is
+// streamed past rather than held.
 func extractTarGz(r io.Reader) (*ExtractedRepo, error) {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
@@ -189,9 +237,9 @@ func extractTarGz(r io.Reader) (*ExtractedRepo, error) {
 	}
 	defer func() { _ = gz.Close() }()
 
-	extracted := &ExtractedRepo{files: map[string][]byte{}, dirs: map[string]bool{}}
+	extracted := &ExtractedRepo{files: map[string]fileEntry{}, dirs: map[string]bool{}}
 
-	var totalBytes int64
+	var totalBytes, retainedBytes int64
 	var entryCount int
 	tr := tar.NewReader(gz)
 	for {
@@ -219,24 +267,33 @@ func extractTarGz(r io.Reader) (*ExtractedRepo, error) {
 			extracted.dirs[name] = true
 			markParentDirs(extracted.dirs, name)
 		case tar.TypeReg:
-			if hdr.Size > maxExtractedEntryBytes {
-				return nil, fmt.Errorf("tar entry %q is too large (%d bytes, limit %d)",
-					hdr.Name, hdr.Size, maxExtractedEntryBytes)
+			if hdr.Size < 0 {
+				return nil, fmt.Errorf("tar entry %q declares a negative size (%d)", hdr.Name, hdr.Size)
 			}
 			totalBytes += hdr.Size
 			if totalBytes > maxExtractedTotalBytes {
 				return nil, fmt.Errorf("archive exceeds the cumulative extraction limit (%d bytes)", maxExtractedTotalBytes)
 			}
-			// LimitReader is a defense-in-depth backstop against a tar header lying
-			// about hdr.Size while the actual entry stream contains more data.
-			data, err := io.ReadAll(io.LimitReader(tr, maxExtractedEntryBytes+1))
-			if err != nil {
-				return nil, fmt.Errorf("failed to read %q: %w", hdr.Name, err)
+			entry := fileEntry{size: hdr.Size}
+			if hdr.Size <= maxRetainedEntryBytes {
+				retainedBytes += hdr.Size
+				if retainedBytes > maxRetainedTotalBytes {
+					return nil, fmt.Errorf(
+						"archive holds more than %d bytes of small files, too much to keep in memory",
+						maxRetainedTotalBytes)
+				}
+				// Allocate exactly the declared size and read into it: io.ReadAll
+				// would grow its buffer by doubling, transiently costing several
+				// times the file size in an operator container that runs with a
+				// modest memory limit. tar.Reader never yields more than hdr.Size
+				// bytes for an entry, so no separate cap on the read is needed.
+				entry.content = make([]byte, hdr.Size)
+				if _, err := io.ReadFull(tr, entry.content); err != nil {
+					return nil, fmt.Errorf("failed to read %q: %w", hdr.Name, err)
+				}
+				entry.retained = true
 			}
-			if int64(len(data)) > maxExtractedEntryBytes {
-				return nil, fmt.Errorf("tar entry %q is too large (limit %d bytes)", hdr.Name, maxExtractedEntryBytes)
-			}
-			extracted.files[name] = data
+			extracted.files[name] = entry
 			markParentDirs(extracted.dirs, name)
 		default:
 			// Skip symlinks and other special entries — HACS repos are plain source trees.
@@ -283,10 +340,10 @@ func stripTopLevelDir(extracted *ExtractedRepo) (*ExtractedRepo, error) {
 		prefix = d + "/"
 	}
 
-	stripped := &ExtractedRepo{files: map[string][]byte{}, dirs: map[string]bool{}}
-	for p, data := range extracted.files {
+	stripped := &ExtractedRepo{files: map[string]fileEntry{}, dirs: map[string]bool{}}
+	for p, entry := range extracted.files {
 		if rel, ok := strings.CutPrefix(p, prefix); ok && rel != "" {
-			stripped.files[rel] = data
+			stripped.files[rel] = entry
 		}
 	}
 	for p := range extracted.dirs {

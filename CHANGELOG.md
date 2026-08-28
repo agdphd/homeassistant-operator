@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`HomeAssistantCommunityRepository` no longer rejects repositories over a per-file size limit** — validating a repository whose source tree contains a file larger than 20 MiB failed outright with `tar entry ... is too large`, which blocked real HACS integrations: map-rendering integrations legitimately ship a single generated Python source holding tens of megabytes of base64-encoded map tiles and icons (`Tasshack/dreame-vacuum` was the reported case, at ~26 MiB in one file). The per-file limit is gone. The operator only ever reads the content of small metadata files (`hacs.json`, `custom_components/*/manifest.json`) and merely checks that everything else exists, so a larger file is now indexed without holding its content in memory — which also cuts the operator's peak memory use while validating a large repository (~9 MiB instead of ~37 MiB for the repository above), relevant under the chart's default 128Mi limit. Three archive-wide limits are enforced instead, all fixed and none requiring you to raise the operator's memory limit: 100 MiB cumulative (matching the limit the in-pod init-container/sidecar applies when materializing the same files, so validation and installation agree), 20 000 entries, and a new 32 MiB ceiling on content actually held in memory — that last one covers the archive shape the cumulative limit cannot see (thousands of small files, each cheap, adding up), so such a repository now fails with a diagnosable status on its own resource rather than getting the operator OOM-killed and restarting every reconciler in the cluster. Only pre-release builds of the community-repository feature were affected; see [Troubleshooting](https://przemekhys.github.io/homeassistant-operator/reference/troubleshooting/) for the errors these limits produce.
+
 ### Changed
 
 - **E2E test suite optimization** — CI e2e tests now run faster; see `docs/development/testing.md` (and `.claude/TESTING.md` for AI guidance) for details.
