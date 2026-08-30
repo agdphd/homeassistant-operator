@@ -15,7 +15,11 @@ Every submission helps shape the project.
 
 ## Pull Request Guidelines
 
-1. **Fork & PR** — work on your fork and submit a Pull Request against `main`
+1. **Fork & PR** — work on your fork and pick the right target branch
+   (see [Branching & Releases](branching.md)):
+   - new functionality (`feat:`, anything `spec.alpha.*` / `v1alpha1`,
+     breaking changes) → target **`dev`**
+   - bug fixes for the current release (`fix:`, `docs:`, `perf:`) → target **`main`**
 2. **One PR = one change** — don't mix unrelated changes
 3. **Tests required** — `make test` must pass; new behavior needs new tests
 4. **Linting** — `make lint` must report no errors
