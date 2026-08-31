@@ -181,10 +181,15 @@ func (r *HomeAssistantConfigurationReconciler) reconcileHTTPConfig(
 
 	// httpPathAPI from here on.
 	if !httpReadable {
-		r.setHTTPConfigStatus(ctx, config, hav1.HTTPConfigSourceAPI, metav1.ConditionTrue,
-			reasonHTTPConfigApplied,
-			"http: section is an unreadable include and stays in configuration.yaml; "+
-				"convert it to inline keys to have the operator manage it via the API")
+		// The http: section is an external include the operator cannot read, so
+		// it cannot be delivered through the API. It stays in configuration.yaml,
+		// where this Home Assistant version ignores it — the http settings are
+		// not in effect until the user inlines the keys.
+		r.setHTTPConfigStatus(ctx, config, hav1.HTTPConfigSourceYAML, metav1.ConditionFalse,
+			reasonHTTPConfigUnreadable,
+			"http: is an external include the operator cannot deliver via the API; "+
+				"Home Assistant is ignoring it. Inline the keys into spec.configuration "+
+				"so the operator can apply them.")
 		return ctrl.Result{}
 	}
 

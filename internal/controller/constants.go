@@ -54,6 +54,7 @@ const (
 	reasonHTTPConfigRejected      = "Rejected"
 	reasonHTTPConfigForeign       = "ForeignPendingChange"
 	reasonHTTPConfigWaiting       = "WaitingForHomeAssistant"
+	reasonHTTPConfigUnreadable    = "UnreadableSection"
 	eventHTTPConfigRejected       = "HTTPConfigRejected"
 	eventHTTPConfigForeignChange  = "HTTPConfigForeignChange"
 

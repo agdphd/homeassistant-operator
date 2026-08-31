@@ -311,6 +311,61 @@ func TestReconcileHTTPConfig_YAMLPath(t *testing.T) {
 	}
 }
 
+// The path is re-decided every reconcile with nothing carried between calls, so
+// a Home Assistant that gains the API (2026.8 upgrade) — or loses it (rollback)
+// — is followed without any operator restart or leftover state.
+func TestReconcileHTTPConfig_PathSwitchIsStateless(t *testing.T) {
+	m := newMockHA(t, haStable(nil))
+	r, _, cfg := newHTTPConfigTestReconciler(m)
+	apiDec := func() httpConfigDecision {
+		resp, _ := m.newClient("").GetHTTPConfig(context.Background(), "tok")
+		return httpConfigDecision{path: httpPathAPI, token: "tok", resp: resp}
+	}
+	yamlDec := httpConfigDecision{path: httpPathYAML, token: "tok"}
+
+	// old HA -> new HA -> old HA again
+	r.reconcileHTTPConfig(context.Background(), cfg, haObj(), yamlDec, nil, true)
+	if cfg.Status.HTTPConfigSource != hav1.HTTPConfigSourceYAML {
+		t.Fatalf("step 1 source = %q", cfg.Status.HTTPConfigSource)
+	}
+	r.reconcileHTTPConfig(context.Background(), cfg, haObj(), apiDec(), nil, true)
+	if cfg.Status.HTTPConfigSource != hav1.HTTPConfigSourceAPI {
+		t.Fatalf("step 2 source = %q", cfg.Status.HTTPConfigSource)
+	}
+	if c := condOf(cfg); c == nil || c.Reason != reasonHTTPConfigApplied {
+		t.Fatalf("step 2 condition = %+v", c)
+	}
+	r.reconcileHTTPConfig(context.Background(), cfg, haObj(), yamlDec, nil, true)
+	if cfg.Status.HTTPConfigSource != hav1.HTTPConfigSourceYAML {
+		t.Fatalf("step 3 source = %q", cfg.Status.HTTPConfigSource)
+	}
+	if c := condOf(cfg); c == nil || c.Reason != reasonHTTPConfigManagedInYAML {
+		t.Fatalf("step 3 condition = %+v", c)
+	}
+	if m.countConfigure() != 0 {
+		t.Fatalf("YAML steps must not write to HA")
+	}
+}
+
+// An unreadable http: include is reported as not applied — it stays in
+// configuration.yaml where a 2026.8+ Home Assistant ignores it.
+func TestReconcileHTTPConfig_UnreadableSection(t *testing.T) {
+	m := newMockHA(t, haStable(nil))
+	r, _, cfg := newHTTPConfigTestReconciler(m)
+	resp, _ := m.newClient("").GetHTTPConfig(context.Background(), "tok")
+	r.reconcileHTTPConfig(context.Background(), cfg, haObj(),
+		httpConfigDecision{path: httpPathAPI, token: "tok", resp: resp}, nil, false)
+	if c := condOf(cfg); c == nil || c.Status != metav1.ConditionFalse || c.Reason != reasonHTTPConfigUnreadable {
+		t.Fatalf("condition = %+v", c)
+	}
+	if cfg.Status.HTTPConfigSource != hav1.HTTPConfigSourceYAML {
+		t.Fatalf("source = %q (unreadable section stays in YAML)", cfg.Status.HTTPConfigSource)
+	}
+	if m.countConfigure() != 0 {
+		t.Fatalf("must not configure an unreadable section")
+	}
+}
+
 // Cannot probe yet -> Unknown condition, requeue, no source set.
 func TestReconcileHTTPConfig_Undetermined(t *testing.T) {
 	r, _, cfg := newHTTPConfigTestReconciler(nil)

@@ -52,7 +52,7 @@ Controls how changes are applied.
 
 | Value | Behaviour |
 |-------|-----------|
-| `auto` (default) | Hot-reload for `automation`, `script`, `scene`, `logger`, `input_*`, `template`, `zone`. Restart for `homeassistant`, `http`, `mqtt`, and unknown sections. |
+| `auto` (default) | Hot-reload for `automation`, `script`, `scene`, `logger`, `input_*`, `template`, `zone`. Restart for `homeassistant`, `mqtt`, and unknown sections. `http` triggers a pod restart **only on the YAML delivery path** (older Home Assistant); on the API path Home Assistant restarts its own process when needed and the operator does not roll the pod. |
 | `hot-reload` | Always attempt hot-reload, regardless of which sections changed. |
 | `restart` | Always trigger a rolling restart. |
 
@@ -65,7 +65,7 @@ Set to `false` to disable automatic reload/restart on configuration changes. Def
 When `reloadStrategy: auto` is set, the operator parses the YAML diff between the old and new configuration:
 
 - **Hot-reload** (no restart): `automation`, `script`, `scene`, `logger`, `input_boolean`, `input_number`, `input_text`, `input_select`, `input_datetime`, `template`, `zone`
-- **Restart** (rolling restart): `homeassistant`, `http`, `mqtt`, and any unknown top-level key
+- **Restart** (rolling restart): `homeassistant`, `mqtt`, and any unknown top-level key. `http` too — **but only on the YAML delivery path**. On Home Assistant 2026.8+ the `http:` section is delivered through the API (see [HTTP configuration](#http-configuration-on-home-assistant-20268)) and is excluded from this diff entirely; Home Assistant restarts its own process if the change needs it, without a pod rollout from the operator.
 
 If a single change touches both categories, the operator restarts (safer path).
 
