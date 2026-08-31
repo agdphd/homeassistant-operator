@@ -102,17 +102,6 @@ func validateHomeAssistantTLS(spec *hav1.HomeAssistantSpec) (admission.Warnings,
 	var warnings admission.Warnings
 	var errs []string
 
-	// Native TLS (alpha) requires an issuer or a bring-your-own Secret.
-	if n := nativeTLS(spec); n != nil && n.Enabled {
-		if n.IssuerRef == nil && n.SecretName == "" {
-			errs = append(errs, "spec.alpha.tls.native requires issuerRef or secretName when enabled")
-		}
-		if n.IssuerRef != nil && n.SecretName != "" {
-			warnings = append(warnings, "spec.alpha.tls.native: secretName (bring-your-own) overrides issuerRef")
-		}
-		errs = append(errs, validateIssuerKind("spec.alpha.tls.native.issuerRef", n.IssuerRef)...)
-	}
-
 	// Gateway exposure requires a host and an attach point.
 	if g := spec.Gateway; g != nil && g.Enabled {
 		if g.Host == "" {
@@ -372,13 +361,6 @@ func validateIssuerKind(path string, ref *hav1.IssuerReference) []string {
 	}
 	if ref.Kind != "Issuer" && ref.Kind != "ClusterIssuer" {
 		return []string{fmt.Sprintf("%s.kind must be Issuer or ClusterIssuer, got %q", path, ref.Kind)}
-	}
-	return nil
-}
-
-func nativeTLS(spec *hav1.HomeAssistantSpec) *hav1.NativeTLSAlphaSpec {
-	if spec.Alpha != nil && spec.Alpha.TLS != nil {
-		return spec.Alpha.TLS.Native
 	}
 	return nil
 }

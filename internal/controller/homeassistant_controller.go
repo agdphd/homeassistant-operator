@@ -264,6 +264,13 @@ func (r *HomeAssistantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return r.updateStatusFailed(ctx, ha, err)
 	}
 
+	// Transitional: clean up after the removed native TLS feature (spec.alpha.tls)
+	// before reconcileTLS, so a stale CertManagerAvailable is dropped before the
+	// edge-TLS gate below may legitimately re-add it. Best-effort; never blocks.
+	if err := r.reconcileNativeTLSRemoval(ctx, ha); err != nil {
+		log.Error(err, "Failed to clean up removed native TLS state")
+	}
+
 	// Reconcile TLS / cert-manager integration (opt-in). Missing cert-manager is
 	// never an error: it degrades to a status condition + requeue so the rest of
 	// the reconcile (and other resources) keep working. The requeue itself is
@@ -823,33 +830,6 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 		})
 	}
 
-	// Mount the native TLS Secret (cert-manager-issued or bring-your-own) when
-	// native TLS is enabled and the Secret exists. HA reads the certificate from
-	// /config/ssl via http.ssl_certificate/ssl_key (injected by the configuration
-	// controller). Gating on the Secret's existence keeps the pod from getting
-	// stuck pending on a not-yet-issued certificate.
-	nativeTLSCertHash := ""
-	if n := nativeTLS(ha); n != nil && n.Enabled {
-		tlsSecretName := nativeTLSSecretName(ha)
-		tlsSecret := &corev1.Secret{}
-		getErr := r.Get(ctx, types.NamespacedName{Name: tlsSecretName, Namespace: ha.Namespace}, tlsSecret)
-		if getErr == nil {
-			volumes = append(volumes, corev1.Volume{
-				Name: "ha-native-tls",
-				VolumeSource: corev1.VolumeSource{
-					Secret: &corev1.SecretVolumeSource{SecretName: tlsSecretName},
-				},
-			})
-			volumeMounts = append(volumeMounts, corev1.VolumeMount{
-				Name:      "ha-native-tls",
-				MountPath: "/config/ssl",
-				ReadOnly:  true,
-			})
-			// Hash the certificate so rotation triggers a rolling restart.
-			nativeTLSCertHash = calculateConfigHash(string(tlsSecret.Data["tls.crt"]))
-		}
-	}
-
 	// Device passthrough (spec.alpha.devices): mount declared host device
 	// nodes (e.g. /dev/ttyACM0 for a Zigbee/Z-Wave USB coordinator) into the
 	// home-assistant container. Volumes are named by index rather than
@@ -895,21 +875,9 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 	}
 	// If StatefulSet doesn't exist (NotFound error), existingAnnotations will be empty - this is correct
 
-	// Native TLS certificate hash: set when active (rotation → rollout), removed
-	// when native TLS is disabled or the Secret is gone (so the pod reverts).
-	if nativeTLSCertHash != "" {
-		existingAnnotations[nativeTLSHashAnnotationKey] = nativeTLSCertHash
-	} else {
-		delete(existingAnnotations, nativeTLSHashAnnotationKey)
-	}
-
-	// Probes must speak whatever scheme HA is actually serving: once native TLS
-	// is active, HA listens with HTTPS on the same port, and a plain-HTTP probe
-	// would just see a TLS handshake and fail the pod.
+	// Probes always speak plain HTTP: HA serves HTTP inside the cluster and TLS
+	// is terminated at the edge (Ingress / Gateway API), never in the HA pod.
 	probeScheme := corev1.URISchemeHTTP
-	if nativeTLSActive(ha) {
-		probeScheme = corev1.URISchemeHTTPS
-	}
 
 	// Community repository sidecar: only injected when at least one
 	// HomeAssistantCommunityRepository actually targets this instance — the stable
@@ -1701,22 +1669,6 @@ func needsUpdate(current, desired *appsv1.StatefulSet) bool {
 	if currentHash != desiredHash {
 		log.V(1).Info("Config hash differs",
 			"current", currentHash, "desired", desiredHash)
-		return true
-	}
-
-	// Compare native-tls-hash annotation: catches certificate rotation, TLS
-	// disablement, or Secret removal even when the volume count is unchanged
-	// (same Secret name, new/removed content).
-	currentTLSHash, desiredTLSHash := "", ""
-	if currentAnnotations != nil {
-		currentTLSHash = currentAnnotations[nativeTLSHashAnnotationKey]
-	}
-	if desiredAnnotations != nil {
-		desiredTLSHash = desiredAnnotations[nativeTLSHashAnnotationKey]
-	}
-	if currentTLSHash != desiredTLSHash {
-		log.V(1).Info("Native TLS hash differs",
-			"current", currentTLSHash, "desired", desiredTLSHash)
 		return true
 	}
 

@@ -77,16 +77,17 @@ func newTLSTestReconciler(t *testing.T, certManagerPresent bool, objs ...client.
 	}
 }
 
-func nativeTLSHA(name string) *hav1.HomeAssistant {
+// ingressTLSHA returns a HomeAssistant that requests edge (Ingress) TLS via an
+// issuerRef — i.e. a mode that needs cert-manager.
+func ingressTLSHA(name string) *hav1.HomeAssistant {
 	return &hav1.HomeAssistant{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
 		Spec: hav1.HomeAssistantSpec{
-			Alpha: &hav1.AlphaSpec{
-				TLS: &hav1.TLSAlphaSpec{
-					Native: &hav1.NativeTLSAlphaSpec{
-						Enabled:   true,
-						IssuerRef: &hav1.IssuerReference{Name: "test-issuer", Kind: "ClusterIssuer"},
-					},
+			Ingress: &hav1.IngressSpec{
+				Enabled: true,
+				TLS: &hav1.IngressTLSSpec{
+					Enabled:   true,
+					IssuerRef: &hav1.IssuerReference{Name: "test-issuer", Kind: "ClusterIssuer"},
 				},
 			},
 		},
@@ -105,23 +106,8 @@ func TestCertManagerRequired(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "native TLS enabled with issuer",
-			ha:   nativeTLSHA("ha"),
-			want: true,
-		},
-		{
-			name: "native TLS enabled bring-your-own secret does not need cert-manager",
-			ha: &hav1.HomeAssistant{Spec: hav1.HomeAssistantSpec{Alpha: &hav1.AlphaSpec{
-				TLS: &hav1.TLSAlphaSpec{Native: &hav1.NativeTLSAlphaSpec{Enabled: true, SecretName: "byo"}},
-			}}},
-			want: false,
-		},
-		{
 			name: "ingress TLS with issuerRef needs cert-manager",
-			ha: &hav1.HomeAssistant{Spec: hav1.HomeAssistantSpec{Ingress: &hav1.IngressSpec{
-				Enabled: true,
-				TLS:     &hav1.IngressTLSSpec{Enabled: true, IssuerRef: &hav1.IssuerReference{Name: "i"}},
-			}}},
+			ha:   ingressTLSHA("ha"),
 			want: true,
 		},
 		{
@@ -197,10 +183,11 @@ func TestCertManagerAvailable(t *testing.T) {
 	})
 }
 
-// TestReconcileTLSDegradation covers graceful degradation: TLS requested but cert-manager
-// absent must degrade gracefully (condition + requeue, no error, no certificate).
+// TestReconcileTLSDegradation covers graceful degradation: an edge TLS mode is
+// requested but cert-manager is absent — degrade gracefully (condition + requeue,
+// no error).
 func TestReconcileTLSDegradation(t *testing.T) {
-	ha := nativeTLSHA("home")
+	ha := ingressTLSHA("home")
 	r := newTLSTestReconciler(t, false, ha)
 
 	res, err := r.reconcileTLS(context.Background(), ha)
@@ -214,10 +201,6 @@ func TestReconcileTLSDegradation(t *testing.T) {
 	cond := meta.FindStatusCondition(ha.Status.Conditions, conditionCertManagerAvailable)
 	if cond == nil || cond.Status != metav1.ConditionFalse || cond.Reason != reasonCertManagerNotInstalled {
 		t.Fatalf("expected CertManagerAvailable=False/%s, got %+v", reasonCertManagerNotInstalled, cond)
-	}
-	tlsCond := meta.FindStatusCondition(ha.Status.Conditions, conditionTLSReady)
-	if tlsCond == nil || tlsCond.Status != metav1.ConditionUnknown {
-		t.Fatalf("expected TLSReady=Unknown, got %+v", tlsCond)
 	}
 }
 
@@ -240,7 +223,7 @@ func TestReconcileTLSNoopWhenNoTLSRequested(t *testing.T) {
 // TestReconcileTLSAvailableSetsCondition verifies the available path records the
 // CertManagerAvailable=True condition.
 func TestReconcileTLSAvailableSetsCondition(t *testing.T) {
-	ha := nativeTLSHA("home")
+	ha := ingressTLSHA("home")
 	r := newTLSTestReconciler(t, true, ha)
 
 	if _, err := r.reconcileTLS(context.Background(), ha); err != nil {
@@ -252,237 +235,123 @@ func TestReconcileTLSAvailableSetsCondition(t *testing.T) {
 	}
 }
 
-// getCertificate fetches the operator-managed native TLS Certificate.
-func getCertificate(
-	t *testing.T, r *HomeAssistantReconciler, ha *hav1.HomeAssistant,
-) (*unstructured.Unstructured, error) {
-	t.Helper()
-	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(certificateGVK)
-	err := r.Get(context.Background(), client.ObjectKey{Name: nativeTLSCertificateName(ha), Namespace: ha.Namespace}, u)
-	return u, err
+// nativeCert builds the (now-obsolete) operator-managed native TLS Certificate
+// object for ha, as a transition-era instance would still have on the cluster.
+func nativeCert(ha *hav1.HomeAssistant) *unstructured.Unstructured {
+	c := &unstructured.Unstructured{Object: map[string]interface{}{}}
+	c.SetGroupVersionKind(certificateGVK)
+	c.SetName(nativeTLSCertificateName(ha))
+	c.SetNamespace(ha.Namespace)
+	return c
 }
 
-// TestReconcileTLSCreatesNativeCertificate: with cert-manager available and
-// native TLS on, the operator creates a Certificate (with the Service FQDN SAN)
-// and reports TLSReady=False until it is issued.
-func TestReconcileTLSCreatesNativeCertificate(t *testing.T) {
-	ha := nativeTLSHA("home")
-	r := newTLSTestReconciler(t, true, ha)
-
-	res, err := r.reconcileTLS(context.Background(), ha)
-	if err != nil {
-		t.Fatalf("reconcileTLS error: %v", err)
-	}
-	if res.RequeueAfter <= 0 {
-		t.Fatalf("expected requeue while waiting for issuance, got %v", res.RequeueAfter)
-	}
-
-	cert, err := getCertificate(t, r, ha)
-	if err != nil {
-		t.Fatalf("expected Certificate to be created: %v", err)
-	}
-	dnsNames, _, _ := unstructured.NestedStringSlice(cert.Object, "spec", "dnsNames")
-	wantFQDN := "home.default.svc.cluster.local"
-	found := false
-	for _, d := range dnsNames {
-		if d == wantFQDN {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("expected Service FQDN %q in dnsNames %v", wantFQDN, dnsNames)
-	}
-	issuer, _, _ := unstructured.NestedString(cert.Object, "spec", "issuerRef", "name")
-	if issuer != "test-issuer" {
-		t.Fatalf("expected issuerRef.name=test-issuer, got %q", issuer)
-	}
-
-	tlsCond := meta.FindStatusCondition(ha.Status.Conditions, conditionTLSReady)
-	if tlsCond == nil || tlsCond.Status != metav1.ConditionFalse || tlsCond.Reason != reasonCertificateNotIssued {
-		t.Fatalf("expected TLSReady=False/%s, got %+v", reasonCertificateNotIssued, tlsCond)
-	}
-}
-
-// TestReconcileTLSNativeReady: a Certificate reporting Ready=True flips TLSReady.
-func TestReconcileTLSNativeReady(t *testing.T) {
-	ha := nativeTLSHA("home")
-	cert := &unstructured.Unstructured{Object: map[string]interface{}{}}
-	cert.SetGroupVersionKind(certificateGVK)
-	cert.SetName(nativeTLSCertificateName(ha))
-	cert.SetNamespace(ha.Namespace)
-	cert.Object["spec"] = desiredNativeCertificateSpec(ha)
-	_ = unstructured.SetNestedSlice(cert.Object, []interface{}{
-		map[string]interface{}{"type": "Ready", "status": "True"},
-	}, "status", "conditions")
-
-	r := newTLSTestReconciler(t, true, ha, cert)
-	if _, err := r.reconcileTLS(context.Background(), ha); err != nil {
-		t.Fatalf("reconcileTLS error: %v", err)
-	}
-	tlsCond := meta.FindStatusCondition(ha.Status.Conditions, conditionTLSReady)
-	if tlsCond == nil || tlsCond.Status != metav1.ConditionTrue || tlsCond.Reason != reasonTLSReady {
-		t.Fatalf("expected TLSReady=True/%s, got %+v", reasonTLSReady, tlsCond)
-	}
-}
-
-// TestReconcileTLSNativeBYO: bring-your-own Secret needs no cert-manager and
-// creates no Certificate.
-func TestReconcileTLSNativeBYO(t *testing.T) {
-	ha := &hav1.HomeAssistant{
-		ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default"},
-		Spec: hav1.HomeAssistantSpec{Alpha: &hav1.AlphaSpec{TLS: &hav1.TLSAlphaSpec{
-			Native: &hav1.NativeTLSAlphaSpec{Enabled: true, SecretName: "my-tls"},
-		}}},
-	}
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "my-tls", Namespace: "default"},
-		Data:       map[string][]byte{"tls.crt": []byte("cert"), "tls.key": []byte("key")},
-	}
-	r := newTLSTestReconciler(t, false, ha, secret) // cert-manager absent — must not matter
-
-	if _, err := r.reconcileTLS(context.Background(), ha); err != nil {
-		t.Fatalf("reconcileTLS error: %v", err)
-	}
-	tlsCond := meta.FindStatusCondition(ha.Status.Conditions, conditionTLSReady)
-	if tlsCond == nil || tlsCond.Status != metav1.ConditionTrue || tlsCond.Reason != reasonUsingProvidedSecret {
-		t.Fatalf("expected TLSReady=True/%s, got %+v", reasonUsingProvidedSecret, tlsCond)
-	}
-	if _, err := getCertificate(t, r, ha); err == nil {
-		t.Fatal("expected no operator-managed Certificate for bring-your-own secret")
-	}
-}
-
-// TestReconcileTLSNativeBYOMissingSecret: a bring-your-own Secret that doesn't
-// exist (or lacks tls.crt/tls.key) must not report TLSReady=True.
-func TestReconcileTLSNativeBYOMissingSecret(t *testing.T) {
-	ha := &hav1.HomeAssistant{
-		ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default"},
-		Spec: hav1.HomeAssistantSpec{Alpha: &hav1.AlphaSpec{TLS: &hav1.TLSAlphaSpec{
-			Native: &hav1.NativeTLSAlphaSpec{Enabled: true, SecretName: "my-tls"},
-		}}},
-	}
-	r := newTLSTestReconciler(t, false, ha) // Secret "my-tls" does not exist
-
-	if _, err := r.reconcileTLS(context.Background(), ha); err != nil {
-		t.Fatalf("reconcileTLS error: %v", err)
-	}
-	tlsCond := meta.FindStatusCondition(ha.Status.Conditions, conditionTLSReady)
-	if tlsCond == nil || tlsCond.Status != metav1.ConditionFalse || tlsCond.Reason != reasonProvidedSecretInvalid {
-		t.Fatalf("expected TLSReady=False/%s, got %+v", reasonProvidedSecretInvalid, tlsCond)
-	}
-}
-
-// TestReconcileTLSCleanupOnDisable: disabling native TLS deletes the managed cert.
-func TestReconcileTLSCleanupOnDisable(t *testing.T) {
-	ha := &hav1.HomeAssistant{ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default"}}
-	cert := &unstructured.Unstructured{Object: map[string]interface{}{}}
-	cert.SetGroupVersionKind(certificateGVK)
-	cert.SetName(nativeTLSCertificateName(ha))
-	cert.SetNamespace(ha.Namespace)
-
-	r := newTLSTestReconciler(t, true, ha, cert)
-	if _, err := r.reconcileTLS(context.Background(), ha); err != nil {
-		t.Fatalf("reconcileTLS error: %v", err)
-	}
-	if _, err := getCertificate(t, r, ha); err == nil {
-		t.Fatal("expected orphaned Certificate to be deleted when native TLS is off")
-	}
-}
-
-func withTLSReady(ha *hav1.HomeAssistant) *hav1.HomeAssistant {
+func withCondition(ha *hav1.HomeAssistant, condType string) *hav1.HomeAssistant {
 	meta.SetStatusCondition(&ha.Status.Conditions, metav1.Condition{
-		Type: conditionTLSReady, Status: metav1.ConditionTrue, Reason: reasonTLSReady,
+		Type: condType, Status: metav1.ConditionTrue, Reason: "Test",
 	})
 	return ha
 }
 
-// TestNativeTLSActiveAndScheme: scheme flips to https only once the
-// certificate is ready (TLSReady=True), so operator and HA switch together.
-func TestNativeTLSActiveAndScheme(t *testing.T) {
-	// Enabled but not yet ready → still http.
-	pending := nativeTLSHA("home")
-	if nativeTLSActive(pending) {
-		t.Fatal("native TLS must not be active before TLSReady")
-	}
-	if haScheme(pending) != "http" {
-		t.Fatalf("expected http before ready, got %s", haScheme(pending))
-	}
+func certGone(t *testing.T, r *HomeAssistantReconciler, ha *hav1.HomeAssistant) bool {
+	t.Helper()
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(certificateGVK)
+	err := r.Get(context.Background(), client.ObjectKey{Name: nativeTLSCertificateName(ha), Namespace: ha.Namespace}, u)
+	return err != nil
+}
 
-	ready := withTLSReady(nativeTLSHA("home"))
-	if !nativeTLSActive(ready) {
-		t.Fatal("native TLS should be active when enabled and TLSReady=True")
-	}
-	if haScheme(ready) != "https" {
-		t.Fatalf("expected https when active, got %s", haScheme(ready))
-	}
-	if got := buildHomeAssistantURL(ready); got != "https://home.default.svc.cluster.local:8123" {
-		t.Fatalf("unexpected URL: %s", got)
+func warningEvents(r *HomeAssistantReconciler) []string {
+	fr := r.Recorder.(*events.FakeRecorder)
+	var got []string
+	for {
+		select {
+		case e := <-fr.Events:
+			got = append(got, e)
+		default:
+			return got
+		}
 	}
 }
 
-func TestLoadNativeTLSCA(t *testing.T) {
-	ha := withTLSReady(nativeTLSHA("home"))
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: nativeTLSSecretName(ha), Namespace: ha.Namespace},
-		Data:       map[string][]byte{"ca.crt": []byte("CA-PEM")},
-	}
-	r := newTLSTestReconciler(t, true, ha, secret)
-	if ca := loadNativeTLSCA(context.Background(), r.Client, ha); string(ca) != "CA-PEM" {
-		t.Fatalf("expected CA-PEM, got %q", string(ca))
-	}
+// TestReconcileNativeTLSRemoval covers the transitional cleanup of the removed
+// native TLS feature.
+func TestReconcileNativeTLSRemoval(t *testing.T) {
+	ctx := context.Background()
 
-	// No secret → nil (fail closed to system roots, never InsecureSkipVerify).
-	r2 := newTLSTestReconciler(t, true, nativeTLSHA("other"))
-	if ca := loadNativeTLSCA(context.Background(), r2.Client, nativeTLSHA("other")); ca != nil {
-		t.Fatalf("expected nil CA when secret absent, got %q", string(ca))
-	}
-}
+	t.Run("removes condition + certificate and emits one warning", func(t *testing.T) {
+		ha := withCondition(&hav1.HomeAssistant{
+			ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default"},
+		}, conditionTLSReady)
+		r := newTLSTestReconciler(t, true, ha, nativeCert(ha))
 
-// TestInjectNativeTLS: http.ssl_certificate/ssl_key are injected into the
-// configuration, preserving other http keys, and !include http sections untouched.
-func TestInjectNativeTLS(t *testing.T) {
-	t.Run("adds http section when missing", func(t *testing.T) {
-		out, err := injectNativeTLS("default_config:\n")
-		if err != nil {
-			t.Fatal(err)
+		if err := r.reconcileNativeTLSRemoval(ctx, ha); err != nil {
+			t.Fatalf("reconcileNativeTLSRemoval error: %v", err)
 		}
-		if !strings.Contains(out, "ssl_certificate: /config/ssl/tls.crt") ||
-			!strings.Contains(out, "ssl_key: /config/ssl/tls.key") {
-			t.Fatalf("missing ssl keys:\n%s", out)
+		if meta.FindStatusCondition(ha.Status.Conditions, conditionTLSReady) != nil {
+			t.Fatal("expected TLSReady condition to be removed")
+		}
+		if !certGone(t, r, ha) {
+			t.Fatal("expected native TLS Certificate to be deleted")
+		}
+		evs := warningEvents(r)
+		count := 0
+		for _, e := range evs {
+			if strings.Contains(e, eventNativeTLSRemoved) {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("expected exactly one %s event, got %d (%v)", eventNativeTLSRemoved, count, evs)
 		}
 	})
 
-	t.Run("preserves existing http keys", func(t *testing.T) {
-		out, err := injectNativeTLS("http:\n  use_x_forwarded_for: true\n")
-		if err != nil {
-			t.Fatal(err)
+	t.Run("silent no-op for an instance that never used native TLS", func(t *testing.T) {
+		ha := &hav1.HomeAssistant{ObjectMeta: metav1.ObjectMeta{Name: "plain", Namespace: "default"}}
+		r := newTLSTestReconciler(t, true, ha)
+
+		if err := r.reconcileNativeTLSRemoval(ctx, ha); err != nil {
+			t.Fatalf("reconcileNativeTLSRemoval error: %v", err)
 		}
-		if !strings.Contains(out, "use_x_forwarded_for: true") ||
-			!strings.Contains(out, "ssl_certificate: /config/ssl/tls.crt") {
-			t.Fatalf("unexpected output:\n%s", out)
+		for _, e := range warningEvents(r) {
+			if strings.Contains(e, eventNativeTLSRemoved) {
+				t.Fatalf("unexpected %s event for plain instance: %s", eventNativeTLSRemoved, e)
+			}
 		}
 	})
 
-	t.Run("converts an empty/null http scalar to a mapping", func(t *testing.T) {
-		out, err := injectNativeTLS("default_config:\nhttp:\n")
-		if err != nil {
-			t.Fatal(err)
+	t.Run("keeps CertManagerAvailable when an edge TLS mode still needs it", func(t *testing.T) {
+		ha := withCondition(ingressTLSHA("edge"), conditionTLSReady)
+		withCondition(ha, conditionCertManagerAvailable)
+		r := newTLSTestReconciler(t, true, ha, nativeCert(ha))
+
+		if err := r.reconcileNativeTLSRemoval(ctx, ha); err != nil {
+			t.Fatalf("reconcileNativeTLSRemoval error: %v", err)
 		}
-		if !strings.Contains(out, "ssl_certificate: /config/ssl/tls.crt") ||
-			!strings.Contains(out, "ssl_key: /config/ssl/tls.key") {
-			t.Fatalf("expected ssl keys under a null http:\n%s", out)
+		if meta.FindStatusCondition(ha.Status.Conditions, conditionTLSReady) != nil {
+			t.Fatal("expected TLSReady removed")
+		}
+		if meta.FindStatusCondition(ha.Status.Conditions, conditionCertManagerAvailable) == nil {
+			t.Fatal("expected CertManagerAvailable kept for an active edge TLS mode")
 		}
 	})
 
-	t.Run("preserves tagged-scalar http include", func(t *testing.T) {
-		in := "http: !include http.yaml\n"
-		out, err := injectNativeTLS(in)
-		if err != nil {
-			t.Fatal(err)
+	t.Run("idempotent: second run is a no-op with no extra event", func(t *testing.T) {
+		ha := withCondition(&hav1.HomeAssistant{
+			ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default"},
+		}, conditionTLSReady)
+		r := newTLSTestReconciler(t, true, ha, nativeCert(ha))
+
+		if err := r.reconcileNativeTLSRemoval(ctx, ha); err != nil {
+			t.Fatalf("first run error: %v", err)
 		}
-		if out != in {
-			t.Fatalf("expected include preserved, got:\n%s", out)
+		_ = warningEvents(r) // drain
+		if err := r.reconcileNativeTLSRemoval(ctx, ha); err != nil {
+			t.Fatalf("second run error: %v", err)
+		}
+		for _, e := range warningEvents(r) {
+			if strings.Contains(e, eventNativeTLSRemoved) {
+				t.Fatalf("second run must not emit %s: %s", eventNativeTLSRemoved, e)
+			}
 		}
 	})
 }

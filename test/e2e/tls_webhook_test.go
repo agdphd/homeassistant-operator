@@ -49,17 +49,17 @@ var _ = Describe("Webhook TLS E2E", Label("tls", "webhook"), func() {
 	})
 
 	It("rejects a HomeAssistant with incoherent TLS config", func() {
-		By("Applying native TLS enabled without issuerRef or secretName")
+		By("Applying ingress TLS enabled without issuerRef or secretName")
 		bad := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistant
 metadata:
   name: ha-bad
   namespace: %s
 spec:
-  alpha:
+  ingress:
+    enabled: true
     tls:
-      native:
-        enabled: true
+      enabled: true
 `, namespace)
 		// failurePolicy is Ignore, so rejection only occurs once the webhook is
 		// actually serving — retry until it rejects. A repeated "kubectl apply"
@@ -74,8 +74,8 @@ spec:
 			_, _ = utils.Run(cmd)
 			return utils.ApplyYAML(bad, namespace)
 		}, utils.CertIssueTimeout, utils.DefaultEventuallyPollingInterval).Should(
-			MatchError(ContainSubstring("requires issuerRef or secretName")),
-			"webhook should reject native TLS without issuerRef/secretName")
+			MatchError(ContainSubstring("requires secretName or issuerRef")),
+			"webhook should reject ingress TLS without issuerRef/secretName")
 	})
 
 	It("accepts a coherent HomeAssistant", func() {
@@ -85,13 +85,13 @@ metadata:
   name: ha-good
   namespace: %s
 spec:
-  alpha:
+  ingress:
+    enabled: true
     tls:
-      native:
-        enabled: true
-        issuerRef:
-          name: some-issuer
-          kind: ClusterIssuer
+      enabled: true
+      issuerRef:
+        name: some-issuer
+        kind: ClusterIssuer
 `, namespace)
 		Expect(utils.ApplyYAML(good, namespace)).To(Succeed())
 	})

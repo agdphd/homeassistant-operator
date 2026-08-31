@@ -76,7 +76,7 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(
 		// Bootstrap is done but ban-recovery must remain active for the lifetime of
 		// the HA instance. Run a lightweight health check on every reconcile so that
 		// a post-bootstrap IP ban is detected and handleSelfBan is triggered.
-		haClient := newHAClientForHA(ctx, r.Client, ha, r.NewHAClient).WithTimeout(10 * time.Second)
+		haClient := newHAClientForHA(ha, r.NewHAClient).WithTimeout(10 * time.Second)
 		if err := haClient.CheckHealth(ctx); err != nil {
 			if haclient.IsBanned(err) {
 				log.Error(err, "Operator IP banned by Home Assistant, triggering ban-recovery restart")
@@ -119,8 +119,8 @@ func (r *HomeAssistantReconciler) reconcileBootstrap(
 	// Build Home Assistant URL
 	haURL := r.buildHomeAssistantURL(ha)
 
-	// Create HA client (scheme + CA trust honor native TLS)
-	haClient := newHAClientForHA(ctx, r.Client, ha, r.NewHAClient).WithTimeout(30 * time.Second)
+	// Create HA client (operator always speaks HTTP to HA inside the cluster)
+	haClient := newHAClientForHA(ha, r.NewHAClient).WithTimeout(30 * time.Second)
 
 	// Health check - ensure HA is responding before attempting bootstrap
 	log.Info("Performing health check before bootstrap", "url", haURL)
@@ -315,8 +315,8 @@ func (r *HomeAssistantReconciler) buildHomeAssistantURL(ha *hav1.HomeAssistant) 
 	}
 
 	return fmt.Sprintf(
-		"%s://%s.%s.svc.cluster.local:%d",
-		haScheme(ha), serviceName, ha.Namespace, port,
+		"http://%s.%s.svc.cluster.local:%d",
+		serviceName, ha.Namespace, port,
 	)
 }
 
@@ -345,7 +345,7 @@ func (r *HomeAssistantReconciler) handleBootstrapError(
 		// now ready for normal bootstrap. Reset the state so CreateUser can run.
 		cond := meta.FindStatusCondition(ha.Status.Conditions, "BootstrapReady")
 		if cond != nil && cond.Reason == reasonBootstrapLoginFailed {
-			haClient := newHAClientForHA(ctx, r.Client, ha, r.NewHAClient).WithTimeout(30 * time.Second)
+			haClient := newHAClientForHA(ha, r.NewHAClient).WithTimeout(30 * time.Second)
 			if checkErr := haClient.CheckOnboardingStatus(ctx); checkErr == nil {
 				log.Info("Onboarding endpoint available after LoginRecoveryFailed — " +
 					"earlier 404s were transient, resetting bootstrap")
@@ -468,7 +468,7 @@ func (r *HomeAssistantReconciler) handleOnboardingAlreadyDone(
 		)
 	}
 
-	haClient := newHAClientForHA(ctx, r.Client, ha, r.NewHAClient).WithTimeout(30 * time.Second)
+	haClient := newHAClientForHA(ha, r.NewHAClient).WithTimeout(30 * time.Second)
 
 	// Re-check /api/onboarding before attempting login recovery.
 	// Three cases:

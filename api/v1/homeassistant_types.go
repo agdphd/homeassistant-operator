@@ -156,12 +156,6 @@ type AlphaSpec struct {
 	// +optional
 	NetworkPolicy *NetworkPolicyAlphaSpec `json:"networkPolicy,omitempty"`
 
-	// TLS groups experimental TLS integration with cert-manager. Native TLS
-	// changes the Home Assistant pod networking/config, so it starts in
-	// spec.alpha until it stabilizes.
-	// +optional
-	TLS *TLSAlphaSpec `json:"tls,omitempty"`
-
 	// Devices declares host device nodes (e.g. /dev/ttyACM0 for a Zigbee/
 	// Z-Wave USB coordinator) to mount into the Home Assistant container.
 	// Each entry is mounted via a hostPath volume typed as a character
@@ -187,43 +181,6 @@ type DevicePassthroughEntry struct {
 	// Assistant container. Defaults to HostPath when omitted.
 	// +optional
 	ContainerPath string `json:"containerPath,omitempty"`
-}
-
-// TLSAlphaSpec groups the (alpha) TLS integration modes backed by cert-manager.
-type TLSAlphaSpec struct {
-	// Native enables Home Assistant to serve HTTPS natively (TLS terminated in
-	// HA itself on the same port), using a certificate issued by cert-manager.
-	// +optional
-	Native *NativeTLSAlphaSpec `json:"native,omitempty"`
-}
-
-// NativeTLSAlphaSpec configures native TLS termination inside Home Assistant.
-type NativeTLSAlphaSpec struct {
-	// Enabled turns on native TLS. Home Assistant serves HTTPS on its existing
-	// port (8123); the Service port is unchanged. Requires cert-manager to be
-	// installed (or a bring-your-own SecretName). When cert-manager is absent,
-	// the operator reports a status condition and keeps serving HTTP.
-	//
-	// Deliberately without omitempty (see NetworkPolicyAlphaSpec.Enabled).
-	// +kubebuilder:default=false
-	// +optional
-	Enabled bool `json:"enabled"`
-
-	// IssuerRef references an existing cert-manager Issuer/ClusterIssuer used to
-	// issue the certificate. Required unless SecretName (bring-your-own) is set.
-	// +optional
-	IssuerRef *IssuerReference `json:"issuerRef,omitempty"`
-
-	// DNSNames are additional SANs for the certificate. The operator always adds
-	// the in-cluster Service FQDN so it can trust HA over HTTPS.
-	// +optional
-	DNSNames []string `json:"dnsNames,omitempty"`
-
-	// SecretName references a user-provided TLS Secret (bring-your-own). When
-	// set, the operator does not create a cert-manager Certificate and this
-	// Secret takes precedence over IssuerRef.
-	// +optional
-	SecretName string `json:"secretName,omitempty"`
 }
 
 // GatewaySpec configures operator-managed Gateway API exposure for HA. Managing

@@ -107,11 +107,11 @@ func setupWebhookTestEnv(t *testing.T) (client.Client, *rest.Config, func()) {
 	return k8sClient, cfg, cleanup
 }
 
-// TestAdmissionWebhookRejectsInvalidNativeTLS exercises the real HTTP admission
+// TestAdmissionWebhookRejectsInvalidIngressTLS exercises the real HTTP admission
 // path end to end. The unit tests in homeassistant_webhook_test.go only
 // exercise validateHomeAssistantTLS as a pure function and would not catch a
 // registration/wiring bug.
-func TestAdmissionWebhookRejectsInvalidNativeTLS(t *testing.T) {
+func TestAdmissionWebhookRejectsInvalidIngressTLS(t *testing.T) {
 	g := NewWithT(t)
 	k8sClient, _, cleanup := setupWebhookTestEnv(t)
 	defer cleanup()
@@ -119,22 +119,21 @@ func TestAdmissionWebhookRejectsInvalidNativeTLS(t *testing.T) {
 	bad := &hav1.HomeAssistant{
 		ObjectMeta: metav1.ObjectMeta{Name: "ha-bad", Namespace: "default"},
 		Spec: hav1.HomeAssistantSpec{
-			Alpha: &hav1.AlphaSpec{
-				TLS: &hav1.TLSAlphaSpec{
-					Native: &hav1.NativeTLSAlphaSpec{Enabled: true},
-				},
+			Ingress: &hav1.IngressSpec{
+				Enabled: true,
+				TLS:     &hav1.IngressTLSSpec{Enabled: true},
 			},
 		},
 	}
 
 	err := k8sClient.Create(context.Background(), bad)
-	g.Expect(err).To(HaveOccurred(), "webhook should reject native TLS without issuerRef/secretName")
-	g.Expect(err.Error()).To(ContainSubstring("requires issuerRef or secretName"))
+	g.Expect(err).To(HaveOccurred(), "webhook should reject ingress TLS without issuerRef/secretName")
+	g.Expect(err.Error()).To(ContainSubstring("requires secretName or issuerRef"))
 }
 
 // TestAdmissionWebhookRejectsInvalidGatewayFilter exercises the real HTTP
 // admission path end to end for spec.gateway.filters, the same way
-// TestAdmissionWebhookRejectsInvalidNativeTLS does for native TLS. The unit
+// TestAdmissionWebhookRejectsInvalidIngressTLS does for ingress TLS. The unit
 // tests in homeassistant_webhook_test.go only exercise validateGatewayFilters
 // as a pure function and would not catch a registration/wiring bug.
 func TestAdmissionWebhookRejectsInvalidGatewayFilter(t *testing.T) {
