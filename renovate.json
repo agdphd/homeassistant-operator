@@ -3,14 +3,32 @@
   "extends": ["config:recommended"],
   "timezone": "UTC",
   "schedule": ["at any time"],
+  "baseBranches": ["main", "dev"],
   "enabledManagers": ["gomod", "github-actions", "dockerfile", "custom.regex"],
   "commitMessagePrefix": "chore(deps):",
   "dependencyDashboard": false,
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"]
+  },
+  "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"],
   "packageRules": [
     {
-      "matchPackagePatterns": [".*"],
       "matchUpdateTypes": ["major", "minor", "patch", "pin", "digest"],
       "groupName": "all dependencies"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["indirect"],
+      "enabled": true,
+      "groupName": "indirect go deps"
+    },
+    {
+      "description": "Keep main on non-breaking updates only; majors/breaking changes are integrated and tested on dev first (see docs/development/branching.md)",
+      "matchBaseBranches": ["main"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
     }
   ],
   "customManagers": [
