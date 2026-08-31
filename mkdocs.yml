@@ -96,6 +96,7 @@ nav:
     - Changelog: reference/changelog.md
   - Development:
     - Contributing: development/contributing.md
+    - Branching & Releases: development/branching.md
     - Architecture: development/architecture.md
     - Testing: development/testing.md
 
