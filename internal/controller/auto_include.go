@@ -297,47 +297,6 @@ func injectRecorder(
 	return string(out), nil
 }
 
-// injectNativeTLS sets http.ssl_certificate/ssl_key so Home Assistant serves HTTPS
-// natively from the certificate mounted at /config/ssl (native TLS mode). Uses
-// yaml.Node to preserve !include / !secret tags elsewhere. A tagged-scalar http:
-// section (e.g. "http: !include http.yaml") is preserved unchanged.
-func injectNativeTLS(configYAML string) (string, error) {
-	doc, err := parseConfigYAML(configYAML)
-	if err != nil {
-		return "", err
-	}
-	root := doc.Content[0]
-	if root.Kind != yaml.MappingNode {
-		return configYAML, nil
-	}
-
-	httpSection := nodeMappingValue(root, "http")
-	switch {
-	case httpSection == nil:
-		httpSection = &yaml.Node{Kind: yaml.MappingNode}
-		root.Content = append(root.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: "http"},
-			httpSection,
-		)
-	case httpSection.Kind == yaml.ScalarNode && httpSection.Value == "" &&
-		(httpSection.Tag == "" || httpSection.Tag == "!!null"):
-		httpSection.Kind = yaml.MappingNode
-		httpSection.Tag = ""
-	case httpSection.Kind != yaml.MappingNode:
-		// Tagged scalar like "http: !include http.yaml" — preserve unchanged.
-		return configYAML, nil
-	}
-
-	overrideNodeField(httpSection, "ssl_certificate", "/config/ssl/tls.crt", "!!str")
-	overrideNodeField(httpSection, "ssl_key", "/config/ssl/tls.key", "!!str")
-
-	out, err := yaml.Marshal(doc)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal configuration YAML after native TLS injection: %w", err)
-	}
-	return string(out), nil
-}
-
 // buildEffectiveConfig applies injectLocation and ensureAutoIncludes transformations
 // to produce the final configuration.yaml content written to the ConfigMap.
 // ha may be nil (no location injection) if the HomeAssistant CR is unavailable.

@@ -37,23 +37,20 @@ func TestValidateHomeAssistantTLS(t *testing.T) {
 			spec: hav1.HomeAssistantSpec{},
 		},
 		{
-			name: "native TLS with issuer is valid",
-			spec: hav1.HomeAssistantSpec{Alpha: &hav1.AlphaSpec{TLS: &hav1.TLSAlphaSpec{
-				Native: &hav1.NativeTLSAlphaSpec{Enabled: true, IssuerRef: &hav1.IssuerReference{Name: "i"}},
-			}}},
+			name: "ingress TLS with issuer is valid",
+			spec: hav1.HomeAssistantSpec{Ingress: &hav1.IngressSpec{
+				Enabled: true,
+				TLS:     &hav1.IngressTLSSpec{Enabled: true, IssuerRef: &hav1.IssuerReference{Name: "i"}},
+			}},
 		},
 		{
-			name: "native TLS without issuer or secret is rejected",
-			spec: hav1.HomeAssistantSpec{Alpha: &hav1.AlphaSpec{TLS: &hav1.TLSAlphaSpec{
-				Native: &hav1.NativeTLSAlphaSpec{Enabled: true},
-			}}},
-			wantErrs: 1,
-		},
-		{
-			name: "native TLS with issuer AND secret warns",
-			spec: hav1.HomeAssistantSpec{Alpha: &hav1.AlphaSpec{TLS: &hav1.TLSAlphaSpec{
-				Native: &hav1.NativeTLSAlphaSpec{Enabled: true, IssuerRef: &hav1.IssuerReference{Name: "i"}, SecretName: "s"},
-			}}},
+			name: "ingress TLS with issuer AND secret warns",
+			spec: hav1.HomeAssistantSpec{Ingress: &hav1.IngressSpec{
+				Enabled: true,
+				TLS: &hav1.IngressTLSSpec{
+					Enabled: true, SecretName: "s", IssuerRef: &hav1.IssuerReference{Name: "i"},
+				},
+			}},
 			wantWarnings: 1,
 		},
 		{
@@ -84,9 +81,12 @@ func TestValidateHomeAssistantTLS(t *testing.T) {
 		},
 		{
 			name: "invalid issuer kind is rejected",
-			spec: hav1.HomeAssistantSpec{Alpha: &hav1.AlphaSpec{TLS: &hav1.TLSAlphaSpec{
-				Native: &hav1.NativeTLSAlphaSpec{Enabled: true, IssuerRef: &hav1.IssuerReference{Name: "i", Kind: "Bogus"}},
-			}}},
+			spec: hav1.HomeAssistantSpec{Ingress: &hav1.IngressSpec{
+				Enabled: true,
+				TLS: &hav1.IngressTLSSpec{
+					Enabled: true, IssuerRef: &hav1.IssuerReference{Name: "i", Kind: "Bogus"},
+				},
+			}},
 			wantErrs: 1,
 		},
 	}
@@ -343,19 +343,20 @@ func TestValidatorRejectsAndAccepts(t *testing.T) {
 
 	bad := &hav1.HomeAssistant{
 		ObjectMeta: metav1.ObjectMeta{Name: "home"},
-		Spec: hav1.HomeAssistantSpec{Alpha: &hav1.AlphaSpec{TLS: &hav1.TLSAlphaSpec{
-			Native: &hav1.NativeTLSAlphaSpec{Enabled: true},
-		}}},
+		Spec: hav1.HomeAssistantSpec{Ingress: &hav1.IngressSpec{
+			Enabled: true, TLS: &hav1.IngressTLSSpec{Enabled: true},
+		}},
 	}
 	if _, err := v.ValidateCreate(context.Background(), bad); err == nil {
-		t.Fatal("expected ValidateCreate to reject native TLS without issuer/secret")
+		t.Fatal("expected ValidateCreate to reject ingress TLS without issuer/secret")
 	}
 
 	good := &hav1.HomeAssistant{
 		ObjectMeta: metav1.ObjectMeta{Name: "home"},
-		Spec: hav1.HomeAssistantSpec{Alpha: &hav1.AlphaSpec{TLS: &hav1.TLSAlphaSpec{
-			Native: &hav1.NativeTLSAlphaSpec{Enabled: true, IssuerRef: &hav1.IssuerReference{Name: "i"}},
-		}}},
+		Spec: hav1.HomeAssistantSpec{Ingress: &hav1.IngressSpec{
+			Enabled: true,
+			TLS:     &hav1.IngressTLSSpec{Enabled: true, IssuerRef: &hav1.IssuerReference{Name: "i"}},
+		}},
 	}
 	if _, err := v.ValidateCreate(context.Background(), good); err != nil {
 		t.Fatalf("expected valid HomeAssistant to be accepted, got %v", err)

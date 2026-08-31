@@ -207,7 +207,7 @@ func (r *HomeAssistantReconciler) reconcileIngress(
 		case in.TLS.IssuerRef != nil:
 			tlsSecret = ingressTLSCertificateName(ha)
 			if cmAvailable {
-				_, err := r.ensureCertificate(ctx, ha, ingressTLSCertificateName(ha), []string{host}, in.TLS.IssuerRef)
+				err := r.ensureCertificate(ctx, ha, ingressTLSCertificateName(ha), []string{host}, in.TLS.IssuerRef)
 				if err != nil {
 					return err
 				}
@@ -266,7 +266,7 @@ func (r *HomeAssistantReconciler) reconcileGatewayRoute(
 	} else if g.IssuerRef != nil {
 		tlsSecret = gatewayTLSCertificateName(ha)
 		if cmAvailable {
-			_, err := r.ensureCertificate(ctx, ha, gatewayTLSCertificateName(ha), []string{g.Host}, g.IssuerRef)
+			err := r.ensureCertificate(ctx, ha, gatewayTLSCertificateName(ha), []string{g.Host}, g.IssuerRef)
 			if err != nil {
 				return false, err
 			}

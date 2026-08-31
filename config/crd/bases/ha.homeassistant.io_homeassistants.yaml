@@ -111,64 +111,6 @@ spec:
                           silently re-defaulted to true by the API server once that happens.
                         type: boolean
                     type: object
-                  tls:
-                    description: |-
-                      TLS groups experimental TLS integration with cert-manager. Native TLS
-                      changes the Home Assistant pod networking/config, so it starts in
-                      spec.alpha until it stabilizes.
-                    properties:
-                      native:
-                        description: |-
-                          Native enables Home Assistant to serve HTTPS natively (TLS terminated in
-                          HA itself on the same port), using a certificate issued by cert-manager.
-                        properties:
-                          dnsNames:
-                            description: |-
-                              DNSNames are additional SANs for the certificate. The operator always adds
-                              the in-cluster Service FQDN so it can trust HA over HTTPS.
-                            items:
-                              type: string
-                            type: array
-                          enabled:
-                            default: false
-                            description: |-
-                              Enabled turns on native TLS. Home Assistant serves HTTPS on its existing
-                              port (8123); the Service port is unchanged. Requires cert-manager to be
-                              installed (or a bring-your-own SecretName). When cert-manager is absent,
-                              the operator reports a status condition and keeps serving HTTP.
-
-                              Deliberately without omitempty (see NetworkPolicyAlphaSpec.Enabled).
-                            type: boolean
-                          issuerRef:
-                            description: |-
-                              IssuerRef references an existing cert-manager Issuer/ClusterIssuer used to
-                              issue the certificate. Required unless SecretName (bring-your-own) is set.
-                            properties:
-                              group:
-                                default: cert-manager.io
-                                description: Group of the issuer API.
-                                type: string
-                              kind:
-                                default: Issuer
-                                description: Kind of the issuer.
-                                enum:
-                                - Issuer
-                                - ClusterIssuer
-                                type: string
-                              name:
-                                description: Name of the Issuer/ClusterIssuer.
-                                type: string
-                            required:
-                            - name
-                            type: object
-                          secretName:
-                            description: |-
-                              SecretName references a user-provided TLS Secret (bring-your-own). When
-                              set, the operator does not create a cert-manager Certificate and this
-                              Secret takes precedence over IssuerRef.
-                            type: string
-                        type: object
-                    type: object
                 type: object
               backup:
                 description: |-

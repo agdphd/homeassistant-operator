@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Native TLS (`spec.alpha.tls`)** — the experimental mode where Home Assistant
+  terminated HTTPS itself on port `8123` has been removed, along with its
+  `TLSReady` status condition, the `<name>-native-tls` certificate and the
+  pod HTTP↔HTTPS switching. It was a `spec.alpha` feature (removable without a
+  deprecation notice): the maintenance cost of flipping the pod's scheme, mounting
+  the certificate and having the operator trust Home Assistant over HTTPS
+  outweighed its value next to mature edge termination. **Use `spec.ingress.tls`
+  or `spec.gateway` instead** (both still cert-manager-backed). On upgrade, an
+  instance that had native TLS enabled reverts to HTTP automatically on the first
+  reconcile — the operator deletes the orphaned certificate, drops the obsolete
+  status condition and emits one `NativeTLSRemoved` warning event; a
+  bring-your-own TLS Secret is never deleted, only unmounted. A stale manifest
+  still carrying `spec.alpha.tls` applies without error (the API server prunes the
+  unknown field). The operator now always speaks plain HTTP to Home Assistant
+  inside the cluster.
+
 ## [v1.3.0] - 2026-08-29
 
 ### Fixed

@@ -296,7 +296,7 @@ func (r *HomeAssistantCommunityRepositoryReconciler) reconcileInstalling(
 		log.Info("API token not available yet, will retry activation")
 		return ctrl.Result{RequeueAfter: activationRetryInterval}, nil
 	}
-	haClient := newHAClientForHA(ctx, r.Client, ha, r.NewHAClient)
+	haClient := newHAClientForHA(ha, r.NewHAClient)
 
 	var activationErr error
 	switch repo.Spec.Category {

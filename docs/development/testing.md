@@ -170,7 +170,7 @@ Eventually(func(g Gomega) {
 
 ## E2E Tests
 
-**Location**: `test/e2e/*_test.go` (9 files, 26 specs total)
+**Location**: `test/e2e/*_test.go` (8 files, 25 specs total)
 **Framework**: Ginkgo v2 + real k3d cluster
 **Strategy**: Seven independently-labeled suites, run as seven concurrent
 GitHub Actions jobs (`.github/workflows/test-e2e-parallel.yml`), so the whole
@@ -190,7 +190,7 @@ the seven concurrent jobs below.
 ```bash
 make test-e2e-critical-a                 # HomeAssistant + sibling CRDs (10 specs)
 make test-e2e-critical-b                 # spec.alpha.devices device passthrough (1 spec)
-make test-e2e-tls                        # TLS ingress/gateway/native/webhook (5 specs)
+make test-e2e-tls                        # TLS ingress/gateway/webhook (4 specs)
 make test-e2e-network-policy             # NetworkPolicy enforcement (1 spec)
 make test-e2e-pod-security                # Pod Security Standards (2 specs)
 make test-e2e-community-repository-a     # HACS-style installs, group A (3 specs)
@@ -214,7 +214,7 @@ skip-the-rebuild behavior locally against a pre-built image.
 |---|---|---|---|
 | `e2e-critical-a` | `critical-path && group-a` | 10 | All CRDs' core lifecycle (see table below) — shares one HA bootstrap |
 | `e2e-critical-b` | `critical-path && group-b` | 1 | `spec.alpha.devices` device passthrough — own cluster/instance, no shared bootstrap |
-| `e2e-tls` | `tls` | 5 | TLS via Ingress, Gateway API, native HA TLS, and the validating webhook |
+| `e2e-tls` | `tls` | 4 | TLS via Ingress, Gateway API, and the validating webhook |
 | `e2e-network-policy` | `network-policy` | 1 | `spec.alpha.networkPolicy` actually restricts traffic, not just that the object exists |
 | `e2e-pod-security` | `pod-security` | 2 | Operator namespace enforces the `restricted` Pod Security Standard |
 | `e2e-community-repository-a` | `community-repository && group-a` | 3 | `HomeAssistantCommunityRepository`: integration + theme install, theme ref-update |
@@ -306,7 +306,7 @@ diagnostics) without affecting any other spec.
 
 ## Coverage Gap Record
 
-Every remaining e2e scenario is still verified — the 26 specs above are
+Every remaining e2e scenario is still verified — the 25 specs above are
 split across the seven jobs above. This section exists as the place to
 record it when a scenario is deliberately not e2e-gated, rather than fitting
 it into an existing (or new) job:
@@ -315,3 +315,4 @@ it into an existing (or new) job:
 |---|---|---|
 | `spec.scheduling` (nodeSelector/affinity/tolerations actually influencing real placement) | An e2e job for this was built and run successfully, then deliberately removed: every piece of this operator's own logic (field copy onto the pod template, rollout-on-change diffing, the `SchedulingReady` condition mirroring the pod's own `PodScheduled` condition, admission validation) is already covered by envtest without a real scheduler. The only thing a real cluster adds is confirming that Kubernetes' own scheduler honors `nodeSelector`/affinity/taints — a stable, heavily-tested upstream API contract, not something specific to this operator (unlike e.g. device passthrough's hostPath mount, where non-`privileged` access to a device node is a container-runtime-default assumption, not a documented Kubernetes guarantee, and genuinely needs a real kubelet to confirm). | `internal/controller/scheduling_test.go` and `internal/webhook/v1/admission_envtest_test.go` (both envtest, real API server) |
 | Operator's own `allow-webhook-traffic` NetworkPolicy actually unblocking admission-webhook traffic under live CNI enforcement | A live e2e assertion of the *allow* transition was attempted and abandoned: direct inspection of a dev k3d node's `iptables`/`ipset` state confirmed the CNI translates the policy into a textbook-correct rule (right ipset membership, right port, right chain wiring), but the live connection kept failing regardless of the correct rule, for reasons not conclusively identified (suspected same-node/bridge-netfilter interaction specific to that one machine's k3d networking setup, not this operator's own logic — the *block* side, i.e. traffic genuinely denied without the label, reproduced correctly and reliably on the same machine). The remaining uncertainty is about `NetworkPolicy`/CNI enforcement itself — a stable upstream contract this operator doesn't implement — not about whether the shipped rule is correctly shaped, which is what the static check below actually proves. | `hack/verify-network-policy.sh` (`make verify-network-policy`, no cluster) — asserts the rendered `NetworkPolicy` resources have the correct `podSelector`/port/namespace-label shape across every install path (kustomize and Helm); confirmed to fail when the rule is removed. |
+| Transitional cleanup after the removed native TLS feature (an upgraded instance that had `spec.alpha.tls` reverting to HTTP: orphaned `Certificate` deleted, obsolete `TLSReady` condition stripped, one `NativeTLSRemoved` warning event) | The whole feature being removed had one e2e spec; keeping (or adding) an e2e for its *removal* would need a cluster running the previous operator version, a real cert-manager issuance and an operator swap — expensive setup for a one-shot code path that is itself scheduled for deletion in a later minor. Every branch of the cleanup (delete-if-present, condition removal gated on `certManagerRequired`, exactly-one-event, idempotent re-run, silence for instances that never used the feature) is covered by `TestReconcileNativeTLSRemoval`. The remaining gap is only the one-line wiring into `Reconcile()`. | `internal/controller/tls_helpers_test.go` (`TestReconcileNativeTLSRemoval`, controller-runtime fake client) |
