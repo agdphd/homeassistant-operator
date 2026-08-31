@@ -93,9 +93,8 @@ spec:
 
 Home Assistant rejects every request with `400 Bad Request` unless it is told
 to trust the proxy in front of it. Whenever `spec.ingress.enabled` or
-`spec.gateway.enabled` is `true`, the operator automatically adds the
-following to the generated `configuration.yaml`, unless the keys are already
-present:
+`spec.gateway.enabled` is `true`, the operator automatically supplies the
+following, unless the keys are already present:
 
 ```yaml
 http:
@@ -105,6 +104,12 @@ http:
     - 172.16.0.0/12
     - 192.168.0.0/16
 ```
+
+On Home Assistant 2026.8+ these are delivered through the http config API rather
+than written into `configuration.yaml` (see
+[Configuration → HTTP configuration](configuration.md#http-configuration-on-home-assistant-20268)),
+with no change to the outcome. On older Home Assistant they go into the generated
+`configuration.yaml`.
 
 These are the RFC1918 private address ranges — a conservative default, not an
 autodetection of the real cluster pod/service CIDR (which cannot be reliably

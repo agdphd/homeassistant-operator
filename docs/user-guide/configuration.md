@@ -52,7 +52,7 @@ Controls how changes are applied.
 
 | Value | Behaviour |
 |-------|-----------|
-| `auto` (default) | Hot-reload for `automation`, `script`, `scene`, `logger`, `input_*`, `template`, `zone`. Restart for `homeassistant`, `http`, `mqtt`, and unknown sections. |
+| `auto` (default) | Hot-reload for `automation`, `script`, `scene`, `logger`, `input_*`, `template`, `zone`. Restart for `homeassistant`, `mqtt`, and unknown sections. `http` triggers a pod restart **only on the YAML delivery path** (older Home Assistant); on the API path Home Assistant restarts its own process when needed and the operator does not roll the pod. |
 | `hot-reload` | Always attempt hot-reload, regardless of which sections changed. |
 | `restart` | Always trigger a rolling restart. |
 
@@ -65,7 +65,7 @@ Set to `false` to disable automatic reload/restart on configuration changes. Def
 When `reloadStrategy: auto` is set, the operator parses the YAML diff between the old and new configuration:
 
 - **Hot-reload** (no restart): `automation`, `script`, `scene`, `logger`, `input_boolean`, `input_number`, `input_text`, `input_select`, `input_datetime`, `template`, `zone`
-- **Restart** (rolling restart): `homeassistant`, `http`, `mqtt`, and any unknown top-level key
+- **Restart** (rolling restart): `homeassistant`, `mqtt`, and any unknown top-level key. `http` too — **but only on the YAML delivery path**. On Home Assistant 2026.8+ the `http:` section is delivered through the API (see [HTTP configuration](#http-configuration-on-home-assistant-20268)) and is excluded from this diff entirely; Home Assistant restarts its own process if the change needs it, without a pod rollout from the operator.
 
 If a single change touches both categories, the operator restarts (safer path).
 
@@ -80,6 +80,40 @@ script: !include scripts.yaml
 ```
 
 These lines are required for Home Assistant to load resources managed by `HomeAssistantAutomation`, `HomeAssistantScene`, and `HomeAssistantScript`. You do not need to add them manually.
+
+## HTTP configuration on Home Assistant 2026.8+
+
+Home Assistant 2026.8 moved the `http` integration out of `configuration.yaml`
+into its own store, managed from the UI under **Settings → System → Network**.
+The YAML `http:` block is ignored after Home Assistant's one-time import, and
+stops working entirely in Home Assistant 2027.2.0.
+
+You keep writing `http:` in `spec.configuration` exactly as before — nothing in
+your resource changes. On a Home Assistant that supports the new API the operator:
+
+- applies the `http:` section (plus its default `trusted_proxies` /
+  `use_x_forwarded_for` for Ingress/Gateway-exposed instances) through that API;
+- **omits `http:` from the generated `configuration.yaml`**, so Home Assistant
+  does not raise a "remove the http: block" repair issue;
+- reports which channel it used in `status.httpConfigSource` (`Api` or `Yaml`)
+  and whether it took effect in the `HTTPConfigReady` condition.
+
+On older Home Assistant the `http:` block still goes into `configuration.yaml`
+as it always has. Switching Home Assistant versions in either direction is
+picked up automatically, with no operator restart.
+
+!!! warning "The resource is the source of truth"
+    The operator enforces the `http` configuration from the resource. A change
+    made in the Home Assistant UI (Settings → System → Network) to a setting the
+    resource covers is **reverted on the next reconcile** — even though Home
+    Assistant itself points you at that UI. Edit `spec.configuration`, not the
+    Home Assistant UI, for these settings. The operator never confirms a pending
+    change it did not send, so a change you start in the UI is left for you (or
+    Home Assistant's 5-minute auto-revert) to resolve.
+
+    If your `http:` section is an `!include` of a separate file, the operator
+    cannot read it to deliver via the API — it stays in `configuration.yaml` and
+    Home Assistant's warning remains until you inline the keys.
 
 ## GitOps ownership
 

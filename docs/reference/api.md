@@ -312,6 +312,23 @@ _Appears in:_
 | `useXForwardedFor` _boolean_ | UseXForwardedFor enables usage of X-Forwarded-For header |  | Optional: \{\} <br /> |
 
 
+#### HTTPConfigSource
+
+_Underlying type:_ _string_
+
+HTTPConfigSource is the channel the operator uses for the http: configuration.
+
+
+
+_Appears in:_
+- [HomeAssistantConfigurationStatus](#homeassistantconfigurationstatus)
+
+| Field | Description |
+| --- | --- |
+| `Api` | HTTPConfigSourceAPI: delivered through the Home Assistant http config API.<br /> |
+| `Yaml` | HTTPConfigSourceYAML: written into configuration.yaml (older Home Assistant).<br /> |
+
+
 #### HTTPHeader
 
 
@@ -698,6 +715,7 @@ _Appears in:_
 | `lastError` _string_ | LastError contains the error message from the last failed reload attempt<br />Cleared when reload succeeds |  | Optional: \{\} <br /> |
 | `observedGeneration` _integer_ | Generation tracks the generation of the spec that the status reflects |  | Optional: \{\} <br /> |
 | `trustedProxiesDefaulted` _boolean_ | TrustedProxiesDefaulted reports whether the operator's default<br />http.trusted_proxies / http.use_x_forwarded_for values are currently<br />active in the generated configuration for the referenced HomeAssistant.<br />false covers every case where they are not active (not exposed via<br />Ingress/Gateway, opted out via spec.disableDefaultTrustedProxies, or the<br />user already manages these keys themselves) — see the HomeAssistant's own<br />ExposureReady condition message for which of those it is. |  | Optional: \{\} <br /> |
+| `httpConfigSource` _[HTTPConfigSource](#httpconfigsource)_ | HTTPConfigSource reports which channel the operator uses to deliver the<br />http: configuration to the referenced HomeAssistant: "Api" on Home<br />Assistant 2026.8+ (the http config WebSocket API), "Yaml" on older<br />versions (the http: block in configuration.yaml). Empty until the operator<br />has been able to determine it (the instance not yet reachable). |  | Enum: [Api Yaml] <br />Optional: \{\} <br /> |
 
 
 #### HomeAssistantFloor

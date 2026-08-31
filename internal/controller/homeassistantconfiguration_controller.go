@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -124,7 +125,9 @@ var reloadableHttpKeys = map[string]bool{
 // HomeAssistantConfigurationReconciler reconciles a HomeAssistantConfiguration object
 type HomeAssistantConfigurationReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme      *runtime.Scheme
+	Recorder    events.EventRecorder
+	NewHAClient func(baseURL string) *haclient.Client // overridable for testing
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantconfigurations,verbs=get;list;watch
@@ -135,6 +138,7 @@ type HomeAssistantConfigurationReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -181,6 +185,28 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
+	// Probe the instance for http config API support (HA 2026.8+). On the API
+	// path the http: section is lifted out of the generated file and delivered
+	// through the API instead — so Home Assistant does not ignore it and warn.
+	httpDecision := r.decideHTTPConfigPath(ctx, ha)
+	var httpSection haclient.HTTPConfigData
+	httpReadable := true
+	if httpDecision.path == httpPathAPI {
+		httpSection, httpReadable, err = readHTTPSection(canonicalContent)
+		if err != nil {
+			log.Error(err, "Failed to read http: section; keeping it in configuration.yaml")
+			httpReadable = false
+		}
+		if httpReadable {
+			if stripped, serr := stripHTTPSection(canonicalContent); serr == nil {
+				canonicalContent = stripped
+			} else {
+				log.Error(serr, "Failed to strip http: section; keeping it in configuration.yaml")
+				httpReadable = false
+			}
+		}
+	}
+
 	configHash := calculateConfigHash(canonicalContent)
 
 	// Capture old configuration BEFORE updating ConfigMap
@@ -193,6 +219,15 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 		Namespace: config.Namespace,
 	}, existingConfigMap); err == nil {
 		oldConfig = existingConfigMap.Data[configurationYamlKey]
+	}
+	// On the API path, the http: section is not the operator's concern for the
+	// restart-vs-hot-reload decision — Home Assistant restarts its own process
+	// when the API change needs it. Strip http: from both sides so its
+	// appearance/disappearance never drives a pod rollout (a second restart).
+	if httpDecision.path == httpPathAPI && httpReadable {
+		if stripped, serr := stripHTTPSection(oldConfig); serr == nil {
+			oldConfig = stripped
+		}
 	}
 
 	// Sync ConfigMap back to CRD state if it was modified externally (operator exclusivity).
@@ -255,13 +290,19 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 		ObservedGeneration: config.Generation,
 	})
 
+	// Deliver the http: configuration through the Home Assistant API when it is
+	// available. Runs last and never aborts the reconcile: a transient failure
+	// talking to Home Assistant must not freeze the ConfigMap or the status
+	// above. Its status mutations are folded into the single Status().Update.
+	httpResult := r.reconcileHTTPConfig(ctx, config, ha, httpDecision, httpSection, httpReadable)
+
 	if err := r.Status().Update(ctx, config); err != nil {
 		log.Error(err, "Failed to update HomeAssistantConfiguration status")
 		return ctrl.Result{}, err
 	}
 
 	log.Info("Successfully reconciled HomeAssistantConfiguration")
-	return ctrl.Result{}, nil
+	return httpResult, nil
 }
 
 // reconcileGeneratedConfigMap creates or updates the ConfigMap containing
