@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`http:` configuration is now delivered through the Home Assistant API on
+  2026.8+.** Home Assistant moved its `http` integration out of
+  `configuration.yaml` into its own store; the YAML block is ignored after a
+  one-time migration (and stops working entirely in Home Assistant 2027.2.0).
+  The operator now detects, per instance and re-checked every reconcile, whether
+  the running Home Assistant exposes the http config API. When it does, the
+  `http:` section from `spec.configuration` — plus the operator's default trusted
+  proxies for Ingress/Gateway-exposed instances — is applied through that API and
+  **omitted entirely from the generated `configuration.yaml`**, so Home Assistant
+  no longer reports a leftover-block warning. Nothing changes in your resource.
+  On older Home Assistant the `http:` block keeps going into `configuration.yaml`
+  as before. A new `status.httpConfigSource` (`Api`/`Yaml`) and `HTTPConfigReady`
+  condition report which channel is in use and whether it applied.
+  The resource stays the source of truth for `http` settings: a change made in
+  the Home Assistant UI under Settings → System → Network is reverted on the next
+  reconcile, and the operator does not confirm a pending change it did not send.
+
 ### Removed
 
 - **Native TLS (`spec.alpha.tls`)** — the experimental mode where Home Assistant

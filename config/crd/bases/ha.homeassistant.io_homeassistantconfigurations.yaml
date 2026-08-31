@@ -264,6 +264,17 @@ spec:
                   ConfigHash is the SHA256 hash of the current configuration
                   Used to detect changes and determine if reload is needed
                 type: string
+              httpConfigSource:
+                description: |-
+                  HTTPConfigSource reports which channel the operator uses to deliver the
+                  http: configuration to the referenced HomeAssistant: "Api" on Home
+                  Assistant 2026.8+ (the http config WebSocket API), "Yaml" on older
+                  versions (the http: block in configuration.yaml). Empty until the operator
+                  has been able to determine it (the instance not yet reachable).
+                enum:
+                - Api
+                - Yaml
+                type: string
               lastError:
                 description: |-
                   LastError contains the error message from the last failed reload attempt

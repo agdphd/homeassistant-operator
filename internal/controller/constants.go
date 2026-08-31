@@ -47,6 +47,16 @@ const (
 	// Condition reasons for ReloadReady
 	reasonTokenNotAvailable = "TokenNotAvailable"
 
+	// HTTP config delivery (HomeAssistantConfiguration): condition, reasons, events.
+	conditionHTTPConfigReady      = "HTTPConfigReady"
+	reasonHTTPConfigApplied       = "Applied"
+	reasonHTTPConfigManagedInYAML = "ManagedInYaml"
+	reasonHTTPConfigRejected      = "Rejected"
+	reasonHTTPConfigForeign       = "ForeignPendingChange"
+	reasonHTTPConfigWaiting       = "WaitingForHomeAssistant"
+	eventHTTPConfigRejected       = "HTTPConfigRejected"
+	eventHTTPConfigForeignChange  = "HTTPConfigForeignChange"
+
 	// TLS / cert-manager integration condition types
 	conditionCertManagerAvailable = "CertManagerAvailable"
 	conditionExposureReady        = "ExposureReady"

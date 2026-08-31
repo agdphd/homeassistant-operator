@@ -273,6 +273,61 @@ spec:
 	})
 
 	// -------------------------------------------------------------------------
+	// 2b. HomeAssistantConfiguration — http: delivered via the HA API (2026.8+)
+	// -------------------------------------------------------------------------
+	It("HomeAssistantConfiguration — http: is applied via the API and omitted from configuration.yaml", func() {
+		By("Applying a config with an http: section that differs from the HA default")
+		httpYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
+kind: HomeAssistantConfiguration
+metadata:
+  name: %s
+  namespace: %s
+spec:
+  homeAssistantRef:
+    name: %s
+  reloadStrategy: auto
+  configuration: |
+    automation: !include automations.yaml
+    scene: !include scenes.yaml
+    script: !include scripts.yaml
+    http:
+      ip_ban_enabled: false
+`, configName, namespace, haName)
+		Expect(utils.ApplyYAML(httpYAML, namespace)).To(Succeed())
+
+		By("Verifying status.httpConfigSource becomes Api")
+		Eventually(func(g Gomega) {
+			src := utils.Kubectl("get", "haconfig", configName, "-n", namespace,
+				"-o", "jsonpath={.status.httpConfigSource}")
+			g.Expect(src).To(Equal("Api"))
+		}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+
+		By("Verifying HTTPConfigReady condition reports Applied")
+		Eventually(func(g Gomega) {
+			reason := utils.Kubectl("get", "haconfig", configName, "-n", namespace,
+				"-o", "jsonpath={.status.conditions[?(@.type=='HTTPConfigReady')].reason}")
+			g.Expect(reason).To(Equal("Applied"))
+		}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+
+		By("Verifying the generated configuration.yaml contains no http: section")
+		Eventually(func(g Gomega) {
+			cm := utils.Kubectl("get", "configmap", haName+"-configuration", "-n", namespace,
+				"-o", "jsonpath={.data.configuration\\.yaml}")
+			g.Expect(cm).NotTo(BeEmpty())
+			g.Expect(cm).NotTo(ContainSubstring("http:"))
+		}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+
+		By("Verifying repeated reconciles do not churn the config hash (no repeated writes)")
+		hash := utils.Kubectl("get", "haconfig", configName, "-n", namespace,
+			"-o", "jsonpath={.status.configHash}")
+		Consistently(func(g Gomega) {
+			h := utils.Kubectl("get", "haconfig", configName, "-n", namespace,
+				"-o", "jsonpath={.status.configHash}")
+			g.Expect(h).To(Equal(hash))
+		}, 20*time.Second, 4*time.Second).Should(Succeed())
+	})
+
+	// -------------------------------------------------------------------------
 	// 3. HomeAssistantSecrets — generated secret with correct hash
 	// -------------------------------------------------------------------------
 	It("HomeAssistantSecrets — generated secret with correct hash", func() {
