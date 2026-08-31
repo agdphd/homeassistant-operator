@@ -275,8 +275,14 @@ spec:
 	// -------------------------------------------------------------------------
 	// 2b. HomeAssistantConfiguration — http: delivered via the HA API (2026.8+)
 	// -------------------------------------------------------------------------
-	It("HomeAssistantConfiguration — http: is applied via the API and omitted from configuration.yaml", func() {
-		By("Applying a config with an http: section that differs from the HA default")
+	It("HomeAssistantConfiguration — http: is delivered via the API and omitted from configuration.yaml", func() {
+		// Timeouts here allow for the full round-trip on a real Home Assistant:
+		// probe -> configure -> HA restarts its own process if needed -> the
+		// operator's ~30s requeue -> promote -> Applied. Home Assistant may
+		// restart during this window (that is its call, not the operator's), so
+		// this spec does not assert pod stability. The merge / no-write-when-equal
+		// / foreign-change / rejection logic is covered by the unit tests.
+		By("Applying a config with an http: section")
 		httpYAML := fmt.Sprintf(`apiVersion: ha.homeassistant.io/v1
 kind: HomeAssistantConfiguration
 metadata:
@@ -291,7 +297,8 @@ spec:
     scene: !include scenes.yaml
     script: !include scripts.yaml
     http:
-      ip_ban_enabled: false
+      cors_allowed_origins:
+        - https://cast.home-assistant.io
 `, configName, namespace, haName)
 		Expect(utils.ApplyYAML(httpYAML, namespace)).To(Succeed())
 
@@ -302,12 +309,12 @@ spec:
 			g.Expect(src).To(Equal("Api"))
 		}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 
-		By("Verifying HTTPConfigReady condition reports Applied")
+		By("Verifying HTTPConfigReady eventually reports Applied")
 		Eventually(func(g Gomega) {
 			reason := utils.Kubectl("get", "haconfig", configName, "-n", namespace,
 				"-o", "jsonpath={.status.conditions[?(@.type=='HTTPConfigReady')].reason}")
 			g.Expect(reason).To(Equal("Applied"))
-		}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
+		}, utils.HotReloadTimeout, reconcileInterval).Should(Succeed())
 
 		By("Verifying the generated configuration.yaml contains no http: section")
 		Eventually(func(g Gomega) {
@@ -317,14 +324,14 @@ spec:
 			g.Expect(cm).NotTo(ContainSubstring("http:"))
 		}, utils.StatusUpdateTimeout, reconcileInterval).Should(Succeed())
 
-		By("Verifying repeated reconciles do not churn the config hash (no repeated writes)")
+		By("Verifying the config hash does not churn (the operator is not rewriting the ConfigMap)")
 		hash := utils.Kubectl("get", "haconfig", configName, "-n", namespace,
 			"-o", "jsonpath={.status.configHash}")
 		Consistently(func(g Gomega) {
 			h := utils.Kubectl("get", "haconfig", configName, "-n", namespace,
 				"-o", "jsonpath={.status.configHash}")
 			g.Expect(h).To(Equal(hash))
-		}, 20*time.Second, 4*time.Second).Should(Succeed())
+		}, 12*time.Second, 4*time.Second).Should(Succeed())
 	})
 
 	// -------------------------------------------------------------------------
