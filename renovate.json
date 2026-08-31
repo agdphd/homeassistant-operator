@@ -3,14 +3,32 @@
   "extends": ["config:recommended"],
   "timezone": "UTC",
   "schedule": ["at any time"],
+  "baseBranches": ["main", "dev"],
   "enabledManagers": ["gomod", "github-actions", "dockerfile", "custom.regex"],
   "commitMessagePrefix": "chore(deps):",
   "dependencyDashboard": false,
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"]
+  },
+  "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"],
   "packageRules": [
     {
-      "matchPackagePatterns": [".*"],
       "matchUpdateTypes": ["major", "minor", "patch", "pin", "digest"],
       "groupName": "all dependencies"
+    },
+    {
+      "description": "Indirect Go deps float with their parents. Renovate's default (indirect updates disabled) avoids standalone bumps across module renames / replace directives. Real CVEs in indirect deps are still raised via osvVulnerabilityAlerts.",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["indirect"],
+      "enabled": false
+    },
+    {
+      "description": "Keep main on non-breaking updates only; majors/breaking changes are integrated and tested on dev first (see docs/development/branching.md)",
+      "matchBaseBranches": ["main"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
     }
   ],
   "customManagers": [
