@@ -8,24 +8,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+## [v1.4.0] - 2026-09-01
 
-- **`http:` configuration is now delivered through the Home Assistant API on
-  2026.8+.** Home Assistant moved its `http` integration out of
-  `configuration.yaml` into its own store; the YAML block is ignored after a
-  one-time migration (and stops working entirely in Home Assistant 2027.2.0).
-  The operator now detects, per instance and re-checked every reconcile, whether
-  the running Home Assistant exposes the http config API. When it does, the
-  `http:` section from `spec.configuration` — plus the operator's default trusted
-  proxies for Ingress/Gateway-exposed instances — is applied through that API and
-  **omitted entirely from the generated `configuration.yaml`**, so Home Assistant
-  no longer reports a leftover-block warning. Nothing changes in your resource.
-  On older Home Assistant the `http:` block keeps going into `configuration.yaml`
-  as before. A new `status.httpConfigSource` (`Api`/`Yaml`) and `HTTPConfigReady`
-  condition report which channel is in use and whether it applied.
-  The resource stays the source of truth for `http` settings: a change made in
-  the Home Assistant UI under Settings → System → Network is reverted on the next
-  reconcile, and the operator does not confirm a pending change it did not send.
+### Fixed
+
+- **Default trusted proxies silently stopped working on Home Assistant 2026.8+.**
+  Home Assistant 2026.8 moved its `http` integration into its own store and
+  ignores the `http:` block in `configuration.yaml` after a one-time migration,
+  so the `use_x_forwarded_for` / `trusted_proxies` the operator injects for
+  Ingress- or Gateway-exposed instances no longer took effect — Home Assistant
+  saw the reverse-proxy address instead of the real client address, weakening IP
+  bans and login-attempt tracking and breaking any automation keyed on the
+  request source, and it raised a persistent repair warning about the leftover
+  block. The operator now delivers that configuration through Home Assistant's
+  http config API instead (see Added). Instances on Home Assistant older than
+  2026.8 are unaffected and keep using `configuration.yaml` exactly as before.
+
+### Added
+
+- **`http:` configuration delivered through the Home Assistant API on 2026.8+.**
+  Home Assistant moved its `http` integration out of `configuration.yaml` into
+  its own store; the YAML block is ignored after a one-time migration and stops
+  working entirely in Home Assistant 2027.2.0. The operator now detects — per
+  instance, re-checked on every reconcile so a Home Assistant upgrade or
+  downgrade is followed automatically — whether the running Home Assistant
+  exposes the http config API. When it does, the `http:` section from
+  `spec.configuration` (plus the operator's default trusted proxies for
+  Ingress/Gateway-exposed instances) is applied through that API and **omitted
+  entirely from the generated `configuration.yaml`**, so Home Assistant no longer
+  warns about a leftover block. **Nothing changes in your resource** — you keep
+  writing `http:` in `spec.configuration`, and on a stale manifest the operator
+  simply switches the delivery channel.
+
+  The desired configuration is built by merging Home Assistant's own reported
+  defaults, the stable keys the operator does not recognise (passed through so a
+  newer Home Assistant's options are not reset), and your `http:` section; it is
+  only written when it actually differs from what Home Assistant holds, after
+  stripping Home Assistant's write metadata and canonicalising trusted-proxy
+  entries — a repeated reconcile with no change produces no write. Home Assistant
+  restarts its own process when the change needs it; on this path the operator
+  does not additionally roll the pod (so `http` no longer forces a pod restart
+  the way it does on the `configuration.yaml` path). The resource is the source
+  of truth: a change made in the Home Assistant UI under Settings → System →
+  Network to a setting the resource covers is reverted on the next reconcile, and
+  the operator never confirms a pending change it did not send. An `http:`
+  `!include` the operator cannot read stays in `configuration.yaml` and is
+  reported as not applied.
+
+  New `status.httpConfigSource` (`Api` / `Yaml`) and `HTTPConfigReady` condition
+  on `HomeAssistantConfiguration` report which channel is in use and whether the
+  configuration took effect; `HTTPConfigRejected` and `HTTPConfigForeignChange`
+  events surface a Home Assistant rejection (with its message) or an
+  unconfirmed change from outside the operator. No new `spec` fields and no new
+  RBAC.
 
 ### Removed
 
@@ -427,7 +462,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Primary: k3s on Raspberry Pi 4/5 (ARM64)
 - Also supported: Any Kubernetes cluster (AMD64/ARM64)
 
-[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/przemekhys/homeassistant-operator/compare/v1.4.0...HEAD
+[v1.4.0]: https://github.com/przemekhys/homeassistant-operator/compare/v1.3.0...v1.4.0
 [v1.3.0]: https://github.com/przemekhys/homeassistant-operator/compare/v1.2.0...v1.3.0
 [v1.2.0]: https://github.com/przemekhys/homeassistant-operator/compare/v1.1.0...v1.2.0
 [v1.1.0]: https://github.com/przemekhys/homeassistant-operator/compare/v1.0.1...v1.1.0
