@@ -285,9 +285,13 @@ func (r *HomeAssistantReconciler) reconcileNativeTLSRemoval(ctx context.Context,
 	getErr := r.Get(ctx, client.ObjectKey{Name: nativeTLSCertificateName(ha), Namespace: ha.Namespace}, cert)
 	switch {
 	case getErr == nil:
-		certExisted = true
-		if err := r.deleteCertificate(ctx, ha, nativeTLSCertificateName(ha)); err != nil {
-			return err
+		// Only touch a Certificate this operator created for this instance — a
+		// user-managed Certificate that happens to share the name is left alone.
+		if ref := metav1.GetControllerOf(cert); ref != nil && ref.UID == ha.UID {
+			certExisted = true
+			if err := r.deleteCertificate(ctx, ha, nativeTLSCertificateName(ha)); err != nil {
+				return err
+			}
 		}
 	case apierrors.IsNotFound(getErr), meta.IsNoMatchError(getErr):
 		// Nothing to delete (already gone, or cert-manager not installed).

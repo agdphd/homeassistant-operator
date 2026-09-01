@@ -27,7 +27,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -81,7 +83,7 @@ func newTLSTestReconciler(t *testing.T, certManagerPresent bool, objs ...client.
 // issuerRef — i.e. a mode that needs cert-manager.
 func ingressTLSHA(name string) *hav1.HomeAssistant {
 	return &hav1.HomeAssistant{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", UID: types.UID(name + "-uid")},
 		Spec: hav1.HomeAssistantSpec{
 			Ingress: &hav1.IngressSpec{
 				Enabled: true,
@@ -236,8 +238,23 @@ func TestReconcileTLSAvailableSetsCondition(t *testing.T) {
 }
 
 // nativeCert builds the (now-obsolete) operator-managed native TLS Certificate
-// object for ha, as a transition-era instance would still have on the cluster.
+// object for ha, with the controller owner reference the operator would have set,
+// as a transition-era instance would still have on the cluster.
 func nativeCert(ha *hav1.HomeAssistant) *unstructured.Unstructured {
+	c := foreignCert(ha)
+	c.SetOwnerReferences([]metav1.OwnerReference{{
+		APIVersion: hav1.GroupVersion.String(),
+		Kind:       "HomeAssistant",
+		Name:       ha.Name,
+		UID:        ha.UID,
+		Controller: ptr.To(true),
+	}})
+	return c
+}
+
+// foreignCert is a Certificate sharing the native-TLS name but NOT owned by the
+// operator — a user-managed resource the cleanup must leave alone.
+func foreignCert(ha *hav1.HomeAssistant) *unstructured.Unstructured {
 	c := &unstructured.Unstructured{Object: map[string]interface{}{}}
 	c.SetGroupVersionKind(certificateGVK)
 	c.SetName(nativeTLSCertificateName(ha))
@@ -280,7 +297,7 @@ func TestReconcileNativeTLSRemoval(t *testing.T) {
 
 	t.Run("removes condition + certificate and emits one warning", func(t *testing.T) {
 		ha := withCondition(&hav1.HomeAssistant{
-			ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default"},
+			ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default", UID: "home-uid"},
 		}, conditionTLSReady)
 		r := newTLSTestReconciler(t, true, ha, nativeCert(ha))
 
@@ -319,6 +336,23 @@ func TestReconcileNativeTLSRemoval(t *testing.T) {
 		}
 	})
 
+	t.Run("does not delete a same-named Certificate the operator does not own", func(t *testing.T) {
+		ha := &hav1.HomeAssistant{ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default", UID: "home-uid"}}
+		r := newTLSTestReconciler(t, true, ha, foreignCert(ha))
+
+		if err := r.reconcileNativeTLSRemoval(ctx, ha); err != nil {
+			t.Fatalf("reconcileNativeTLSRemoval error: %v", err)
+		}
+		if certGone(t, r, ha) {
+			t.Fatal("a user-managed Certificate sharing the native-TLS name must not be deleted")
+		}
+		for _, e := range warningEvents(r) {
+			if strings.Contains(e, eventNativeTLSRemoved) {
+				t.Fatalf("unexpected %s event for a foreign Certificate", eventNativeTLSRemoved)
+			}
+		}
+	})
+
 	t.Run("keeps CertManagerAvailable when an edge TLS mode still needs it", func(t *testing.T) {
 		ha := withCondition(ingressTLSHA("edge"), conditionTLSReady)
 		withCondition(ha, conditionCertManagerAvailable)
@@ -337,7 +371,7 @@ func TestReconcileNativeTLSRemoval(t *testing.T) {
 
 	t.Run("idempotent: second run is a no-op with no extra event", func(t *testing.T) {
 		ha := withCondition(&hav1.HomeAssistant{
-			ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default"},
+			ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default", UID: "home-uid"},
 		}, conditionTLSReady)
 		r := newTLSTestReconciler(t, true, ha, nativeCert(ha))
 

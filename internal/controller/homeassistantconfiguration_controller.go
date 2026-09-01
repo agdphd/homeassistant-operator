@@ -224,8 +224,10 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	// restart-vs-hot-reload decision — Home Assistant restarts its own process
 	// when the API change needs it. Strip http: from both sides so its
 	// appearance/disappearance never drives a pod rollout (a second restart).
+	oldHadHTTP := false
 	if httpDecision.path == httpPathAPI && httpReadable {
 		if stripped, serr := stripHTTPSection(oldConfig); serr == nil {
+			oldHadHTTP = stripped != oldConfig
 			oldConfig = stripped
 		}
 	}
@@ -262,7 +264,8 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	}
 
 	// Perform configuration reload if hash changed or if ConfigMap was restored from external edit
-	if config.Status.ConfigHash != configHash || syncedContent {
+	if (config.Status.ConfigHash != configHash || syncedContent) &&
+		!isDeliveryChannelSwitchOnly(oldHadHTTP, syncedContent, oldConfig, canonicalContent) {
 		if err := r.performConfigReload(ctx, config, ha, configHash, oldConfig, canonicalContent); err != nil {
 			log.Error(err, "Failed to reload configuration")
 			meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
@@ -415,6 +418,17 @@ func (r *HomeAssistantConfigurationReconciler) SetupWithManager(mgr ctrl.Manager
 		).
 		Named("homeassistantconfiguration").
 		Complete(r)
+}
+
+// isDeliveryChannelSwitchOnly reports whether the only reason the generated
+// configuration changed this reconcile is that http: moved from configuration.yaml
+// to the Home Assistant API (both sides are identical once http: is excluded).
+// That is a one-time transition on upgrade, not a configuration change: the http
+// settings are applied by reconcileHTTPConfig and the rest of the file is
+// unchanged, so no reload — and no pod rollout — is needed. An external ConfigMap
+// edit (syncedContent) is always a real change and is never treated as a switch.
+func isDeliveryChannelSwitchOnly(oldHadHTTP, syncedContent bool, oldConfig, canonicalContent string) bool {
+	return oldHadHTTP && !syncedContent && oldConfig == canonicalContent
 }
 
 // needsRestart analyzes configuration changes and determines if restart is required
