@@ -18,10 +18,12 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -32,6 +34,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	hav1 "github.com/przemekhys/homeassistant-operator/api/v1"
 )
@@ -51,6 +54,12 @@ func restMapperWithCertManager(present bool) meta.RESTMapper {
 }
 
 func newTLSTestReconciler(t *testing.T, certManagerPresent bool, objs ...client.Object) *HomeAssistantReconciler {
+	return newTLSTestReconcilerWithFuncs(t, certManagerPresent, interceptor.Funcs{}, objs...)
+}
+
+func newTLSTestReconcilerWithFuncs(
+	t *testing.T, certManagerPresent bool, funcs interceptor.Funcs, objs ...client.Object,
+) *HomeAssistantReconciler {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := hav1.AddToScheme(scheme); err != nil {
@@ -71,6 +80,7 @@ func newTLSTestReconciler(t *testing.T, certManagerPresent bool, objs ...client.
 		WithRESTMapper(restMapperWithCertManager(certManagerPresent)).
 		WithObjects(objs...).
 		WithStatusSubresource(&hav1.HomeAssistant{}).
+		WithInterceptorFuncs(funcs).
 		Build()
 	return &HomeAssistantReconciler{
 		Client:   cl,
@@ -350,6 +360,44 @@ func TestReconcileNativeTLSRemoval(t *testing.T) {
 			if strings.Contains(e, eventNativeTLSRemoved) {
 				t.Fatalf("unexpected %s event for a foreign Certificate", eventNativeTLSRemoved)
 			}
+		}
+	})
+
+	t.Run("Certificate replaced between the validating Get and the Delete is not removed", func(t *testing.T) {
+		ha := withCondition(&hav1.HomeAssistant{
+			ObjectMeta: metav1.ObjectMeta{Name: "home", Namespace: "default", UID: "home-uid"},
+		}, conditionTLSReady)
+		owned := nativeCert(ha)
+		owned.SetUID("native-cert-uid")
+
+		var gotUID *types.UID
+		funcs := interceptor.Funcs{
+			Delete: func(
+				_ context.Context, _ client.WithWatch, _ client.Object, opts ...client.DeleteOption,
+			) error {
+				do := &client.DeleteOptions{}
+				do.ApplyOptions(opts)
+				if do.Preconditions != nil {
+					gotUID = do.Preconditions.UID
+				}
+				// Simulate the object having been deleted and recreated with a
+				// different identity since reconcileNativeTLSRemoval fetched it:
+				// the API server rejects the UID precondition with a Conflict.
+				return apierrors.NewConflict(
+					certificateGVK.GroupVersion().WithResource("certificates").GroupResource(),
+					owned.GetName(), errors.New("uid precondition mismatch"))
+			},
+		}
+		r := newTLSTestReconcilerWithFuncs(t, true, funcs, ha, owned)
+
+		if err := r.reconcileNativeTLSRemoval(ctx, ha); err != nil {
+			t.Fatalf("reconcileNativeTLSRemoval must swallow the precondition Conflict, got: %v", err)
+		}
+		if gotUID == nil || *gotUID != "native-cert-uid" {
+			t.Fatalf("delete must be pinned to the validated Certificate UID, got %v", gotUID)
+		}
+		if meta.FindStatusCondition(ha.Status.Conditions, conditionTLSReady) != nil {
+			t.Fatal("cleanup should still strip TLSReady after a tolerated delete Conflict")
 		}
 	})
 
