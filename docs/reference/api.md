@@ -48,7 +48,6 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `networkPolicy` _[NetworkPolicyAlphaSpec](#networkpolicyalphaspec)_ | NetworkPolicy controls whether the operator creates a NetworkPolicy<br />restricting ingress to the Home Assistant pod. |  | Optional: \{\} <br /> |
-| `tls` _[TLSAlphaSpec](#tlsalphaspec)_ | TLS groups experimental TLS integration with cert-manager. Native TLS<br />changes the Home Assistant pod networking/config, so it starts in<br />spec.alpha until it stabilizes. |  | Optional: \{\} <br /> |
 | `devices` _[DevicePassthroughEntry](#devicepassthroughentry) array_ | Devices declares host device nodes (e.g. /dev/ttyACM0 for a Zigbee/<br />Z-Wave USB coordinator) to mount into the Home Assistant container.<br />Each entry is mounted via a hostPath volume typed as a character<br />device; the container is never granted `privileged: true` for this.<br />Declaring at least one entry changes the pod's security context, so<br />this starts in spec.alpha until it stabilizes. This does not affect<br />where the pod is scheduled — the declared device(s) must already<br />exist on whichever node the pod lands on (see node pinning, a<br />separate capability) for this to be useful. |  | Optional: \{\} <br /> |
 
 
@@ -311,6 +310,23 @@ _Appears in:_
 | `corsDomains` _string array_ | CorsDomains is a list of allowed CORS origins |  | Optional: \{\} <br /> |
 | `trustProxy` _boolean_ | TrustProxy enables trust in X-Forwarded-For header |  | Optional: \{\} <br /> |
 | `useXForwardedFor` _boolean_ | UseXForwardedFor enables usage of X-Forwarded-For header |  | Optional: \{\} <br /> |
+
+
+#### HTTPConfigSource
+
+_Underlying type:_ _string_
+
+HTTPConfigSource is the channel the operator uses for the http: configuration.
+
+
+
+_Appears in:_
+- [HomeAssistantConfigurationStatus](#homeassistantconfigurationstatus)
+
+| Field | Description |
+| --- | --- |
+| `Api` | HTTPConfigSourceAPI: delivered through the Home Assistant http config API.<br /> |
+| `Yaml` | HTTPConfigSourceYAML: written into configuration.yaml (older Home Assistant).<br /> |
 
 
 #### HTTPHeader
@@ -582,7 +598,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `homeAssistantRef` _[HomeAssistantReference](#homeassistantreference)_ | HomeAssistantRef references the HomeAssistant CR that will use this automation |  | Required: \{\} <br /> |
-| `id` _string_ | ID is a unique identifier for the automation (used by Home Assistant)<br />If not specified, will be auto-generated from the CR name |  | Optional: \{\} <br /> |
+| `id` _string_ | ID is a unique identifier for the automation (used by Home Assistant)<br />If not specified, will be auto-generated from the CR name<br />Must contain only lowercase letters, digits, and underscores. Existing<br />resources with an id predating this constraint (uppercase letters or<br />hyphens) keep working until their next update, which will then be<br />rejected until id is renamed to a conforming value. |  | Pattern: `^[a-z][a-z0-9_]*$` <br />Optional: \{\} <br /> |
 | `alias` _string_ | Alias is a user-friendly name for the automation |  | MinLength: 1 <br />Required: \{\} <br /> |
 | `description` _string_ | Description provides details about what the automation does |  | Optional: \{\} <br /> |
 | `triggers` _[AutomationTrigger](#automationtrigger) array_ | Triggers define the events that will trigger this automation<br />At least one trigger is required |  | MinItems: 1 <br />Required: \{\} <br /> |
@@ -699,6 +715,7 @@ _Appears in:_
 | `lastError` _string_ | LastError contains the error message from the last failed reload attempt<br />Cleared when reload succeeds |  | Optional: \{\} <br /> |
 | `observedGeneration` _integer_ | Generation tracks the generation of the spec that the status reflects |  | Optional: \{\} <br /> |
 | `trustedProxiesDefaulted` _boolean_ | TrustedProxiesDefaulted reports whether the operator's default<br />http.trusted_proxies / http.use_x_forwarded_for values are currently<br />active in the generated configuration for the referenced HomeAssistant.<br />false covers every case where they are not active (not exposed via<br />Ingress/Gateway, opted out via spec.disableDefaultTrustedProxies, or the<br />user already manages these keys themselves) — see the HomeAssistant's own<br />ExposureReady condition message for which of those it is. |  | Optional: \{\} <br /> |
+| `httpConfigSource` _[HTTPConfigSource](#httpconfigsource)_ | HTTPConfigSource reports which channel the operator uses to deliver the<br />http: configuration to the referenced HomeAssistant: "Api" on Home<br />Assistant 2026.8+ (the http config WebSocket API), "Yaml" on older<br />versions (the http: block in configuration.yaml). Empty until the operator<br />has been able to determine it (the instance not yet reachable). |  | Enum: [Api Yaml] <br />Optional: \{\} <br /> |
 
 
 #### HomeAssistantFloor
@@ -1045,7 +1062,7 @@ _Appears in:_
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
 | `homeAssistantRef` _[HomeAssistantReference](#homeassistantreference)_ | HomeAssistantRef references the HomeAssistant CR that will use this scene |  | Required: \{\} <br /> |
-| `id` _string_ | ID is a unique identifier for the scene (used by Home Assistant)<br />If not specified, will be auto-generated from the CR name |  | Optional: \{\} <br /> |
+| `id` _string_ | ID is a unique identifier for the scene (used by Home Assistant)<br />If not specified, will be auto-generated from the CR name<br />Must contain only lowercase letters, digits, and underscores. Existing<br />resources with an id predating this constraint (uppercase letters or<br />hyphens) keep working until their next update, which will then be<br />rejected until id is renamed to a conforming value. |  | Pattern: `^[a-z][a-z0-9_]*$` <br />Optional: \{\} <br /> |
 | `name` _string_ | Name is a user-friendly name for the scene (displayed in Home Assistant UI)<br />If not specified, the CR name will be used |  | MinLength: 1 <br />Optional: \{\} <br /> |
 | `icon` _string_ | Icon is a Material Design icon for the scene (e.g., "mdi:movie", "mdi:candle")<br />See https://mdi.bessarabov.com/ for available icons |  | Optional: \{\} <br /> |
 | `entities` _[SceneEntity](#sceneentity) array_ | Entities define the list of devices and their states to set when scene is activated<br />At least one entity is required |  | MinItems: 1 <br />Required: \{\} <br /> |
@@ -1396,7 +1413,6 @@ operator only references issuers — it never creates application issuers.
 _Appears in:_
 - [GatewaySpec](#gatewayspec)
 - [IngressTLSSpec](#ingresstlsspec)
-- [NativeTLSAlphaSpec](#nativetlsalphaspec)
 
 | Field | Description | Default | Validation |
 | --- | --- | --- | --- |
@@ -1462,25 +1478,6 @@ _Appears in:_
 | `passwordRef` _[SecretKeySelector](#secretkeyselector)_ | PasswordRef references a Secret containing the MQTT password<br />The Secret should have a "password" key |  | Optional: \{\} <br /> |
 | `clientID` _string_ | ClientID for MQTT connection |  | Optional: \{\} <br /> |
 | `keepAlive` _integer_ | KeepAlive defines MQTT keep-alive interval in seconds | 60 | Optional: \{\} <br /> |
-
-
-#### NativeTLSAlphaSpec
-
-
-
-NativeTLSAlphaSpec configures native TLS termination inside Home Assistant.
-
-
-
-_Appears in:_
-- [TLSAlphaSpec](#tlsalphaspec)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `enabled` _boolean_ | Enabled turns on native TLS. Home Assistant serves HTTPS on its existing<br />port (8123); the Service port is unchanged. Requires cert-manager to be<br />installed (or a bring-your-own SecretName). When cert-manager is absent,<br />the operator reports a status condition and keeps serving HTTP.<br />Deliberately without omitempty (see NetworkPolicyAlphaSpec.Enabled). | false | Optional: \{\} <br /> |
-| `issuerRef` _[IssuerReference](#issuerreference)_ | IssuerRef references an existing cert-manager Issuer/ClusterIssuer used to<br />issue the certificate. Required unless SecretName (bring-your-own) is set. |  | Optional: \{\} <br /> |
-| `dnsNames` _string array_ | DNSNames are additional SANs for the certificate. The operator always adds<br />the in-cluster Service FQDN so it can trust HA over HTTPS. |  | Optional: \{\} <br /> |
-| `secretName` _string_ | SecretName references a user-provided TLS Secret (bring-your-own). When<br />set, the operator does not create a cert-manager Certificate and this<br />Secret takes precedence over IssuerRef. |  | Optional: \{\} <br /> |
 
 
 #### NetworkPolicyAlphaSpec
@@ -1694,19 +1691,3 @@ _Appears in:_
 | `accessMode` _[PersistentVolumeAccessMode](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#persistentvolumeaccessmode-v1-core)_ | AccessMode for the PVC | ReadWriteOnce | Optional: \{\} <br /> |
 | `retainPVC` _boolean_ | RetainPVC controls whether the PVC survives deletion of the HomeAssistant CR.<br />When true, no ownerReference is set on the PVC — it will not be garbage-collected<br />when the CR is deleted (e.g. by FluxCD reconciliation), preventing accidental data loss.<br />When false (default), the PVC is owned by the CR and deleted together with it. | false | Optional: \{\} <br /> |
 | `initContainer` _[InitContainerSpec](#initcontainerspec)_ | InitContainer configures the init container that pre-creates required YAML files<br />(automations.yaml, scenes.yaml, scripts.yaml) on the PVC before Home Assistant starts.<br />This prevents HA from entering recovery mode when the !include directives are present<br />but the files do not yet exist. |  | Optional: \{\} <br /> |
-
-
-#### TLSAlphaSpec
-
-
-
-TLSAlphaSpec groups the (alpha) TLS integration modes backed by cert-manager.
-
-
-
-_Appears in:_
-- [AlphaSpec](#alphaspec)
-
-| Field | Description | Default | Validation |
-| --- | --- | --- | --- |
-| `native` _[NativeTLSAlphaSpec](#nativetlsalphaspec)_ | Native enables Home Assistant to serve HTTPS natively (TLS terminated in<br />HA itself on the same port), using a certificate issued by cert-manager. |  | Optional: \{\} <br /> |

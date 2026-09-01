@@ -58,7 +58,7 @@ const (
 // are set to sensible RFC1918 defaults whenever the HomeAssistant instance is
 // exposed via Ingress or Gateway API, unless the user opted out
 // (spec.disableDefaultTrustedProxies) or already set either key themselves.
-// Like injectNativeTLS/injectRecorder, it recomputes from the pristine
+// Like injectRecorder, it recomputes from the pristine
 // configYAML on every call — recomputing from spec.disableDefaultTrustedProxies/
 // spec.ingress/spec.gateway is what makes removal automatic: a reconcile
 // after exposure is disabled or the opt-out is set simply doesn't add the

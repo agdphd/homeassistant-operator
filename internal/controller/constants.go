@@ -30,12 +30,6 @@ const (
 	// Used to detect spec.id renames and delete the old resource from HA.
 	lastAppliedIDAnnotationKey = "ha.homeassistant.io/last-applied-id"
 
-	// nativeTLSHashAnnotationKey holds a hash of the native TLS certificate on the
-	// StatefulSet pod template. When cert-manager rotates the certificate the hash
-	// changes, triggering a rolling restart so Home Assistant picks up the new
-	// material.
-	nativeTLSHashAnnotationKey = "ha.homeassistant.io/native-tls-hash"
-
 	// Reload method names for status tracking
 	// Used by Configuration and Automation controllers
 	reloadMethodRestart   = "restart"
@@ -53,30 +47,41 @@ const (
 	// Condition reasons for ReloadReady
 	reasonTokenNotAvailable = "TokenNotAvailable"
 
+	// HTTP config delivery (HomeAssistantConfiguration): condition, reasons, events.
+	conditionHTTPConfigReady      = "HTTPConfigReady"
+	reasonHTTPConfigApplied       = "Applied"
+	reasonHTTPConfigManagedInYAML = "ManagedInYaml"
+	reasonHTTPConfigRejected      = "Rejected"
+	reasonHTTPConfigForeign       = "ForeignPendingChange"
+	reasonHTTPConfigWaiting       = "WaitingForHomeAssistant"
+	reasonHTTPConfigUnreadable    = "UnreadableSection"
+	eventHTTPConfigRejected       = "HTTPConfigRejected"
+	eventHTTPConfigForeignChange  = "HTTPConfigForeignChange"
+
 	// TLS / cert-manager integration condition types
 	conditionCertManagerAvailable = "CertManagerAvailable"
-	conditionTLSReady             = "TLSReady"
 	conditionExposureReady        = "ExposureReady"
+
+	// conditionTLSReady is retained only for the transitional cleanup step
+	// (reconcileNativeTLSRemoval), which strips this now-obsolete condition from
+	// HomeAssistant objects that had the removed spec.alpha.tls (native TLS)
+	// feature enabled. Safe to delete together with that step in a later minor.
+	conditionTLSReady = "TLSReady"
 
 	// TLS / cert-manager condition reasons (PascalCase per K8s convention)
 	reasonCertManagerInstalled    = "CertManagerInstalled"
 	reasonCertManagerNotInstalled = "CertManagerNotInstalled"
-	reasonIssuerNotReady          = "IssuerNotReady"
-	reasonCertificateNotIssued    = "CertificateNotIssued"
-	reasonWaitingForCertManager   = "WaitingForCertManager"
-	reasonTLSReady                = "TLSReady"
-	reasonUsingProvidedSecret     = "UsingProvidedSecret"
-	reasonProvidedSecretInvalid   = "ProvidedSecretInvalid"
 	reasonExposureReady           = "ExposureReady"
 
 	// TLS / cert-manager event reasons
 	eventCertManagerUnavailable = "CertManagerUnavailable"
 	eventCertificateRequested   = "CertificateRequested"
-	eventCertificateIssued      = "CertificateIssued"
-	eventCertificateFailed      = "CertificateFailed"
-	eventNativeTLSEnabled       = "NativeTLSEnabled"
-	eventNativeTLSDisabled      = "NativeTLSDisabled"
 	eventExposureConfigured     = "ExposureConfigured"
+
+	// eventNativeTLSRemoved is emitted once, by the transitional cleanup step,
+	// on a HomeAssistant that had the removed native TLS feature enabled. Safe to
+	// delete together with reconcileNativeTLSRemoval in a later minor.
+	eventNativeTLSRemoved = "NativeTLSRemoved"
 
 	// certManagerGroup is the cert-manager API group used for detection and
 	// Certificate resources.

@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -124,7 +125,9 @@ var reloadableHttpKeys = map[string]bool{
 // HomeAssistantConfigurationReconciler reconciles a HomeAssistantConfiguration object
 type HomeAssistantConfigurationReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme      *runtime.Scheme
+	Recorder    events.EventRecorder
+	NewHAClient func(baseURL string) *haclient.Client // overridable for testing
 }
 
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistantconfigurations,verbs=get;list;watch
@@ -135,6 +138,7 @@ type HomeAssistantConfigurationReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups=ha.homeassistant.io,resources=homeassistants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -181,6 +185,28 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
+	// Probe the instance for http config API support (HA 2026.8+). On the API
+	// path the http: section is lifted out of the generated file and delivered
+	// through the API instead — so Home Assistant does not ignore it and warn.
+	httpDecision := r.decideHTTPConfigPath(ctx, ha)
+	var httpSection haclient.HTTPConfigData
+	httpReadable := true
+	if httpDecision.path == httpPathAPI {
+		httpSection, httpReadable, err = readHTTPSection(canonicalContent)
+		if err != nil {
+			log.Error(err, "Failed to read http: section; keeping it in configuration.yaml")
+			httpReadable = false
+		}
+		if httpReadable {
+			if stripped, serr := stripHTTPSection(canonicalContent); serr == nil {
+				canonicalContent = stripped
+			} else {
+				log.Error(serr, "Failed to strip http: section; keeping it in configuration.yaml")
+				httpReadable = false
+			}
+		}
+	}
+
 	configHash := calculateConfigHash(canonicalContent)
 
 	// Capture old configuration BEFORE updating ConfigMap
@@ -193,6 +219,17 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 		Namespace: config.Namespace,
 	}, existingConfigMap); err == nil {
 		oldConfig = existingConfigMap.Data[configurationYamlKey]
+	}
+	// On the API path, the http: section is not the operator's concern for the
+	// restart-vs-hot-reload decision — Home Assistant restarts its own process
+	// when the API change needs it. Strip http: from both sides so its
+	// appearance/disappearance never drives a pod rollout (a second restart).
+	oldHadHTTP := false
+	if httpDecision.path == httpPathAPI && httpReadable {
+		if stripped, serr := stripHTTPSection(oldConfig); serr == nil {
+			oldHadHTTP = stripped != oldConfig
+			oldConfig = stripped
+		}
 	}
 
 	// Sync ConfigMap back to CRD state if it was modified externally (operator exclusivity).
@@ -227,7 +264,8 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 	}
 
 	// Perform configuration reload if hash changed or if ConfigMap was restored from external edit
-	if config.Status.ConfigHash != configHash || syncedContent {
+	if (config.Status.ConfigHash != configHash || syncedContent) &&
+		!isDeliveryChannelSwitchOnly(oldHadHTTP, syncedContent, oldConfig, canonicalContent) {
 		if err := r.performConfigReload(ctx, config, ha, configHash, oldConfig, canonicalContent); err != nil {
 			log.Error(err, "Failed to reload configuration")
 			meta.SetStatusCondition(&config.Status.Conditions, metav1.Condition{
@@ -255,13 +293,19 @@ func (r *HomeAssistantConfigurationReconciler) Reconcile(ctx context.Context, re
 		ObservedGeneration: config.Generation,
 	})
 
+	// Deliver the http: configuration through the Home Assistant API when it is
+	// available. Runs last and never aborts the reconcile: a transient failure
+	// talking to Home Assistant must not freeze the ConfigMap or the status
+	// above. Its status mutations are folded into the single Status().Update.
+	httpResult := r.reconcileHTTPConfig(ctx, config, ha, httpDecision, httpSection, httpReadable)
+
 	if err := r.Status().Update(ctx, config); err != nil {
 		log.Error(err, "Failed to update HomeAssistantConfiguration status")
 		return ctrl.Result{}, err
 	}
 
 	log.Info("Successfully reconciled HomeAssistantConfiguration")
-	return ctrl.Result{}, nil
+	return httpResult, nil
 }
 
 // reconcileGeneratedConfigMap creates or updates the ConfigMap containing
@@ -374,6 +418,17 @@ func (r *HomeAssistantConfigurationReconciler) SetupWithManager(mgr ctrl.Manager
 		).
 		Named("homeassistantconfiguration").
 		Complete(r)
+}
+
+// isDeliveryChannelSwitchOnly reports whether the only reason the generated
+// configuration changed this reconcile is that http: moved from configuration.yaml
+// to the Home Assistant API (both sides are identical once http: is excluded).
+// That is a one-time transition on upgrade, not a configuration change: the http
+// settings are applied by reconcileHTTPConfig and the rest of the file is
+// unchanged, so no reload — and no pod rollout — is needed. An external ConfigMap
+// edit (syncedContent) is always a real change and is never treated as a switch.
+func isDeliveryChannelSwitchOnly(oldHadHTTP, syncedContent bool, oldConfig, canonicalContent string) bool {
+	return oldHadHTTP && !syncedContent && oldConfig == canonicalContent
 }
 
 // needsRestart analyzes configuration changes and determines if restart is required
@@ -586,7 +641,7 @@ func (r *HomeAssistantConfigurationReconciler) buildHomeAssistantURL(ha *hav1.Ho
 	if ha.Spec.Service != nil && ha.Spec.Service.Port != 0 {
 		port = ha.Spec.Service.Port
 	}
-	return fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", haScheme(ha), serviceName, ha.Namespace, port)
+	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", serviceName, ha.Namespace, port)
 }
 
 // performHotReload attempts to hot-reload the configuration via HA REST API
@@ -594,16 +649,11 @@ func (r *HomeAssistantConfigurationReconciler) buildHomeAssistantURL(ha *hav1.Ho
 // Kubelet typically syncs ConfigMap volumes every 60s (syncFrequency), so we need
 // to wait for the file to be synced to the pod before hot-reload will work correctly
 func (r *HomeAssistantConfigurationReconciler) performHotReload(
-	ctx context.Context, ha *hav1.HomeAssistant, haURL, token string,
+	ctx context.Context, haURL, token string,
 ) error {
 	log := logf.FromContext(ctx)
 
 	haClient := haclient.NewClient(haURL)
-	if nativeTLSActive(ha) {
-		if ca := loadNativeTLSCA(ctx, r.Client, ha); len(ca) > 0 {
-			haClient = haClient.WithRootCAs(ca)
-		}
-	}
 
 	log.Info("Waiting for kubelet to sync ConfigMap to pod")
 
@@ -785,7 +835,7 @@ func (r *HomeAssistantConfigurationReconciler) performConfigReload(
 	}
 
 	// Attempt hot-reload
-	if err := r.performHotReload(ctx, ha, haURL, token); err != nil {
+	if err := r.performHotReload(ctx, haURL, token); err != nil {
 		// If user explicitly requested hot-reload strategy, fail instead of falling back
 		if strategy == string(hav1.ConfigurationReloadStrategyHotReload) {
 			config.Status.LastError = fmt.Sprintf("Hot-reload failed: %v", err)
@@ -1118,7 +1168,7 @@ func (r *HomeAssistantConfigurationReconciler) buildConfigContent(
 		if err := r.cleanupRecorderDBSecret(ctx, config); err != nil {
 			logf.FromContext(ctx).Error(err, "Failed to clean up recorder-db secret (best-effort)")
 		}
-		return r.applyNativeTLSAndTrustedProxies(ctx, ha, content)
+		return applyTrustedProxies(ha, content)
 	}
 
 	dbURL, fromSecretRef, err := r.resolveRecorderDB(ctx, config)
@@ -1142,46 +1192,15 @@ func (r *HomeAssistantConfigurationReconciler) buildConfigContent(
 	if err != nil {
 		return "", trustedProxiesNotExposed, err
 	}
-	return r.applyNativeTLSAndTrustedProxies(ctx, ha, content)
+	return applyTrustedProxies(ha, content)
 }
 
-// applyNativeTLSAndTrustedProxies applies native-TLS injection (unchanged
-// behavior) and then trusted-proxies injection, returning the latter's
-// outcome for the caller to persist to status.
-func (r *HomeAssistantConfigurationReconciler) applyNativeTLSAndTrustedProxies(
-	ctx context.Context, ha *hav1.HomeAssistant, content string,
-) (string, trustedProxiesOutcome, error) {
-	content, err := r.applyNativeTLS(ctx, ha, content)
-	if err != nil {
-		return "", trustedProxiesNotExposed, err
-	}
+// applyTrustedProxies applies trusted-proxies injection, returning its outcome
+// for the caller to persist to status.
+func applyTrustedProxies(ha *hav1.HomeAssistant, content string) (string, trustedProxiesOutcome, error) {
 	content, outcome, err := injectTrustedProxies(content, ha)
 	if err != nil {
 		return "", trustedProxiesNotExposed, err
 	}
 	return content, outcome, nil
-}
-
-// applyNativeTLS injects http.ssl_certificate/ssl_key into the configuration when
-// native TLS is enabled AND the TLS Secret already exists, so Home Assistant never
-// starts pointing at a certificate file that has not been provisioned yet.
-func (r *HomeAssistantConfigurationReconciler) applyNativeTLS(
-	ctx context.Context, ha *hav1.HomeAssistant, content string,
-) (string, error) {
-	if ha == nil {
-		return content, nil
-	}
-	n := nativeTLS(ha)
-	if n == nil || !n.Enabled {
-		return content, nil
-	}
-	s := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Name: nativeTLSSecretName(ha), Namespace: ha.Namespace}, s); err != nil {
-		if errors.IsNotFound(err) {
-			// Not provisioned yet — emit the HTTP config; do not strip TLS silently.
-			return content, nil
-		}
-		return "", err
-	}
-	return injectNativeTLS(content)
 }

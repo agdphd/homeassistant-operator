@@ -200,7 +200,26 @@ type HomeAssistantConfigurationStatus struct {
 	// ExposureReady condition message for which of those it is.
 	// +optional
 	TrustedProxiesDefaulted *bool `json:"trustedProxiesDefaulted,omitempty"`
+
+	// HTTPConfigSource reports which channel the operator uses to deliver the
+	// http: configuration to the referenced HomeAssistant: "Api" on Home
+	// Assistant 2026.8+ (the http config WebSocket API), "Yaml" on older
+	// versions (the http: block in configuration.yaml). Empty until the operator
+	// has been able to determine it (the instance not yet reachable).
+	// +kubebuilder:validation:Enum=Api;Yaml
+	// +optional
+	HTTPConfigSource HTTPConfigSource `json:"httpConfigSource,omitempty"`
 }
+
+// HTTPConfigSource is the channel the operator uses for the http: configuration.
+type HTTPConfigSource string
+
+const (
+	// HTTPConfigSourceAPI: delivered through the Home Assistant http config API.
+	HTTPConfigSourceAPI HTTPConfigSource = "Api"
+	// HTTPConfigSourceYAML: written into configuration.yaml (older Home Assistant).
+	HTTPConfigSourceYAML HTTPConfigSource = "Yaml"
+)
 
 // +kubebuilder:storageversion
 // +kubebuilder:object:root=true

@@ -18,7 +18,6 @@ package controller
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 	"time"
 
@@ -45,82 +44,16 @@ var certificateGVK = schema.GroupVersionKind{
 	Kind:    certManagerKind,
 }
 
-// nativeTLS returns the native TLS alpha spec, or nil when not configured.
-func nativeTLS(ha *hav1.HomeAssistant) *hav1.NativeTLSAlphaSpec {
-	if ha.Spec.Alpha != nil && ha.Spec.Alpha.TLS != nil {
-		return ha.Spec.Alpha.TLS.Native
-	}
-	return nil
-}
-
-// nativeTLSCertificateName is the operator-managed Certificate/Secret name for
-// native TLS.
-func nativeTLSCertificateName(ha *hav1.HomeAssistant) string {
-	return ha.Name + "-native-tls"
-}
-
-// serviceFQDN returns the in-cluster DNS name of the Home Assistant Service, used
-// as a certificate SAN so the operator can verify HA over HTTPS.
-func serviceFQDN(ha *hav1.HomeAssistant) string {
-	return fmt.Sprintf("%s.%s.svc.cluster.local", ha.Name, ha.Namespace)
-}
-
-// nativeTLSSecretName returns the Secret holding the native TLS material: the
-// bring-your-own Secret when set, otherwise the operator-managed one.
-func nativeTLSSecretName(ha *hav1.HomeAssistant) string {
-	if n := nativeTLS(ha); n != nil && n.SecretName != "" {
-		return n.SecretName
-	}
-	return nativeTLSCertificateName(ha)
-}
-
-// nativeTLSActive reports whether native TLS is enabled AND the certificate is
-// ready (TLSReady=True). This single predicate gates the pod mount, the config
-// injection and the operator→HA scheme so they flip together, avoiding a window
-// where HA serves HTTPS but the operator still speaks HTTP (or vice versa).
-func nativeTLSActive(ha *hav1.HomeAssistant) bool {
-	n := nativeTLS(ha)
-	return n != nil && n.Enabled && meta.IsStatusConditionTrue(ha.Status.Conditions, conditionTLSReady)
-}
-
-// haScheme returns "https" when native TLS is active, else "http".
-func haScheme(ha *hav1.HomeAssistant) string {
-	if nativeTLSActive(ha) {
-		return "https"
-	}
-	return "http"
-}
-
-// loadNativeTLSCA reads the CA bundle (ca.crt) from the native TLS Secret so the
-// operator can trust Home Assistant over HTTPS. Returns nil when the Secret or key
-// is absent (e.g. a public issuer where system roots suffice).
-func loadNativeTLSCA(ctx context.Context, c client.Client, ha *hav1.HomeAssistant) []byte {
-	s := &corev1.Secret{}
-	if err := c.Get(ctx, client.ObjectKey{Name: nativeTLSSecretName(ha), Namespace: ha.Namespace}, s); err != nil {
-		return nil
-	}
-	return s.Data["ca.crt"]
-}
-
-// newHAClientForHA builds a Home Assistant API client for ha, honoring the native
-// TLS scheme and CA trust. override (when non-nil, e.g. in tests) supplies the
-// underlying client for a given base URL. InsecureSkipVerify is never used.
-func newHAClientForHA(
-	ctx context.Context, c client.Client, ha *hav1.HomeAssistant, override func(string) *haclient.Client,
-) *haclient.Client {
+// newHAClientForHA builds a Home Assistant API client for ha. The operator always
+// speaks plain HTTP to Home Assistant inside the cluster; TLS is terminated at
+// the edge (Ingress / Gateway API), never in the HA pod. override (when non-nil,
+// e.g. in tests) supplies the underlying client for a given base URL.
+func newHAClientForHA(ha *hav1.HomeAssistant, override func(string) *haclient.Client) *haclient.Client {
 	url := buildHomeAssistantURL(ha)
-	var cl *haclient.Client
 	if override != nil {
-		cl = override(url)
-	} else {
-		cl = haclient.NewClient(url)
+		return override(url)
 	}
-	if nativeTLSActive(ha) {
-		if ca := loadNativeTLSCA(ctx, c, ha); len(ca) > 0 {
-			cl = cl.WithRootCAs(ca)
-		}
-	}
-	return cl
+	return haclient.NewClient(url)
 }
 
 // issuerRefMap normalizes an IssuerReference into the map cert-manager expects,
@@ -142,49 +75,13 @@ func issuerRefMap(ref *hav1.IssuerReference) map[string]interface{} {
 	return map[string]interface{}{"name": ref.Name, "kind": kind, "group": group}
 }
 
-// desiredNativeCertificateSpec builds the cert-manager Certificate spec for the
-// native TLS mode. The Service FQDN is always included as a SAN (R4).
-func desiredNativeCertificateSpec(ha *hav1.HomeAssistant) map[string]interface{} {
-	n := nativeTLS(ha)
-	dnsNames := []interface{}{serviceFQDN(ha)}
-	for _, d := range n.DNSNames {
-		if d != serviceFQDN(ha) {
-			dnsNames = append(dnsNames, d)
-		}
-	}
-	return map[string]interface{}{
-		"secretName": nativeTLSCertificateName(ha),
-		"dnsNames":   dnsNames,
-		"issuerRef":  issuerRefMap(n.IssuerRef),
-	}
-}
-
-// certificateReady reports whether a cert-manager Certificate has a Ready=True
-// status condition.
-func certificateReady(cert *unstructured.Unstructured) bool {
-	conds, found, err := unstructured.NestedSlice(cert.Object, "status", "conditions")
-	if !found || err != nil {
-		return false
-	}
-	for _, c := range conds {
-		m, ok := c.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if m["type"] == "Ready" && m["status"] == string(metav1.ConditionTrue) {
-			return true
-		}
-	}
-	return false
-}
-
 // ensureCertificate creates or updates a cert-manager Certificate (as
-// unstructured) with the given name, SANs and issuer, and reports whether it has
-// been issued (Ready). It is idempotent (get-or-create + update-on-drift) and
-// sets an owner reference so the Certificate is garbage-collected with the HA.
+// unstructured) with the given name, SANs and issuer. It is idempotent
+// (get-or-create + update-on-drift) and sets an owner reference so the
+// Certificate is garbage-collected with the HA.
 func (r *HomeAssistantReconciler) ensureCertificate(
 	ctx context.Context, ha *hav1.HomeAssistant, name string, dnsNames []string, ref *hav1.IssuerReference,
-) (bool, error) {
+) error {
 	dns := make([]interface{}, 0, len(dnsNames))
 	for _, d := range dnsNames {
 		dns = append(dns, d)
@@ -206,16 +103,16 @@ func (r *HomeAssistantReconciler) ensureCertificate(
 		cert.SetNamespace(ha.Namespace)
 		cert.Object["spec"] = desired
 		if err := controllerutil.SetControllerReference(ha, cert, r.Scheme); err != nil {
-			return false, err
+			return err
 		}
 		if err := r.Create(ctx, cert); err != nil {
-			return false, err
+			return err
 		}
 		r.Recorder.Eventf(ha, nil, corev1.EventTypeNormal, eventCertificateRequested, eventCertificateRequested,
 			"Requested certificate %q via cert-manager", name)
-		return false, nil
+		return nil
 	case err != nil:
-		return false, err
+		return err
 	}
 
 	// Update only the operator-managed fields on drift, preserving cert-manager
@@ -234,48 +131,30 @@ func (r *HomeAssistantReconciler) ensureCertificate(
 	if changed {
 		existing.Object["spec"] = spec
 		if err := r.Update(ctx, existing); err != nil {
-			return false, err
+			return err
 		}
-		// existing.status reflects the pre-change certificate and cert-manager has
-		// not yet reacted to the spec update — reporting it ready here would be a
-		// stale false positive. Report not-ready; the next reconcile re-fetches.
-		return false, nil
-	}
-	return certificateReady(existing), nil
-}
-
-// deleteCertificate removes an operator-managed Certificate by name if present.
-// Best-effort: NotFound is ignored, and a missing cert-manager CRD (NoMatchError)
-// means there is nothing to delete.
-func (r *HomeAssistantReconciler) deleteCertificate(ctx context.Context, ha *hav1.HomeAssistant, name string) error {
-	cert := &unstructured.Unstructured{}
-	cert.SetGroupVersionKind(certificateGVK)
-	cert.SetName(name)
-	cert.SetNamespace(ha.Namespace)
-	if err := r.Delete(ctx, cert); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
-		return err
 	}
 	return nil
 }
 
-// ensureNativeCertificate provisions the native TLS certificate (with the Service
-// FQDN SAN) and reports whether it is issued.
-func (r *HomeAssistantReconciler) ensureNativeCertificate(ctx context.Context, ha *hav1.HomeAssistant) (bool, error) {
-	spec := desiredNativeCertificateSpec(ha)
-	dnsNames := make([]string, 0)
-	if raw, ok := spec["dnsNames"].([]interface{}); ok {
-		for _, d := range raw {
-			if s, ok := d.(string); ok {
-				dnsNames = append(dnsNames, s)
-			}
-		}
+// deleteCertificate removes an operator-managed Certificate by name if present.
+// Best-effort: NotFound is ignored, and a missing cert-manager CRD (NoMatchError)
+// means there is nothing to delete. Callers that first fetched and validated the
+// Certificate should pass client.Preconditions{UID: ...} so a delete+recreate
+// between their Get and this Delete cannot remove the replacement object; the
+// resulting Conflict is treated like NotFound (the object we validated is gone).
+func (r *HomeAssistantReconciler) deleteCertificate(
+	ctx context.Context, ha *hav1.HomeAssistant, name string, opts ...client.DeleteOption,
+) error {
+	cert := &unstructured.Unstructured{}
+	cert.SetGroupVersionKind(certificateGVK)
+	cert.SetName(name)
+	cert.SetNamespace(ha.Namespace)
+	if err := r.Delete(ctx, cert, opts...); err != nil &&
+		!apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) && !apierrors.IsConflict(err) {
+		return err
 	}
-	return r.ensureCertificate(ctx, ha, nativeTLSCertificateName(ha), dnsNames, nativeTLS(ha).IssuerRef)
-}
-
-// deleteNativeCertificate removes the operator-managed native TLS Certificate.
-func (r *HomeAssistantReconciler) deleteNativeCertificate(ctx context.Context, ha *hav1.HomeAssistant) error {
-	return r.deleteCertificate(ctx, ha, nativeTLSCertificateName(ha))
+	return nil
 }
 
 // certManagerAvailable reports whether cert-manager CRDs are installed on the
@@ -312,15 +191,10 @@ func (r *HomeAssistantReconciler) certManagerAvailable(_ context.Context) (bool,
 	return r.certMgrAvailable, nil
 }
 
-// certManagerRequired reports whether the HomeAssistant spec requests any TLS
-// mode that needs cert-manager to issue a certificate. Bring-your-own Secret
-// modes (SecretName set) do not need cert-manager and return false.
+// certManagerRequired reports whether the HomeAssistant spec requests an edge TLS
+// mode (Ingress or Gateway API) that needs cert-manager to issue a certificate.
+// Bring-your-own Secret modes (SecretName set) do not need cert-manager.
 func certManagerRequired(ha *hav1.HomeAssistant) bool {
-	if a := ha.Spec.Alpha; a != nil {
-		if a.TLS != nil && a.TLS.Native != nil && a.TLS.Native.Enabled && a.TLS.Native.SecretName == "" {
-			return true
-		}
-	}
 	if g := ha.Spec.Gateway; g != nil && g.Enabled && g.SecretName == "" && g.IssuerRef != nil {
 		return true
 	}
@@ -331,32 +205,14 @@ func certManagerRequired(ha *hav1.HomeAssistant) bool {
 	return false
 }
 
-// reconcileTLS handles the cert-manager integration. For the graceful-degradation
-// contract: when a TLS mode is requested but cert-manager is not
-// installed, it records status conditions, emits an event and requeues — it never
-// returns an error, so the rest of the reconcile and other resources keep working
-// (constitution principle I). Certificate issuance and exposure are layered
-// on top of the CertManagerAvailable gate established here.
+// reconcileTLS is the cert-manager gate for edge TLS (Ingress / Gateway API).
+// When such a mode is requested but cert-manager is not installed, it records
+// CertManagerAvailable=False, emits an event and requeues — it never returns an
+// error, so the rest of the reconcile and other resources keep working
+// (constitution principle I). The Certificate objects themselves are provisioned
+// by reconcileExposure, layered on the gate established here.
 func (r *HomeAssistantReconciler) reconcileTLS(ctx context.Context, ha *hav1.HomeAssistant) (ctrl.Result, error) {
-	// Native TLS with a user-provided Secret needs no cert-manager.
-	if handled, err := r.nativeTLSUsingProvidedSecret(ctx, ha); err != nil {
-		return ctrl.Result{}, err
-	} else if handled && !certManagerRequired(ha) {
-		return ctrl.Result{}, nil
-	}
-
-	// No cert-manager-backed TLS requested → clean up any orphaned native
-	// certificate (e.g. native TLS was just disabled) and return without noise.
-	// Only attempt cleanup when cert-manager is present — without its CRD there is
-	// nothing to delete (and no need to hit the API every reconcile).
 	if !certManagerRequired(ha) {
-		if n := nativeTLS(ha); n == nil || !n.Enabled {
-			if available, _ := r.certManagerAvailable(ctx); available {
-				if err := r.deleteNativeCertificate(ctx, ha); err != nil {
-					return ctrl.Result{}, err
-				}
-			}
-		}
 		return ctrl.Result{}, nil
 	}
 	log := logf.FromContext(ctx)
@@ -371,22 +227,14 @@ func (r *HomeAssistantReconciler) reconcileTLS(ctx context.Context, ha *hav1.Hom
 	if !available {
 		var changed bool
 		if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
-			c := meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+			changed = meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
 				Type:               conditionCertManagerAvailable,
 				Status:             metav1.ConditionFalse,
 				ObservedGeneration: h.Generation,
 				Reason:             reasonCertManagerNotInstalled,
-				Message:            "cert-manager is not installed; TLS is inactive and Home Assistant continues over HTTP",
+				Message:            "cert-manager is not installed; edge TLS is inactive and Home Assistant continues over HTTP",
 			})
-			c = meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
-				Type:               conditionTLSReady,
-				Status:             metav1.ConditionUnknown,
-				ObservedGeneration: h.Generation,
-				Reason:             reasonWaitingForCertManager,
-				Message:            "Waiting for cert-manager to become available",
-			}) || c
-			changed = c
-			return c
+			return changed
 		}); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -399,108 +247,95 @@ func (r *HomeAssistantReconciler) reconcileTLS(ctx context.Context, ha *hav1.Hom
 		return ctrl.Result{RequeueAfter: certManagerDetectionTTL}, nil
 	}
 
-	// cert-manager available: record availability, then provision per-mode.
-	nativeEnabled := false
-	certReady := false
-	if n := nativeTLS(ha); n != nil && n.Enabled && n.SecretName == "" {
-		nativeEnabled = true
-		ready, err := r.ensureNativeCertificate(ctx, ha)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		certReady = ready
-	}
-
 	if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
-		c := meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
+		return meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
 			Type:               conditionCertManagerAvailable,
 			Status:             metav1.ConditionTrue,
 			ObservedGeneration: h.Generation,
 			Reason:             reasonCertManagerInstalled,
 			Message:            "cert-manager is installed",
 		})
-		if !nativeEnabled {
-			log.V(1).Info("reconcileTLS: cert-manager condition mutate (no native TLS)",
-				"changed", c, "resourceVersion", h.ResourceVersion, "generation", h.Generation)
-			return c
-		}
-		if certReady {
-			c = meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
-				Type:               conditionTLSReady,
-				Status:             metav1.ConditionTrue,
-				ObservedGeneration: h.Generation,
-				Reason:             reasonTLSReady,
-				Message:            "Native TLS certificate issued by cert-manager",
-			}) || c
-		} else {
-			c = meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
-				Type:               conditionTLSReady,
-				Status:             metav1.ConditionFalse,
-				ObservedGeneration: h.Generation,
-				Reason:             reasonCertificateNotIssued,
-				Message:            "Waiting for cert-manager to issue the native TLS certificate",
-			}) || c
-		}
-		log.V(1).Info("reconcileTLS: native TLS condition mutate",
-			"changed", c, "certReady", certReady, "resourceVersion", h.ResourceVersion,
-			"generation", h.Generation, "conditionsCount", len(h.Status.Conditions))
-		return c
 	}); err != nil {
-		log.Error(err, "reconcileTLS: status update failed after retry")
 		return ctrl.Result{}, err
-	}
-
-	// Native TLS: ensure the certificate and reflect issuance in TLSReady.
-	// (Exposure — Ingress/Gateway — is layered on in a later phase.)
-	if nativeEnabled && !certReady {
-		// Poll until the certificate is issued.
-		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 	return ctrl.Result{}, nil
 }
 
-// nativeTLSUsingProvidedSecret handles the bring-your-own native TLS case (a
-// user-provided Secret, no cert-manager). It records TLSReady and removes any
-// operator-managed certificate. Returns true when it handled the resource.
-func (r *HomeAssistantReconciler) nativeTLSUsingProvidedSecret(
-	ctx context.Context, ha *hav1.HomeAssistant,
-) (bool, error) {
-	n := nativeTLS(ha)
-	if n == nil || !n.Enabled || n.SecretName == "" {
-		return false, nil
-	}
-	secretName := n.SecretName
+// nativeTLSCertificateName is the name the operator used for the native TLS
+// Certificate/Secret while that feature existed. Referenced only by the
+// transitional cleanup below.
+func nativeTLSCertificateName(ha *hav1.HomeAssistant) string {
+	return ha.Name + "-native-tls"
+}
 
-	secret := &corev1.Secret{}
-	getErr := r.Get(ctx, client.ObjectKey{Name: secretName, Namespace: ha.Namespace}, secret)
-	if getErr != nil || len(secret.Data["tls.crt"]) == 0 || len(secret.Data["tls.key"]) == 0 {
-		if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
-			return meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
-				Type:               conditionTLSReady,
-				Status:             metav1.ConditionFalse,
-				ObservedGeneration: h.Generation,
-				Reason:             reasonProvidedSecretInvalid,
-				Message:            "Secret " + secretName + " is missing or does not contain tls.crt/tls.key",
-			})
-		}); err != nil {
-			return true, err
+// reconcileNativeTLSRemoval is a one-shot, transitional cleanup for the removed
+// native TLS feature (spec.alpha.tls). The HA pod reverts to HTTP through normal
+// reconcile (no ssl_* in configuration.yaml, no cert Secret volume, HTTP probes);
+// this step only tidies what normal reconcile cannot see once the API field is
+// gone: it deletes the operator-managed "<name>-native-tls" Certificate, strips
+// the obsolete TLSReady condition (and CertManagerAvailable when no edge TLS mode
+// needs it), and emits a single Warning so operators notice HA went back to HTTP.
+//
+// It is idempotent and silent for instances that never used native TLS. Safe to
+// delete entirely in a later minor once installs have reconciled on this version.
+func (r *HomeAssistantReconciler) reconcileNativeTLSRemoval(ctx context.Context, ha *hav1.HomeAssistant) error {
+	log := logf.FromContext(ctx)
+
+	// Was this instance affected? Presence of the obsolete condition or the
+	// operator-managed Certificate is the signal — the spec field is already gone.
+	hadCondition := meta.FindStatusCondition(ha.Status.Conditions, conditionTLSReady) != nil
+
+	certExisted := false
+	cert := &unstructured.Unstructured{}
+	cert.SetGroupVersionKind(certificateGVK)
+	getErr := r.Get(ctx, client.ObjectKey{Name: nativeTLSCertificateName(ha), Namespace: ha.Namespace}, cert)
+	switch {
+	case getErr == nil:
+		// Only touch a Certificate this operator created for this instance — a
+		// user-managed Certificate that happens to share the name is left alone.
+		if ref := metav1.GetControllerOf(cert); ref != nil && ref.UID == ha.UID {
+			certExisted = true
+			// Pin the delete to the UID we just validated: if the Certificate is
+			// replaced between this Get and the Delete, the precondition fails and
+			// deleteCertificate swallows the Conflict instead of removing a
+			// same-named object we do not own.
+			uid := cert.GetUID()
+			if err := r.deleteCertificate(ctx, ha, nativeTLSCertificateName(ha),
+				client.Preconditions{UID: &uid}); err != nil {
+				return err
+			}
 		}
-		return true, nil
+	case apierrors.IsNotFound(getErr), meta.IsNoMatchError(getErr):
+		// Nothing to delete (already gone, or cert-manager not installed).
+	default:
+		return getErr
 	}
 
-	if err := r.deleteNativeCertificate(ctx, ha); err != nil {
-		return false, err
+	if !hadCondition && !certExisted {
+		return nil
 	}
+
+	// Strip obsolete conditions. TLSReady always goes; CertManagerAvailable only
+	// when no edge TLS mode still needs it (reconcileTLS re-adds it otherwise).
+	conditionRemoved := false
 	if err := r.updateHAStatusWithRetry(ctx, ha, func(h *hav1.HomeAssistant) bool {
-		return meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{
-			Type:               conditionTLSReady,
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: h.Generation,
-			Reason:             reasonUsingProvidedSecret,
-			Message:            "Native TLS uses the provided Secret " + secretName,
-		})
+		changed := meta.RemoveStatusCondition(&h.Status.Conditions, conditionTLSReady)
+		if !certManagerRequired(h) {
+			changed = meta.RemoveStatusCondition(&h.Status.Conditions, conditionCertManagerAvailable) || changed
+		}
+		conditionRemoved = changed
+		return changed
 	}); err != nil {
-		return true, err
+		return err
 	}
-	return true, nil
+
+	// Emit exactly one Warning: only when this call actually removed the obsolete
+	// condition (or a stray Certificate), never on a no-op re-run.
+	if conditionRemoved || certExisted {
+		log.Info("native TLS (spec.alpha.tls) removed; Home Assistant reverts to HTTP", "name", ha.Name)
+		r.Recorder.Eventf(ha, nil, corev1.EventTypeWarning, eventNativeTLSRemoved, eventNativeTLSRemoved,
+			"Native TLS (spec.alpha.tls) has been removed from the operator; Home Assistant now serves "+
+				"HTTP inside the cluster. Use spec.ingress.tls or spec.gateway for HTTPS.")
+	}
+	return nil
 }

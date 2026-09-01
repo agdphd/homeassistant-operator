@@ -8,7 +8,6 @@ resources:
 - haconfig_restart_strategy.yaml
 - complete_example_with_secrets.yaml
 - ha_v1_gateway_api.yaml
-- ha_v1_native_tls.yaml
 - ha_v1_ingress_tls.yaml
 - ha_v1_gateway_managed_tls.yaml
 - ha_v1_homeassistantintegration_mqtt.yaml
