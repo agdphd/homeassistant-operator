@@ -139,13 +139,19 @@ func (r *HomeAssistantReconciler) ensureCertificate(
 
 // deleteCertificate removes an operator-managed Certificate by name if present.
 // Best-effort: NotFound is ignored, and a missing cert-manager CRD (NoMatchError)
-// means there is nothing to delete.
-func (r *HomeAssistantReconciler) deleteCertificate(ctx context.Context, ha *hav1.HomeAssistant, name string) error {
+// means there is nothing to delete. Callers that first fetched and validated the
+// Certificate should pass client.Preconditions{UID: ...} so a delete+recreate
+// between their Get and this Delete cannot remove the replacement object; the
+// resulting Conflict is treated like NotFound (the object we validated is gone).
+func (r *HomeAssistantReconciler) deleteCertificate(
+	ctx context.Context, ha *hav1.HomeAssistant, name string, opts ...client.DeleteOption,
+) error {
 	cert := &unstructured.Unstructured{}
 	cert.SetGroupVersionKind(certificateGVK)
 	cert.SetName(name)
 	cert.SetNamespace(ha.Namespace)
-	if err := r.Delete(ctx, cert); err != nil && !apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) {
+	if err := r.Delete(ctx, cert, opts...); err != nil &&
+		!apierrors.IsNotFound(err) && !meta.IsNoMatchError(err) && !apierrors.IsConflict(err) {
 		return err
 	}
 	return nil
@@ -285,9 +291,19 @@ func (r *HomeAssistantReconciler) reconcileNativeTLSRemoval(ctx context.Context,
 	getErr := r.Get(ctx, client.ObjectKey{Name: nativeTLSCertificateName(ha), Namespace: ha.Namespace}, cert)
 	switch {
 	case getErr == nil:
-		certExisted = true
-		if err := r.deleteCertificate(ctx, ha, nativeTLSCertificateName(ha)); err != nil {
-			return err
+		// Only touch a Certificate this operator created for this instance — a
+		// user-managed Certificate that happens to share the name is left alone.
+		if ref := metav1.GetControllerOf(cert); ref != nil && ref.UID == ha.UID {
+			certExisted = true
+			// Pin the delete to the UID we just validated: if the Certificate is
+			// replaced between this Get and the Delete, the precondition fails and
+			// deleteCertificate swallows the Conflict instead of removing a
+			// same-named object we do not own.
+			uid := cert.GetUID()
+			if err := r.deleteCertificate(ctx, ha, nativeTLSCertificateName(ha),
+				client.Preconditions{UID: &uid}); err != nil {
+				return err
+			}
 		}
 	case apierrors.IsNotFound(getErr), meta.IsNoMatchError(getErr):
 		// Nothing to delete (already gone, or cert-manager not installed).

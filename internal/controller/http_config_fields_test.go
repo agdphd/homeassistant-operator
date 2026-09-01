@@ -101,3 +101,25 @@ func toIfaceList(s []string) []interface{} {
 	}
 	return out
 }
+
+func TestIsDeliveryChannelSwitchOnly(t *testing.T) {
+	const same = "default_config:\nlogger:\n  default: info\n"
+	cases := []struct {
+		name               string
+		oldHadHTTP, synced bool
+		oldConfig, canon   string
+		want               bool
+	}{
+		{"pure YAML->API transition", true, false, same, same, true},
+		{"transition plus a real config change", true, false, same, same + "recorder:\n", false},
+		{"external ConfigMap edit is never a switch", true, true, same, same, false},
+		{"no http: to begin with", false, false, same, same, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isDeliveryChannelSwitchOnly(c.oldHadHTTP, c.synced, c.oldConfig, c.canon); got != c.want {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+}
