@@ -133,13 +133,19 @@ Controls how changes are applied.
 
 | Value | Behaviour |
 |-------|-----------|
-| `auto` (default) | Hot-reload for `automation`, `script`, `scene`, `logger`, `input_*`, `template`, `zone`. Restart for `homeassistant`, `mqtt`, and unknown sections. `http` triggers a pod restart **only on the YAML delivery path** (older Home Assistant); on the API path Home Assistant restarts its own process when needed and the operator does not roll the pod. |
+| `auto` (default) | Hot-reload for `automation`, `script`, `scene`, `group`, `logger`, `timer`, `counter` and `input_*`. Restart for `homeassistant`, `mqtt`, `template`, `zone`, and unknown sections. `http` triggers a pod restart **only on the YAML delivery path** (older Home Assistant); on the API path Home Assistant restarts its own process when needed and the operator does not roll the pod. |
 | `hot-reload` | Always attempt hot-reload, regardless of which sections changed. |
 | `restart` | Always trigger a rolling restart. |
 
 ## Turn automatic reloading off
 
-Set to `false` to disable automatic reload/restart on configuration changes. Default: `true`.
+Set `spec.autoReload` to `false` to stop the operator reloading or restarting
+Home Assistant when the configuration changes. It defaults to `true`.
+
+```yaml
+spec:
+  autoReload: false
+```
 
 ## Every field
 

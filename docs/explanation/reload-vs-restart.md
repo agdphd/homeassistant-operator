@@ -13,8 +13,8 @@ Home Assistant can genuinely apply without a restart.
 
 When `reloadStrategy: auto` is set, the operator parses the YAML diff between the old and new configuration:
 
-- **Hot-reload** (no restart): `automation`, `script`, `scene`, `logger`, `input_boolean`, `input_number`, `input_text`, `input_select`, `input_datetime`, `template`, `zone`
-- **Restart** (rolling restart): `homeassistant`, `mqtt`, and any unknown top-level key. `http` too — **but only on the YAML delivery path**. On Home Assistant 2026.8+ the `http:` section is delivered through the API (see [HTTP configuration](../how-to/manage-configuration.md#http-configuration-on-home-assistant-20268)) and is excluded from this diff entirely; Home Assistant restarts its own process if the change needs it, without a pod rollout from the operator.
+- **Hot-reload** (no restart): `automation`, `script`, `scene`, `group`, `logger`, `timer`, `counter`, `input_boolean`, `input_number`, `input_text`, `input_select`, `input_datetime`
+- **Restart** (rolling restart): `homeassistant`, `mqtt`, and any unknown top-level key. Also `template` and `zone`: Home Assistant reloads those through dedicated services the operator does not call, so it takes the safe path rather than reporting a reload that did not happen. `http` too — **but only on the YAML delivery path**. On Home Assistant 2026.8+ the `http:` section is delivered through the API (see [HTTP configuration](../how-to/manage-configuration.md#http-configuration-on-home-assistant-20268)) and is excluded from this diff entirely; Home Assistant restarts its own process if the change needs it, without a pod rollout from the operator.
 
 If a single change touches both categories, the operator restarts (safer path).
 

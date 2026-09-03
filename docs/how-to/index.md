@@ -1,6 +1,6 @@
 # How-to guides
 
-*How-to — task-oriented guides. Each one assumes you already have a running operator and gets you to one specific goal.*
+*How-to — task-oriented guides. Each one gets you to one specific goal and states its own prerequisites.*
 
 Each guide names a goal, lists what you need before you start, and ends with a
 way to check that it worked. For the full field list of any resource, see the

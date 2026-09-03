@@ -198,7 +198,7 @@ single field: `Pending → Validating → Installing → Installed`, or `Failed`
 |--------|---------|
 | `Validating` | Fetching the repository and checking its structure |
 | `Installing` | Files written; waiting for the extension to become active |
-| `Installed` | Active in Home Assistant; `status.installedVersion` now reports this ref |
+| `Installed` | Done, and `status.installedVersion` now reports this ref. For `plugin`/`theme`/`python_script`/`template` that means Home Assistant confirmed the reload; for `integration` it means the pod restart was triggered — the extension becomes usable once the replacement pod is running. |
 | `RepositoryUnreachable` | The repository or the pinned ref could not be fetched |
 | `CategoryMismatch` | The repository declares a different category than `spec.category` |
 | `StructureInvalid` | The repository does not match the layout its category requires |

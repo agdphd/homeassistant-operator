@@ -11,8 +11,10 @@ need privileges the operator never does.
 
 ## What the operator's own namespace enforces
 
-The operator's own namespace (`homeassistant-operator-system` by default) carries the
-Pod Security Admission labels:
+The operator's own namespace can carry Pod Security Admission labels — but only
+when the chart owns it (`namespace.create=true`). That is **not** the default: a
+namespace you create yourself, or one Helm creates with `--create-namespace`,
+carries no such labels and enforces nothing. The labels the chart applies are:
 
 ```yaml
 pod-security.kubernetes.io/enforce: restricted
@@ -33,6 +35,11 @@ The controller-manager pod already satisfies `restricted`:
 
 Version `latest` means the namespace always applies the newest `restricted` rules and
 automatically tightens on cluster upgrades.
+
+The operator pod satisfies `restricted` either way — the labels decide whether the
+cluster *enforces* it, not whether the operator complies. See
+[enforce Pod Security Standards](../how-to/enforce-pod-security.md) for turning
+enforcement on.
 
 ## Why Home Assistant pods are out of scope
 

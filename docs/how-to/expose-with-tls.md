@@ -4,9 +4,16 @@
 
 ## Prerequisites
 
-- cert-manager installed on the cluster.
-- A ready `Issuer` or `ClusterIssuer`. The operator only **references** an issuer;
-  it never creates application issuers.
+- A running Home Assistant instance.
+- **Only if you want cert-manager to issue the certificate** (`spec.ingress.tls.issuerRef`
+  or `spec.gateway`): cert-manager installed, plus a ready `Issuer` or
+  `ClusterIssuer`. The operator only **references** an issuer; it never creates
+  application issuers.
+
+If you already hold a certificate, point `spec.ingress.tls.secretName` at the
+Secret holding it and skip cert-manager entirely. The operator's own admission
+webhook does not need cert-manager either — it self-signs and rotates its
+serving certificate by default.
 
 ```yaml
 # Example: a self-signed ClusterIssuer for testing

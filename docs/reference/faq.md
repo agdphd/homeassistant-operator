@@ -25,8 +25,9 @@ input. See
 ## Will a configuration change restart Home Assistant?
 
 Only if the change touches something Home Assistant cannot reload at runtime.
-Automations, scripts, scenes, logger, templates and input helpers reload in
-place; `homeassistant:` and `mqtt:` need a restart. If one change touches both
+Automations, scripts, scenes, groups, logger, timers, counters and the `input_*`
+helpers reload in place; `homeassistant:` and `mqtt:` need a restart, and so do
+`template:` and `zone:`, which the operator does not reload in place. If one change touches both
 kinds, the operator restarts. See
 [hot reload versus restart](../explanation/reload-vs-restart.md).
 

@@ -51,7 +51,7 @@ successful automation, scene or script reload is reported only as the
 | Event | Type | Meaning |
 |-------|------|---------|
 | `RepositoryValidated` | Normal | The repository was fetched and its structure accepted |
-| `RepositoryInstalled` | Normal | The extension was written and became active |
+| `RepositoryInstalled` | Normal | The extension was written and activated — for `integration`, that the pod restart was triggered rather than that the new pod is running |
 | `RepositoryRemoved` | Normal | The installed files were removed |
 | `RepositoryConflict` | Warning | Another resource already installs the same target into this instance |
-| `RepositoryInstallFailed` | Warning | Fetch, validation or activation failed |
+| `RepositoryInstallFailed` | Warning | The resource entered `Failed` for any reason — fetch, validation, activation timeout, or a target conflict, in which case it follows `RepositoryConflict` |
