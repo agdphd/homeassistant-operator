@@ -18,11 +18,15 @@ tag has no leading `v`, even though the git tag does:
 VERSION=1.4.0
 ```
 
+Every namespace named in `watchNamespaces` must already exist — the chart puts a
+`RoleBinding` in each one, and a missing namespace fails the command. See
+[install the operator](install-operator.md#which-namespaces-the-operator-watches).
+
 ## Fresh install
 
 ```bash
-helm install ha-operator \
-  oci://ghcr.io/przemekhys/homeassistant-operator/charts/homeassistant-operator \
+helm install homeassistant-operator \
+  oci://ghcr.io/przemekhys/charts/homeassistant-operator \
   --version "$VERSION" \
   --namespace homeassistant-operator-system --create-namespace \
   --set 'watchNamespaces={homeassistant}'
@@ -59,13 +63,13 @@ then the Helm release:
 ```bash
 # 1. Update the CRDs explicitly (Helm does NOT do this on upgrade).
 #    Pull the exact CRDs for the target version and apply them:
-helm pull oci://ghcr.io/przemekhys/homeassistant-operator/charts/homeassistant-operator \
+helm pull oci://ghcr.io/przemekhys/charts/homeassistant-operator \
   --version "$VERSION" --untar --untardir "/tmp/ha-operator-$VERSION"
 kubectl apply -f "/tmp/ha-operator-$VERSION/homeassistant-operator/crds/"
 
 # 2. Upgrade the Helm release.
-helm upgrade ha-operator \
-  oci://ghcr.io/przemekhys/homeassistant-operator/charts/homeassistant-operator \
+helm upgrade homeassistant-operator \
+  oci://ghcr.io/przemekhys/charts/homeassistant-operator \
   --version "$VERSION" \
   --namespace homeassistant-operator-system
 

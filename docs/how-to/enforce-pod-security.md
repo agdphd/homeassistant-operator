@@ -24,12 +24,15 @@ helm template ha-operator oci://ghcr.io/przemekhys/charts/homeassistant-operator
   --set namespace.create=true | kubectl apply -f -
 ```
 
-!!! note "Direct `helm install` cannot create its own release namespace"
-    With `helm install`, Helm must store release state in the target namespace *before*
-    it applies the chart, so the namespace has to exist first. Do **not** combine
-    `namespace.create=true` with `--create-namespace` (the auto-created namespace
-    collides with the chart's `Namespace` object). Instead, pre-create and label the
-    namespace, then install with `namespace.create=false` (the default):
+!!! note "The release namespace must exist before the chart is applied"
+    Helm stores release state in the target namespace before it applies the chart, so
+    a first install into a namespace that does not exist fails with
+    `namespaces "..." not found`. Pass `--create-namespace` alongside
+    `namespace.create=true`; the two do not collide, and the chart's `Namespace`
+    object applies the enforcing labels on top.
+
+    If you would rather own the namespace yourself, create and label it first and
+    leave `namespace.create` at its default:
 
     ```bash
     kubectl create namespace homeassistant-operator-system

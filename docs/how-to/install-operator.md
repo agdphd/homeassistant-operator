@@ -35,6 +35,18 @@ Leaving it out makes the operator watch the whole cluster through a
 and due for removal in v2.0.0. See
 [which namespaces the operator watches](#which-namespaces-the-operator-watches).
 
+!!! warning "Watched namespaces must exist before you install"
+    The chart creates a `RoleBinding` inside each namespace you list, so a
+    namespace that does not exist yet fails the install outright:
+    `namespaces "homeassistant" not found`. `--create-namespace` covers only the
+    release namespace, not the watched ones. Create them first:
+
+    ```sh
+    kubectl create namespace homeassistant
+    ```
+
+    The same applies on upgrade if you add a namespace to the list.
+
 ### Customise the installation
 
 Download the default values and override what you need:
@@ -161,6 +173,6 @@ Then check that the custom resource definitions registered:
 kubectl get crd | grep homeassistant.io
 ```
 
-You should see eleven entries. If the operator pod is running but nothing
-reconciles, see
+You should see one entry per custom resource the operator manages. If the pod is
+running but nothing reconciles, see
 [the operator does not reconcile resources in a namespace](troubleshoot.md#operator-does-not-reconcile-resources-in-a-namespace).

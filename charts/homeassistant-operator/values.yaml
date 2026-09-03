@@ -28,10 +28,12 @@ serviceAccount:
 
 namespace:
   # -- Render the release Namespace and label it to enforce the "restricted" Pod
-  # Security Standard (version latest). Install WITHOUT `--create-namespace` so the
-  # chart owns the namespace. When false (the default), you manage the namespace and
-  # no Pod Security Admission labels are added — the operator pod is
-  # restricted-compliant either way, see `securityContext`.
+  # Security Standard (version latest). Helm stores its release state in the target
+  # namespace, so that namespace must exist before the chart is applied: pass
+  # `--create-namespace` (or create it yourself) on the first install. When false
+  # (the default), no Pod Security Admission labels are added at all — the operator
+  # pod is restricted-compliant either way, see `securityContext`, but the namespace
+  # does not enforce it.
   create: false
 
 # -- Extra annotations for the operator pod.
