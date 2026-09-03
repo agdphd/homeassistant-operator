@@ -256,10 +256,15 @@ DOCS_VENV ?= .venv
 
 .PHONY: docs-setup
 docs-setup: ## Create Python venv and install MkDocs dependencies
-	@if [ ! -f $(DOCS_VENV)/.installed ]; then \
-		python3 -m venv $(DOCS_VENV); \
+	@# The stamp records which manifest the venv was built from, so adding a
+	@# plugin reinstalls instead of failing later with an unknown-plugin error
+	@# in an environment that looks already set up.
+	@want="$$(sha256sum docs/requirements.txt | cut -d' ' -f1)"; \
+	have="$$(cat $(DOCS_VENV)/.installed 2>/dev/null || true)"; \
+	if [ "$$want" != "$$have" ]; then \
+		[ -d $(DOCS_VENV) ] || python3 -m venv $(DOCS_VENV); \
 		$(DOCS_VENV)/bin/pip install -r docs/requirements.txt -q; \
-		touch $(DOCS_VENV)/.installed; \
+		echo "$$want" > $(DOCS_VENV)/.installed; \
 	fi
 
 .PHONY: docs-serve

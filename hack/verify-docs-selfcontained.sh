@@ -22,8 +22,10 @@ cd "$ROOT"
 # api/ is here because crd-ref-docs copies its Go doc comments verbatim into
 # docs/reference/api.md — a dead reference written in a package comment is
 # published just as surely as one written in Markdown, and this gate is the only
-# thing that looks at it before it ships.
-TARGETS=(docs mkdocs.yml README.md CONTRIBUTING.md api)
+# thing that looks at it before it ships. CHANGELOG.md and the chart README are
+# both rendered into the site as well.
+TARGETS=(docs mkdocs.yml README.md CONTRIBUTING.md api CHANGELOG.md
+         charts/homeassistant-operator/README.md)
 
 PATTERN='FR-[0-9]{3}'
 PATTERN+='|SC-[0-9]{3}'
