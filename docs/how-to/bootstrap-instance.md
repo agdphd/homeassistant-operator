@@ -16,10 +16,11 @@ every other guide depends on this one.
 ## Quick setup
 
 ```sh
-# 1. Create credentials secret
+# 1. Create the credentials Secret. Use a password of your own — this is the
+#    admin account for the whole instance.
 kubectl create secret generic ha-admin \
   --from-literal=username=admin \
-  --from-literal=password=changeme
+  --from-literal=password="$(head -c 18 /dev/urandom | base64)"
 ```
 
 ```yaml

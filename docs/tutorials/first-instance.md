@@ -52,18 +52,20 @@ again after a few seconds.
 The operator creates the Home Assistant admin account for you, and it reads the
 username and password from a Kubernetes Secret:
 
+Pick your own password first — anything printed in a tutorial is a password
+every reader of that tutorial shares:
+
 ```sh
+HA_PASSWORD="$(head -c 18 /dev/urandom | base64)"   # or type your own
+echo "$HA_PASSWORD"                                  # note it down, you log in with it
+
 kubectl create secret generic ha-admin \
   --from-literal=username=admin \
-  --from-literal=password=changeme-please \
+  --from-literal=password="$HA_PASSWORD" \
   -n default
 ```
 
 You should see `secret/ha-admin created`.
-
-!!! note "Change this password later"
-    `changeme-please` is fine for a first look, but it is the password to your
-    whole smart home. Change it in the Home Assistant UI once you are logged in.
 
 ## Step 3 — Describe the configuration
 
@@ -127,10 +129,10 @@ tutorial work without you touching the Home Assistant UI:
 - `createApiToken: true` tells it to generate a long-lived access token and store
   it in a Secret, which is how the operator talks to Home Assistant afterwards.
 
-`service.type: NodePort` is the simplest way to reach the instance from outside
-the cluster. It is not what you would use in production — the
-[TLS guide](../how-to/expose-with-tls.md) covers proper exposure — but it needs
-no extra components, so it is what this tutorial uses.
+`service.type: NodePort` keeps the Service reachable without any ingress
+component. You will still reach it through `kubectl port-forward` in step 7,
+because the instance speaks plain HTTP at this stage; the
+[TLS guide](../how-to/expose-with-tls.md) covers exposing it properly.
 
 ## Step 5 — Apply both resources
 
@@ -175,20 +177,22 @@ The `Conditions` section names the current state; the
 
 ## Step 7 — Log in
 
-Find the port Kubernetes assigned:
+Forward the instance to your own machine:
 
 ```sh
-kubectl get svc home -o jsonpath='{.spec.ports[0].nodePort}'
+kubectl port-forward svc/home 8123:8123
 ```
 
-Then find an address for a node in your cluster:
+Leave that running and open <http://127.0.0.1:8123> in a browser. Log in with
+`admin` and the password you generated in step 2.
 
-```sh
-kubectl get nodes -o wide
-```
-
-Open `http://<node-address>:<port>` in a browser and log in with `admin` and the
-password from step 2.
+!!! note "Why port-forward rather than the NodePort"
+    The instance speaks plain HTTP, so reaching it across your network would put
+    the admin password on the wire in the clear. `kubectl port-forward` tunnels
+    over the API server's TLS connection and listens only on localhost, which
+    keeps that from happening while you are still setting things up. To expose
+    the instance properly, see
+    [expose an instance with TLS](../how-to/expose-with-tls.md).
 
 Home Assistant then asks you to finish a couple of setup screens — confirming
 your location, and looking at the devices it discovered on your network. The
