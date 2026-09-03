@@ -1,31 +1,6 @@
-# TLS with cert-manager
+# Expose an instance with TLS
 
-The operator integrates with [cert-manager](https://cert-manager.io/) to provision
-TLS certificates for two independent use cases:
-
-- **Ingress / API Gateway** — the operator manages the edge routing and its certificate.
-- **Webhook** — the operator's validating admission webhook serves over TLS.
-
-TLS is always terminated **at the edge** (an Ingress controller or an API Gateway).
-The Home Assistant pod itself always speaks plain HTTP inside the cluster.
-
-!!! info "cert-manager is an optional, external dependency"
-    Neither the operator nor its Helm chart ever installs cert-manager. You install
-    it (and provide an `Issuer`/`ClusterIssuer`) yourself. If cert-manager is **not**
-    present, Ingress / API Gateway reconciliation degrades gracefully: the
-    corresponding mode simply stays inactive and the resource reports a status
-    condition — nothing fails or loops. A cert-manager installed *after* the
-    operator is picked up automatically.
-
-    This graceful degradation does **not** cover the webhook's cert-manager
-    override (`--set webhook.certManager.enabled=true`): that path renders an
-    `Issuer`/`Certificate` directly via Helm, which requires the cert-manager CRDs
-    to exist at install time. Only enable it when cert-manager is already installed.
-
-!!! warning "Native TLS has been removed"
-    Earlier versions offered an experimental `spec.alpha.tls` mode where Home
-    Assistant terminated HTTPS itself on port `8123`. It has been removed — see
-    [Migrating from native TLS](#migrating-from-native-tls) below.
+*How-to — put an instance behind an Ingress or Gateway with a cert-manager certificate. Assumes a running instance.*
 
 ## Prerequisites
 
@@ -108,27 +83,6 @@ spec:
     controller itself — those are provided by your platform. It only manages the
     routing resources and the certificate.
 
-## Migrating from native TLS
-
-`spec.alpha.tls` (native HTTPS inside the Home Assistant pod) has been removed.
-It was an experimental `spec.alpha` feature; the maintenance cost of switching the
-pod between HTTP and HTTPS, mounting the certificate and having the operator trust
-Home Assistant over HTTPS outweighed its value next to mature edge termination.
-
-To keep HTTPS:
-
-1. Drop the `spec.alpha.tls` block from your `HomeAssistant` manifest. (Newer
-   operators ignore an unknown field, so a stale manifest applies without error and
-   `kubectl diff` shows no drift.)
-2. Enable **Ingress** (`spec.ingress.tls`) or **API Gateway** (`spec.gateway`) as
-   shown above — both terminate TLS at the edge, in front of the Service.
-3. If your automation waited on the `TLSReady` condition, switch it to
-   `ExposureReady` instead.
-
-On upgrade, an instance that had native TLS enabled reverts to HTTP automatically
-on the first reconcile, the operator-managed `<name>-native-tls` Certificate is
-deleted, and a single `Warning` event (`NativeTLSRemoved`) is emitted. A TLS Secret
-you provided yourself (`secretName`) is never deleted — only unmounted.
 
 ## Webhook
 
@@ -172,29 +126,67 @@ helm upgrade ha-operator ... \
     `--set webhook.failurePolicy=Fail` to reject calls instead while the webhook is
     down, or disable the webhook entirely.
 
-## Status conditions
+## Verify
 
 The operator reflects TLS state in `status.conditions`:
-
-| Condition | Meaning |
-|-----------|---------|
-| `CertManagerAvailable` | Whether cert-manager was detected on the cluster |
-| `ExposureReady` | Whether the Ingress/Gateway exposure resources are reconciled |
 
 ```bash
 kubectl get homeassistant home -o jsonpath='{.status.conditions}' | jq
 ```
 
-## Behavior without cert-manager
+## Trusted proxies
 
-If you enable a cert-manager-backed TLS mode while cert-manager is absent:
+Home Assistant rejects every request with `400 Bad Request` unless it is told
+to trust the proxy in front of it. Whenever `spec.ingress.enabled` or
+`spec.gateway.enabled` is `true`, the operator automatically supplies the
+following, unless the keys are already present:
 
-- The resource reports `CertManagerAvailable=False` (reason `CertManagerNotInstalled`)
-  and emits a `CertManagerUnavailable` event.
-- Home Assistant keeps serving over HTTP; exposure keeps working over HTTP.
-- No error is raised and reconciliation does not loop.
-- Once you install cert-manager, the operator provisions the certificate automatically.
+```yaml
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+```
 
-See also: [Troubleshooting](../reference/troubleshooting.md) and the
-[`config/samples/`](https://github.com/przemekhys/homeassistant-operator/tree/main/config/samples)
-directory (`ha_v1_ingress_tls.yaml`, `ha_v1_gateway_managed_tls.yaml`).
+On Home Assistant 2026.8+ these are delivered through the http config API rather
+than written into `configuration.yaml` (see
+[manage configuration](manage-configuration.md#http-configuration-on-home-assistant-20268)),
+with no change to the outcome. On older Home Assistant they go into the generated
+`configuration.yaml`.
+
+These are the RFC1918 private address ranges — a conservative default, not an
+autodetection of the real cluster pod/service CIDR (which cannot be reliably
+read from the Kubernetes API). Each key is added independently: if you have
+already set either `http.use_x_forwarded_for` or `http.trusted_proxies`
+yourself in `HomeAssistantConfiguration`, the operator leaves your value
+untouched and only fills in the missing key. If `http:` itself is an
+externally managed tagged block (for example `http: !include http.yaml`),
+the operator leaves it completely untouched — set the keys in that included
+file, or move the section into `HomeAssistantConfiguration.spec.configuration`
+directly, if you want the operator to manage them.
+
+**Security note**: because these are broad RFC1918 ranges, in most Kubernetes
+clusters they cover every pod on the network, not just your actual Ingress
+controller or Gateway. Any reachable workload can then set its own
+`X-Forwarded-For` header and have Home Assistant trust it as the real client
+IP, weakening IP-based bans, rate limiting, and audit-log attribution. If
+other workloads in the cluster aren't trusted, replace the default
+`trusted_proxies` with the actual CIDR of your Ingress/Gateway proxy (for
+example, the ingress controller's pod or Service CIDR) in
+`HomeAssistantConfiguration`, or disable the defaults below and configure
+`http.trusted_proxies`/`http.use_x_forwarded_for` yourself.
+
+To opt out entirely (for example, if your cluster's pod/service network isn't
+RFC1918, or you want to set narrower proxy ranges yourself), set:
+
+```yaml
+spec:
+  disableDefaultTrustedProxies: true
+```
+
+The `HomeAssistant` resource's `ExposureReady` condition message reports
+which of the three states applies: `default trusted proxies applied`, `using
+user-configured trusted proxies`, or `default trusted proxies disabled
+(opt-out)`.

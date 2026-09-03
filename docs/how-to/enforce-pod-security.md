@@ -1,42 +1,11 @@
-# Security: Pod Security Standards
+# Enforce Pod Security Standards
 
-The operator ships hardened to run under the **`restricted`** [Pod Security
-Standard](https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted)
-— the strictest built-in profile — and its namespace is labeled to **enforce** that
-profile.
+*How-to — run the operator under the `restricted` Pod Security Standard. Assumes a cluster with Pod Security Admission.*
 
-## What is enforced
 
-The operator's own namespace (`homeassistant-operator-system` by default) carries the
-Pod Security Admission labels:
+## Prerequisites
 
-```yaml
-pod-security.kubernetes.io/enforce: restricted
-pod-security.kubernetes.io/enforce-version: latest
-pod-security.kubernetes.io/audit: restricted
-pod-security.kubernetes.io/audit-version: latest
-pod-security.kubernetes.io/warn: restricted
-pod-security.kubernetes.io/warn-version: latest
-```
-
-The controller-manager pod already satisfies `restricted`:
-
-- runs as a non-root user (`runAsNonRoot: true`),
-- `seccompProfile: RuntimeDefault`,
-- `allowPrivilegeEscalation: false`,
-- all Linux capabilities dropped (`capabilities.drop: ["ALL"]`),
-- no host namespaces, `hostPath` volumes, or host ports.
-
-Version `latest` means the namespace always applies the newest `restricted` rules and
-automatically tightens on cluster upgrades.
-
-## Scope: operator only
-
-!!! warning "Home Assistant pods are out of scope"
-    This enforcement applies **only to the operator's own workloads**. Home Assistant
-    pods run in their own namespaces and are deliberately **not** placed under
-    `restricted`. Many Home Assistant setups need elevated privileges (for example
-    `hostNetwork`, or access to USB/Zigbee devices), which `restricted` would block.
+- A cluster with Pod Security Admission enabled (Kubernetes 1.25+ has it by default)
 
 ## Enforcement with Helm
 
@@ -72,29 +41,9 @@ helm template ha-operator oci://ghcr.io/przemekhys/charts/homeassistant-operator
       pod-security.kubernetes.io/warn=restricted \
       pod-security.kubernetes.io/warn-version=latest
     helm install ha-operator oci://ghcr.io/przemekhys/charts/homeassistant-operator \
-      --namespace homeassistant-operator-system
+      --namespace homeassistant-operator-system \
+      --set 'watchNamespaces={homeassistant}'
     ```
 
 The operator pod stays restricted-compliant in every case; only the namespace-level
 enforcement differs.
-
-## Behavior without Pod Security Admission
-
-Pod Security Admission is a cluster feature. On clusters where it is disabled (or that
-predate it), the labels are **inert** — they never block installation. The pod's
-`securityContext` remains compliant, so enforcement takes effect immediately once PSA
-is enabled.
-
-## Verifying compliance
-
-A static check validates that the rendered manifests keep satisfying `restricted`:
-
-```bash
-make verify-pss
-```
-
-It renders **both** shipped install paths — `kustomize build config/default` and
-`helm template ... --set namespace.create=true` — and fails (non-zero exit) if any
-required PSA namespace label or `securityContext` field is missing or non-compliant.
-The same check runs in CI (the `Security Scan` workflow), so a regression on either
-path is caught before release.

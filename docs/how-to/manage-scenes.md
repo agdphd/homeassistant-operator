@@ -1,14 +1,11 @@
-# Scenes
+# Manage scenes
 
-`HomeAssistantScene` manages a single Home Assistant scene as a Kubernetes resource. The operator pushes it to HA via the REST config API and hot-reloads the scene component after each change.
+*How-to — create, change and delete Home Assistant scenes as Kubernetes resources. Assumes a running instance.*
 
-## How it works
 
-- **Create/Update**: `POST /api/config/scene/config/{id}` — idempotent (HA uses POST, not PUT, for this endpoint)
-- **Delete**: finalizer calls `DELETE /api/config/scene/config/{id}`
-- **Hot-reload**: `POST /api/services/scene/reload` after each write
+## Prerequisites
 
-Requires a bootstrap API token. If missing, the operator requeues.
+- A running Home Assistant instance with [bootstrap completed](bootstrap-instance.md) — the operator needs its API token
 
 ## Basic example
 
@@ -66,40 +63,6 @@ spec:
   autoReload: true
 ```
 
-## Spec reference
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `homeAssistantRef.name` | string | Name of the `HomeAssistant` CR |
-| `name` | string | Scene name displayed in the HA UI |
-| `id` | string | Scene ID in HA. Defaults to `metadata.name` |
-| `icon` | string | Material Design icon (e.g. `mdi:sofa`) |
-| `entities` | list | Entities and their desired states |
-| `entities[].entity_id` | string | HA entity ID |
-| `entities[].state` | string | Desired state (`on`, `off`, `open`, `closed`, etc.) |
-| `entities[].attributes` | map | Additional state attributes (brightness, temperature, etc.) |
-| `autoReload` | bool | Hot-reload after changes. Default: `true` |
-
-## Status and events
-
-```sh
-kubectl get hasc movie-night
-```
-```
-NAME          HOMEASSISTANT   READY   AGE
-movie-night   home            True    1m
-```
-
-```sh
-kubectl describe hasc movie-night
-```
-```
-Conditions:
-  ReloadReady: True
-Events:
-  ReloadSuccessful   Scene reloaded successfully
-```
-
 ## Activating a scene
 
 Scenes are activated from the HA UI, automations, or via the REST API:
@@ -118,3 +81,32 @@ kubectl delete hasc movie-night
 ```
 
 The finalizer removes the scene from HA before deleting the CR.
+
+## Verify
+
+```sh
+kubectl get hasc movie-night
+```
+```
+NAME          HOMEASSISTANT   NAME          ENTITIES   READY   AGE
+movie-night   home            Movie Night   3          True    1m
+```
+
+```sh
+kubectl describe hasc movie-night
+```
+```
+Conditions:
+  Type:     ReloadReady
+  Status:   True
+  Reason:   ReloadSuccessful
+  Type:     Ready
+  Status:   True
+  Reason:   SceneGenerated
+```
+
+## Every field
+
+This guide shows the fields you need for the task. For the complete list of
+`HomeAssistantScene` fields, with types and defaults, see the
+[API reference](../reference/api.md#homeassistantscenespec).

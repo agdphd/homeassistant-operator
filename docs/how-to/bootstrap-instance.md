@@ -1,15 +1,17 @@
-# Bootstrap
+# Bootstrap an instance without touching the UI
 
-Bootstrap automates the full Home Assistant onboarding flow — no manual web UI interaction required. When enabled, the operator:
+*How-to — have the operator create the admin account and an API token for you. Assumes the operator is installed.*
 
-1. Waits for the HA pod to become healthy
-2. Confirms the HA API is fully loaded (avoids the ambiguous 404 during cold start)
-3. Checks whether onboarding has already been completed
-4. Creates the admin user account
-5. Configures location, timezone, and analytics
-6. Generates a long-lived API token (10-year validity) and stores it in a Kubernetes Secret
+Bootstrap creates the first admin user, finishes the parts of Home Assistant's
+onboarding that concern the deployment, and stores a long-lived access token in a
+Secret. The operator needs that token for everything else it does, so almost
+every other guide depends on this one.
 
-The resulting token is used internally by the operator for hot-reload, Config Flow, and backup configuration.
+
+## Prerequisites
+
+- A `HomeAssistant` resource, or one you are about to create
+- A Kubernetes Secret holding the admin username and password
 
 ## Quick setup
 
@@ -38,63 +40,6 @@ spec:
 ```
 
 Bootstrap typically completes in **2–5 minutes** on a fresh install.
-
-## Spec reference
-
-### `spec.bootstrap.enabled`
-
-Set to `true` to activate bootstrap. Default: `false`.
-
-### `spec.bootstrap.credentials.secretRef`
-
-Reference to a Kubernetes Secret with admin credentials.
-
-```yaml
-bootstrap:
-  credentials:
-    secretRef:
-      name: ha-admin
-      usernameKey: username   # optional, default: "username"
-      passwordKey: password   # optional, default: "password"
-```
-
-### `spec.bootstrap.createApiToken`
-
-When `true`, the operator creates a long-lived API token after onboarding and stores it in a Secret named `<ha-name>-homeassistant-api-token` (or the value of `apiTokenSecretName`).
-
-```yaml
-bootstrap:
-  createApiToken: true
-  apiTokenSecretName: home-homeassistant-api-token   # optional, default: <ha-name>-homeassistant-api-token
-```
-
-### `spec.bootstrap.ownerName`
-
-Display name for the admin user account. Default: `"Admin"`.
-
-### `spec.bootstrap.language`
-
-Language code for the HA UI. Default: `"en"`.
-
-### `spec.bootstrap.location`
-
-Configures home location during onboarding.
-
-```yaml
-bootstrap:
-  location:
-    name: "Home"
-    latitude: "52.237703"
-    longitude: "20.989075"
-    elevation: 100
-    unitSystem: "metric"      # metric | us_customary
-    currency: "PLN"
-    timeZone: "Europe/Warsaw"
-```
-
-### `spec.bootstrap.analytics`
-
-Send anonymous usage analytics to Nabu Casa. Default: `false`.
 
 ## Checking bootstrap status
 
@@ -139,11 +84,47 @@ Bootstrap is idempotent. If HA is already onboarded, the operator detects it and
 !!! note
     Changing `spec.bootstrap.credentials.secretRef` after initial bootstrap has no effect on the running HA instance — HA stores credentials internally. To change the admin password, use the HA UI.
 
-## Bootstrap state machine
+## Point at the credentials Secret
 
+Reference to a Kubernetes Secret with admin credentials.
+
+```yaml
+bootstrap:
+  credentials:
+    secretRef:
+      name: ha-admin
+      usernameKey: username   # optional, default: "username"
+      passwordKey: password   # optional, default: "password"
 ```
-pod not ready          → requeue 10 s
-HA API not loaded      → requeue 5 s  (avoids ambiguous 404 during cold start)
-onboarding pending     → perform onboarding → create token
-onboarding complete    → ensure token Secret exists → done
+
+## Have an API token created
+
+When `true`, the operator creates a long-lived API token after onboarding and stores it in a Secret named `<ha-name>-homeassistant-api-token` (or the value of `apiTokenSecretName`).
+
+```yaml
+bootstrap:
+  createApiToken: true
+  apiTokenSecretName: home-homeassistant-api-token   # optional, default: <ha-name>-homeassistant-api-token
 ```
+
+## Set the home location during onboarding
+
+Configures home location during onboarding.
+
+```yaml
+bootstrap:
+  location:
+    name: "Home"
+    latitude: "52.237703"
+    longitude: "20.989075"
+    elevation: 100
+    unitSystem: "metric"      # metric | us_customary
+    currency: "PLN"
+    timeZone: "Europe/Warsaw"
+```
+
+## Every field
+
+This guide shows the fields you need for the task. For the complete list of
+`BootstrapSpec` fields, with types and defaults, see the
+[API reference](../reference/api.md#bootstrapspec).

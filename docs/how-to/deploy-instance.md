@@ -1,6 +1,6 @@
-# Home Assistant CR
+# Deploy a Home Assistant instance
 
-The `HomeAssistant` resource is the central CR — it creates the StatefulSet, Service, and PVC for a Home Assistant instance. All other CRDs reference it via `spec.homeAssistantRef.name`.
+*How-to — create and change a Home Assistant instance. Assumes the operator is installed.*
 
 ## Prerequisites
 
@@ -31,9 +31,99 @@ spec:
     type: ClusterIP
 ```
 
-## Spec reference
+## Keep the data when the resource is deleted
 
-### `spec.version`
+By default the operator sets a controller owner reference on the instance's PVC,
+so deleting the `HomeAssistant` resource takes the PVC — and with it your Home
+Assistant configuration, database and history — along with it. That is convenient
+for throwaway instances and a disaster for a real one, especially when the
+deletion is a GitOps reconcile you did not personally type.
+
+To keep the volume:
+
+```yaml
+spec:
+  storage:
+    retainPVC: true
+```
+
+With this set, the operator removes its owner reference from the PVC, so nothing
+garbage-collects it. Flipping the flag on an existing instance works in both
+directions — the operator adds or removes the reference on the next reconcile,
+without recreating the volume.
+
+## Deleting an instance
+
+```sh
+kubectl delete ha home
+```
+
+What happens to the data depends on two independent settings, and both have to
+point the same way for the data to actually survive:
+
+| | `retainPVC: false` (default) | `retainPVC: true` |
+|---|---|---|
+| **PVC object** | Deleted with the resource | Stays |
+| **Data** | Follows the StorageClass reclaim policy | Stays, until you delete the PVC yourself |
+
+Once a PVC is deleted, whether the underlying volume and its contents are
+destroyed is decided by the StorageClass, not by this operator:
+
+```sh
+kubectl get storageclass -o custom-columns=NAME:.metadata.name,RECLAIM:.reclaimPolicy
+```
+
+- `reclaimPolicy: Delete` — the usual default, including k3s's `local-path`. The
+  volume and everything on it is removed as soon as the PVC goes.
+- `reclaimPolicy: Retain` — the volume survives as a `Released` PersistentVolume.
+  Your data is still there, but the volume will not be reused automatically; you
+  reclaim it by hand.
+
+So `retainPVC: true` on a `Delete` StorageClass still protects you, because the
+PVC never goes away. And `retainPVC: false` on a `Retain` StorageClass leaves you
+with an orphaned PV holding your data — recoverable, but not something you want
+to discover during an incident.
+
+For a deliberate clean teardown of a retained volume:
+
+```sh
+kubectl delete ha home
+kubectl delete pvc home-data   # name: <ha-name>-data
+```
+
+## Verify
+
+```sh
+kubectl get ha home
+```
+```
+NAME   READY   VERSION   AGE
+home   True    stable    5m
+```
+
+The `VERSION` column echoes `spec.version`, so it shows `stable` if that is what
+you asked for rather than the calendar version behind it.
+
+```sh
+kubectl describe ha home
+```
+```
+Status:
+  Phase:  Running
+  Ready:  true
+  Conditions:
+    Type:    Ready
+    Status:  True
+    Reason:  StatefulSetReady
+    Type:    BootstrapReady
+    Status:  True
+    Reason:  BootstrapCompleted
+```
+
+Every condition and reason is listed in the
+[status conditions reference](../reference/conditions.md).
+
+## Pin the Home Assistant version
 
 Home Assistant image tag. Accepts any tag published to `ghcr.io/home-assistant/home-assistant`.
 
@@ -43,7 +133,7 @@ spec:
   # version: "stable"   # latest stable
 ```
 
-### `spec.timezone`
+## Set the timezone
 
 Timezone passed to the container. Defaults to `UTC`.
 
@@ -52,7 +142,7 @@ spec:
   timezone: "Europe/Warsaw"
 ```
 
-### `spec.storage`
+## Choose storage
 
 Configures the PersistentVolumeClaim for `/config`.
 
@@ -64,7 +154,7 @@ spec:
     accessMode: ReadWriteOnce      # optional; default ReadWriteOnce
 ```
 
-### `spec.service`
+## Choose how the Service is exposed
 
 Controls the Kubernetes Service created for the HA pod.
 
@@ -75,7 +165,7 @@ spec:
     port: 8123
 ```
 
-### `spec.ingress`
+## Expose over an Ingress
 
 Optional Ingress resource.
 
@@ -89,64 +179,10 @@ spec:
       secretName: ha-tls
 ```
 
-#### Default trusted proxies
+For a certificate on that Ingress, and for the Gateway API alternative, see
+[expose an instance with TLS](expose-with-tls.md).
 
-Home Assistant rejects every request with `400 Bad Request` unless it is told
-to trust the proxy in front of it. Whenever `spec.ingress.enabled` or
-`spec.gateway.enabled` is `true`, the operator automatically supplies the
-following, unless the keys are already present:
-
-```yaml
-http:
-  use_x_forwarded_for: true
-  trusted_proxies:
-    - 10.0.0.0/8
-    - 172.16.0.0/12
-    - 192.168.0.0/16
-```
-
-On Home Assistant 2026.8+ these are delivered through the http config API rather
-than written into `configuration.yaml` (see
-[Configuration → HTTP configuration](configuration.md#http-configuration-on-home-assistant-20268)),
-with no change to the outcome. On older Home Assistant they go into the generated
-`configuration.yaml`.
-
-These are the RFC1918 private address ranges — a conservative default, not an
-autodetection of the real cluster pod/service CIDR (which cannot be reliably
-read from the Kubernetes API). Each key is added independently: if you have
-already set either `http.use_x_forwarded_for` or `http.trusted_proxies`
-yourself in `HomeAssistantConfiguration`, the operator leaves your value
-untouched and only fills in the missing key. If `http:` itself is an
-externally managed tagged block (for example `http: !include http.yaml`),
-the operator leaves it completely untouched — set the keys in that included
-file, or move the section into `HomeAssistantConfiguration.spec.configuration`
-directly, if you want the operator to manage them.
-
-**Security note**: because these are broad RFC1918 ranges, in most Kubernetes
-clusters they cover every pod on the network, not just your actual Ingress
-controller or Gateway. Any reachable workload can then set its own
-`X-Forwarded-For` header and have Home Assistant trust it as the real client
-IP, weakening IP-based bans, rate limiting, and audit-log attribution. If
-other workloads in the cluster aren't trusted, replace the default
-`trusted_proxies` with the actual CIDR of your Ingress/Gateway proxy (for
-example, the ingress controller's pod or Service CIDR) in
-`HomeAssistantConfiguration`, or disable the defaults below and configure
-`http.trusted_proxies`/`http.use_x_forwarded_for` yourself.
-
-To opt out entirely (for example, if your cluster's pod/service network isn't
-RFC1918, or you want to set narrower proxy ranges yourself), set:
-
-```yaml
-spec:
-  disableDefaultTrustedProxies: true
-```
-
-The `HomeAssistant` resource's `ExposureReady` condition message reports
-which of the three states applies: `default trusted proxies applied`, `using
-user-configured trusted proxies`, or `default trusted proxies disabled
-(opt-out)`.
-
-### `spec.resources`
+## Set resource requests and limits
 
 CPU and memory requests/limits for the HA container.
 
@@ -161,7 +197,7 @@ spec:
       memory: "1Gi"
 ```
 
-### `spec.hostNetwork`
+## Use host networking for LAN device discovery
 
 Enables host networking for mDNS/SSDP/DHCP device discovery on the local LAN. Off by default.
 
@@ -175,9 +211,9 @@ spec:
 
     It also weakens `spec.alpha.networkPolicy.enabled` (see below): NetworkPolicy operates on pod IPs, so it does not restrict traffic arriving via the host's network interface. Combining both gives only partial isolation.
 
-### `spec.scheduling`
+## Control where the pod runs
 
-Controls where the Home Assistant pod is eligible to run and how it's treated under resource contention, using Kubernetes' own scheduling primitives directly — every field is copied verbatim onto the generated pod template. All fields are optional; leaving `spec.scheduling` unset preserves today's freely-schedulable, default-priority behavior exactly. Unlike other risky capabilities in this operator, this ships on the stable spec, not `spec.alpha.*`: the operator only exposes Kubernetes' own long-stable scheduling API, it doesn't implement any new scheduling behavior of its own.
+Controls where the Home Assistant pod is eligible to run and how it's treated under resource contention, using Kubernetes' own scheduling primitives directly — every field is copied verbatim onto the generated pod template. All fields are optional; leaving `spec.scheduling` unset preserves today's freely-schedulable, default-priority behavior exactly.
 
 ```yaml
 spec:
@@ -213,10 +249,16 @@ The `HomeAssistant` resource's `SchedulingReady` status condition reports whethe
 !!! note
     Kubernetes only evaluates scheduling constraints when a pod is placed — editing `spec.scheduling` on an already-running instance triggers a pod recreation so the new constraint actually takes effect; it does not live-migrate the running pod.
 
-### `spec.alpha.networkPolicy`
+## Restrict network access to the pod (experimental)
 
 !!! note "Alpha"
-    Opt-in, off by default. Fields under `spec.alpha` are experimental and may change or be removed without a deprecation notice.
+    Opt-in, off by default. Fields under `spec.alpha` are experimental and may
+    change or be removed without a deprecation notice — see
+    [what `spec.alpha` means](../explanation/alpha-lifecycle.md).
+
+    If you turn this on, please
+    [say how it went](https://github.com/przemekhys/homeassistant-operator/discussions/new/choose)
+    — whether it worked is the evidence that decides whether it stays.
 
 When enabled, the operator creates a `NetworkPolicy` restricting ingress to the Home Assistant pod to the same namespace and the operator's own namespace, on the Service port. Egress is left unrestricted — Home Assistant needs broad, unpredictable egress to IoT devices, cloud APIs, and MQTT brokers.
 
@@ -230,10 +272,16 @@ spec:
 !!! warning
     The operator-namespace ingress peer is only added when the controller knows its own namespace via the `OPERATOR_NAMESPACE` environment variable (set automatically by the shipped manifests). If it is unset, the operator silently omits that peer and only logs a warning — the resulting policy blocks the operator from reaching the HA API, breaking bootstrap, hot-reload, and health checks. Ensure `OPERATOR_NAMESPACE` is set on the controller before enabling this.
 
-### `spec.alpha.devices`
+## Pass a USB device through to the container (experimental)
 
 !!! note "Alpha"
-    Opt-in, off by default. Fields under `spec.alpha` are experimental and may change or be removed without a deprecation notice.
+    Opt-in, off by default. Fields under `spec.alpha` are experimental and may
+    change or be removed without a deprecation notice — see
+    [what `spec.alpha` means](../explanation/alpha-lifecycle.md).
+
+    If you turn this on, please
+    [say how it went](https://github.com/przemekhys/homeassistant-operator/discussions/new/choose)
+    — whether it worked is the evidence that decides whether it stays.
 
 Mounts one or more host device nodes (e.g. `/dev/ttyACM0` for a Zigbee/Z-Wave USB coordinator such as a Conbee2 or SkyConnect) into the Home Assistant container, so integrations like Zigbee2MQTT, Z-Wave JS, or ZHA can open the serial port. Each entry is mounted as a `hostPath` volume typed as a character device — the operator never sets `privileged: true` on the pod for this.
 
@@ -251,11 +299,11 @@ Fields per entry:
 - `containerPath` (optional): the path the device is mounted at inside the container. Defaults to `hostPath`.
 
 !!! warning
-    This does **not** by itself pin the pod to the node the device is physically attached to. A USB coordinator only exists on one specific node, so declaring it here is only useful once you've separately pinned the pod there via [`spec.scheduling.nodeSelector`](#specscheduling) (label the node, then match that label). If the declared device isn't present on whichever node the pod lands on, the pod fails to start and the `HomeAssistant` resource's `DevicesReady` status condition names the missing path.
+    This does **not** by itself pin the pod to the node the device is physically attached to. A USB coordinator only exists on one specific node, so declaring it here is only useful once you've separately pinned the pod there via [`spec.scheduling.nodeSelector`](#control-where-the-pod-runs) (label the node, then match that label). If the declared device isn't present on whichever node the pod lands on, the pod fails to start and the `HomeAssistant` resource's `DevicesReady` status condition names the missing path.
 
-### `spec.secretsFrom`
+## Use a ready-made secrets Secret
 
-Direct reference to a Kubernetes Secret containing a `secrets.yaml` blob. Prefer `HomeAssistantSecrets` CR for managed secret composition.
+Direct reference to a Kubernetes Secret containing a `secrets.yaml` blob. Prefer [`HomeAssistantSecrets`](manage-secrets.md) for managed secret composition.
 
 ```yaml
 spec:
@@ -263,70 +311,8 @@ spec:
     name: my-raw-secrets
 ```
 
-## Status
+## Every field
 
-```sh
-kubectl get ha home
-```
-```
-NAME   READY   STATUS    VERSION   AGE
-home   True    Running   2025.6    5m
-```
-
-```sh
-kubectl describe ha home
-```
-```
-Status:
-  Conditions:
-    Type:    Ready
-    Status:  True
-  Bootstrap:
-    Completed:       true
-    API Token Ready: true
-```
-
-## IP ban self-recovery
-
-When Home Assistant has `ip_ban_enabled: true`, it can ban the operator's own IP after repeated failed logins (HTTP `403`) — for example during bootstrap retries. A banned operator can no longer reach the HA API, which would normally require manual editing of `/config/ip_bans.yaml`. The operator recovers from this automatically, **without** needing the `pods/exec` RBAC permission.
-
-### How it works
-
-1. The operator detects it is banned (HTTP `403` from HA).
-2. It deletes the HA pod. The `StatefulSet` recreates it with an `unban-operator-ip` init-container (reusing the HA image already cached on the node).
-3. The init-container removes the operator's IP from `/config/ip_bans.yaml` **before** HA starts, then HA comes up unbanned.
-
-The operator's IP is passed to the pod via the `<ha-name>-operator-ip` ConfigMap, sourced from the `POD_IP` downward-API environment variable on the operator Deployment (set by default in the Helm chart).
-
-### Sliding-window protection
-
-To avoid a restart loop, recovery is rate-limited:
-
-- At most **3 pod restarts** within a **30-minute** window.
-- A minimum **5-minute cooldown** between consecutive restarts.
-- The window resets automatically after 30 minutes **or** on the first successful HA connection.
-
-Once the limit is exceeded the operator stops restarting and sets the `BanRecoveryFailed=True` condition, requiring manual intervention:
-
-```sh
-kubectl describe ha home   # look for the BanRecoveryFailed condition
-```
-
-Manual recovery: remove the operator's IP from `/config/ip_bans.yaml` on the PVC and restart the pod (`kubectl delete pod home-0`).
-
-### Status fields
-
-| Field | Meaning |
-|-------|---------|
-| `status.selfUnbanCount` | Total number of self-unban restarts performed. |
-| `status.lastSelfUnban` | Timestamp of the most recent self-unban. |
-
-
-## Deleting an instance
-
-!!! warning
-    The PVC is **not** deleted automatically when the `HomeAssistant` CR is removed — this protects your HA configuration data. Delete the PVC manually if you want a clean teardown:
-    ```sh
-    kubectl delete ha home
-    kubectl delete pvc home-config   # name: <ha-name>-config
-    ```
+This guide shows the fields you need for the task. For the complete list of
+`HomeAssistant` fields, with types and defaults, see the
+[API reference](../reference/api.md#homeassistantspec).

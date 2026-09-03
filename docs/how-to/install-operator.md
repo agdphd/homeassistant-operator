@@ -1,4 +1,18 @@
-# Installation
+# Install the operator
+
+*How-to — get the operator running on a cluster. Assumes you have a cluster and `kubectl` access.*
+
+Set `VERSION` to the release you want — the
+[changelog](../reference/changelog.md) lists them — or drop the `--version` flag
+entirely to install the latest.
+
+```sh
+VERSION=1.4.0
+```
+
+!!! note "Registry tags carry no leading `v`"
+    The git tag is `v1.4.0`, but the published chart and image are tagged
+    `1.4.0`. Use the form without `v` in every command on this page.
 
 ## Prerequisites
 
@@ -9,34 +23,38 @@
 
 ```sh
 helm install homeassistant-operator oci://ghcr.io/przemekhys/charts/homeassistant-operator \
-  --version 0.10.0 \
+  --version "$VERSION" \
   --namespace homeassistant-operator-system \
-  --create-namespace
+  --create-namespace \
+  --set 'watchNamespaces={homeassistant}'
 ```
 
-Verify the operator is running:
-
-```sh
-kubectl get pods -n homeassistant-operator-system
-```
+Set `watchNamespaces` to the namespaces where you actually run Home Assistant.
+Leaving it out makes the operator watch the whole cluster through a
+`ClusterRoleBinding` — more permission than it needs, **deprecated since v1.1.0**
+and due for removal in v2.0.0. See
+[which namespaces the operator watches](#which-namespaces-the-operator-watches).
 
 ### Customise the installation
 
 Download the default values and override what you need:
 
 ```sh
-helm show values oci://ghcr.io/przemekhys/charts/homeassistant-operator --version 0.10.0 > values.yaml
-# edit values.yaml, then:
+helm show values oci://ghcr.io/przemekhys/charts/homeassistant-operator --version "$VERSION" > values.yaml
+# edit values.yaml — set watchNamespaces there, it is empty by default:
+#   watchNamespaces:
+#     - homeassistant
+# then:
 helm install homeassistant-operator oci://ghcr.io/przemekhys/charts/homeassistant-operator \
-  --version 0.10.0 \
+  --version "$VERSION" \
   --namespace homeassistant-operator-system \
   --create-namespace \
   -f values.yaml
 ```
 
-### Restrict watched namespaces (`watchNamespaces`)
+### Which namespaces the operator watches
 
-By default the operator watches **all** namespaces in the cluster, which requires a cluster-wide `ClusterRoleBinding`. To follow the principle of least privilege, set `watchNamespaces` to the list of namespaces where Home Assistant actually runs:
+Name every namespace that will hold Home Assistant resources. Each one gets its own `RoleBinding`, and the operator gets no permissions anywhere else:
 
 ```yaml
 # values.yaml
@@ -47,16 +65,19 @@ watchNamespaces:
 
 | Mode | `watchNamespaces` | RBAC generated | Scope |
 |------|-------------------|----------------|-------|
-| Cluster-wide (default) | `[]` | `ClusterRoleBinding` | All namespaces |
-| Namespace-scoped | non-empty list | one `RoleBinding` per listed namespace | Only listed namespaces |
+| Namespace-scoped (recommended) | non-empty list | one `RoleBinding` per listed namespace | Only listed namespaces |
+| Cluster-wide (deprecated) | `[]` | `ClusterRoleBinding` | Every namespace, now and in future |
 
 When set, the operator receives per-namespace `RoleBinding` objects instead of the `ClusterRoleBinding`, and the `WATCH_NAMESPACES` environment variable is injected automatically.
 
 !!! warning "The operator's own namespace is not auto-included"
     Add `homeassistant-operator-system` to the list explicitly if you deploy `HomeAssistant` resources into the same namespace as the operator itself.
 
-!!! note "ClusterRoleBinding mode is deprecated"
-    The default `watchNamespaces: []` (cluster-wide) mode is **deprecated since v1.1.0** and planned for removal in **v2.0.0**. See [DEPRECATIONS.md](https://github.com/przemekhys/homeassistant-operator/blob/main/DEPRECATIONS.md) for details.
+!!! warning "Leaving `watchNamespaces` empty is deprecated"
+    An empty `watchNamespaces` gives the operator a cluster-wide
+    `ClusterRoleBinding`. That mode is **deprecated since v1.1.0** and planned for
+    removal in **v2.0.0**; Helm prints a warning on every install that uses it.
+    See [DEPRECATIONS.md](https://github.com/przemekhys/homeassistant-operator/blob/main/DEPRECATIONS.md).
 
 **Migrating with kustomize** (non-Helm users):
 
@@ -68,7 +89,7 @@ When set, the operator receives per-namespace `RoleBinding` objects instead of t
 
 ```sh
 helm upgrade homeassistant-operator oci://ghcr.io/przemekhys/charts/homeassistant-operator \
-  --version <new-version> \
+  --version "$VERSION" \
   --namespace homeassistant-operator-system
 ```
 
@@ -96,7 +117,7 @@ helm uninstall homeassistant-operator -n homeassistant-operator-system
 If you prefer a plain `kubectl apply` without Helm:
 
 ```sh
-kubectl apply -f https://raw.githubusercontent.com/przemekhys/homeassistant-operator/v0.10.0/dist/install.yaml
+kubectl apply -f https://raw.githubusercontent.com/przemekhys/homeassistant-operator/"v$VERSION"/dist/install.yaml
 ```
 
 This installs:
@@ -121,5 +142,25 @@ kubectl delete homeassistantscripts --all -A
 kubectl delete homeassistantintegrations --all -A
 
 # 2. Remove the operator and CRDs
-kubectl delete -f https://raw.githubusercontent.com/przemekhys/homeassistant-operator/v0.10.0/dist/install.yaml
+kubectl delete -f https://raw.githubusercontent.com/przemekhys/homeassistant-operator/"v$VERSION"/dist/install.yaml
 ```
+
+## Verify
+
+```sh
+kubectl get pods -n homeassistant-operator-system
+```
+```
+NAME                                      READY   STATUS    RESTARTS   AGE
+homeassistant-operator-5f4946ff79-s6f9s   1/1     Running   0          39s
+```
+
+Then check that the custom resource definitions registered:
+
+```sh
+kubectl get crd | grep homeassistant.io
+```
+
+You should see eleven entries. If the operator pod is running but nothing
+reconciles, see
+[the operator does not reconcile resources in a namespace](troubleshoot.md#operator-does-not-reconcile-resources-in-a-namespace).

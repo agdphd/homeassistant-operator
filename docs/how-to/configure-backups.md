@@ -1,8 +1,11 @@
-# Backup
+# Configure backups
 
-The operator configures Home Assistant's **built-in backup system** by sending a `backup/config/update` WebSocket command. No separate CRD is needed — backup is a section of the `HomeAssistant` spec.
+*How-to — schedule Home Assistant's built-in backups. Assumes a running instance.*
 
-HA stores backup archives in `/config/backups/` on the PVC. For off-site storage, use [Velero](https://velero.io/) to snapshot the PVC to S3 or NFS.
+Home Assistant writes backup archives to `/config/backups/` on the instance's
+persistent volume. That protects you from mistakes inside Home Assistant, not
+from losing the volume — for off-site copies, see
+[getting backups off the cluster](#getting-backups-off-the-cluster) at the end.
 
 ## Prerequisites
 
@@ -33,15 +36,60 @@ spec:
     includeDatabase: true
 ```
 
-## Spec reference
+## Idempotency
 
-### `spec.backup.enabled`
+The operator reads the current backup config from HA (`backup/config/info`) before writing. It only sends `backup/config/update` if the desired state differs from the actual state — no unnecessary WebSocket calls on every reconcile.
 
-Set to `true` to activate backup configuration. Default: `false`.
+## Getting backups off the cluster
 
-When set back to `false` after being enabled, the operator clears the `BackupConfigured` status condition.
+Home Assistant's own backups live on the same volume as the data they protect, so
+they survive a mistake but not a lost volume. Snapshotting that volume is a job
+for a cluster backup tool such as [Velero](https://velero.io/), which is outside
+this operator entirely:
 
-### `spec.backup.recurrence`
+```sh
+# Install Velero with an S3-compatible backend
+velero install --provider aws --bucket my-ha-backups ...
+
+# Snapshot the instance's volume every night
+velero schedule create ha-daily \
+  --schedule="0 4 * * *" \
+  --include-namespaces default \
+  --selector app=home
+```
+
+!!! note "Not part of the supported API"
+    Velero is a third-party tool that this project does not ship or control. The
+    commands above reflect the state at the time of writing and may need
+    adjusting for a different Velero version or cluster setup.
+
+    **Tested with**: Velero 1.15.
+
+## Restore
+
+Restore is performed manually through the HA UI (`Settings → System → Backups`). The operator does not automate restore operations.
+
+## Verify
+
+```sh
+kubectl get ha home -o jsonpath='{.status.conditions}' | jq '.[] | select(.type=="BackupConfigured")'
+```
+```json
+{
+  "type": "BackupConfigured",
+  "status": "True",
+  "reason": "BackupConfigured",
+  "message": "Backup configuration applied successfully"
+}
+```
+
+## Turn backups off again
+
+Setting `spec.backup.enabled` back to `false` stops the operator managing the
+schedule and clears the `BackupConfigured` condition. It does **not** delete
+backups Home Assistant has already written.
+
+## Choose the schedule
 
 How often to create a backup.
 
@@ -55,7 +103,7 @@ How often to create a backup.
 
 Time of day in `HH:MM:SS` format (e.g. `"03:00:00"`). If empty, HA picks automatically.
 
-### `spec.backup.retentionCopies`
+## Choose how much history to keep
 
 Number of backup archives to keep. Older ones are deleted automatically. If omitted, unlimited retention.
 
@@ -75,7 +123,7 @@ backup:
 
 `retentionCopies` and `retentionDays` can be combined — HA applies whichever limit is reached first.
 
-### `spec.backup.includeDatabase`
+## Exclude the database to shrink backups
 
 Whether to include the HA database (`home-assistant_v2.db`) in the backup. Default: `true`.
 
@@ -86,47 +134,8 @@ backup:
   includeDatabase: false   # config-only backup, smaller files
 ```
 
-## Status
+## Every field
 
-```sh
-kubectl get ha home -o jsonpath='{.status.conditions}' | jq '.[] | select(.type=="BackupConfigured")'
-```
-```json
-{
-  "type": "BackupConfigured",
-  "status": "True",
-  "reason": "BackupConfigured",
-  "message": "Backup configuration applied successfully"
-}
-```
-
-### Condition reasons
-
-| Reason | Meaning |
-|--------|---------|
-| `BackupConfigured` | Schedule applied in HA |
-| `BackupConfigFailed` | WebSocket command returned an error |
-| `TokenNotAvailable` | Bootstrap token not ready; requeuing |
-
-## Idempotency
-
-The operator reads the current backup config from HA (`backup/config/info`) before writing. It only sends `backup/config/update` if the desired state differs from the actual state — no unnecessary WebSocket calls on every reconcile.
-
-## Off-site backup with Velero
-
-HA backups on the PVC are only as durable as the underlying storage. For cloud-native durability, snapshot the PVC with Velero:
-
-```sh
-# Install Velero with AWS S3 backend
-velero install --provider aws --bucket my-ha-backups ...
-
-# Schedule PVC snapshot
-velero schedule create ha-daily \
-  --schedule="0 4 * * *" \
-  --include-namespaces default \
-  --selector app=home
-```
-
-## Restore
-
-Restore is performed manually through the HA UI (`Settings → System → Backups`). The operator does not automate restore operations.
+This guide shows the fields you need for the task. For the complete list of
+`BackupSpec` fields, with types and defaults, see the
+[API reference](../reference/api.md#backupspec).

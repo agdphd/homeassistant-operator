@@ -1,14 +1,12 @@
-# Secrets Management
+# Manage secrets
 
-`HomeAssistantSecrets` composes multiple Kubernetes Secrets into a single `secrets.yaml` that Home Assistant mounts at `/config/secrets.yaml`. This lets you store credentials (MQTT passwords, database URLs, API keys) in native Kubernetes Secrets and reference them in `configuration.yaml` with `!secret`.
+*How-to — compose Kubernetes Secrets into Home Assistant's `secrets.yaml`. Assumes a running instance.*
 
-## How it works
 
-1. The operator reads all referenced Kubernetes Secrets
-2. It merges their keys into a single YAML document
-3. The result is stored in a `ConfigMap` named `<ha-name>-generated-secrets`
-4. A SHA-256 hash of the content is written to the StatefulSet pod template annotation
-5. Kubernetes detects the annotation change and performs a rolling restart (configurable)
+## Prerequisites
+
+- A running Home Assistant instance ([deploy one](deploy-instance.md))
+- The Kubernetes Secrets you want to expose to Home Assistant
 
 ## Example
 
@@ -47,33 +45,20 @@ mqtt:
   password: !secret mqtt_password
 ```
 
-## Spec reference
+## Updating secrets
 
-### `spec.homeAssistantRef.name`
+When a source Kubernetes Secret changes, the operator automatically detects it, regenerates `secrets.yaml`, and triggers a rolling restart (if `autoRestart: true`). No manual intervention is needed.
 
-Name of the `HomeAssistant` CR this resource belongs to.
-
-### `spec.secretRefs`
-
-List of Kubernetes Secrets to merge.
-
-| Field | Description |
-|-------|-------------|
-| `name` | Name of the Kubernetes Secret |
-| `keys` | Specific keys to include. If omitted, **all keys** from the Secret are included |
-
-### `spec.autoRestart`
-
-When `true` (default), any change to the referenced Secrets triggers a rolling restart of the HA pod via a hash annotation on the StatefulSet.
-
-Set to `false` if you manage restarts externally (e.g. [Stakater Reloader](https://github.com/stakater/Reloader)).
-
-```yaml
-spec:
-  autoRestart: false
+```sh
+# Rotate MQTT password
+kubectl create secret generic mqtt-credentials \
+  --from-literal=mqtt_user=homeassistant \
+  --from-literal=mqtt_password=newpassword \
+  --dry-run=client -o yaml | kubectl apply -f -
+# operator picks it up within seconds
 ```
 
-## Status
+## Verify
 
 ```sh
 kubectl get hasec home-secrets
@@ -95,26 +80,28 @@ Status:
   Last Updated: 2026-04-23T10:00:00Z
 ```
 
-## Updating secrets
+## Pick which Secrets and keys to merge
 
-When a source Kubernetes Secret changes, the operator automatically detects it, regenerates `secrets.yaml`, and triggers a rolling restart (if `autoRestart: true`). No manual intervention is needed.
+List of Kubernetes Secrets to merge.
 
-```sh
-# Rotate MQTT password
-kubectl create secret generic mqtt-credentials \
-  --from-literal=mqtt_user=homeassistant \
-  --from-literal=mqtt_password=newpassword \
-  --dry-run=client -o yaml | kubectl apply -f -
-# operator picks it up within seconds
+| Field | Description |
+|-------|-------------|
+| `name` | Name of the Kubernetes Secret |
+| `keys` | Specific keys to include. If omitted, **all keys** from the Secret are included |
+
+## Control the restart on change
+
+When `true` (default), any change to the referenced Secrets triggers a rolling restart of the HA pod via a hash annotation on the StatefulSet.
+
+Set to `false` if you manage restarts externally (e.g. [Stakater Reloader](https://github.com/stakater/Reloader)).
+
+```yaml
+spec:
+  autoRestart: false
 ```
 
-## Generated ConfigMap
+## Every field
 
-The composed `secrets.yaml` is stored in:
-
-```sh
-kubectl get configmap home-generated-secrets -o jsonpath='{.data.secrets\.yaml}'
-```
-
-!!! warning
-    Do not edit this ConfigMap directly — the operator overwrites it on every reconcile. Edit the source Kubernetes Secrets or the `HomeAssistantSecrets` CR instead.
+This guide shows the fields you need for the task. For the complete list of
+`HomeAssistantSecrets` fields, with types and defaults, see the
+[API reference](../reference/api.md#homeassistantsecretsspec).

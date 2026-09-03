@@ -1,24 +1,18 @@
-# Integrations
+# Register integrations
 
-`HomeAssistantIntegration` registers a Home Assistant integration through the [Config Flow API](https://developers.home-assistant.io/docs/config_entries_config_flow_handler) — declaratively, as a Kubernetes resource. It does **not** deploy any containers; it only tells Home Assistant to configure an integration.
+*How-to — register a Home Assistant integration (MQTT, ESPHome, …) without opening its UI. Assumes a running instance.*
+
+
+## Prerequisites
+
+- A running Home Assistant instance with [bootstrap completed](bootstrap-instance.md) — the operator needs its API token
+- The service you are integrating with, reachable from the cluster
 
 ## Use cases
 
 - Register MQTT broker after deploying Mosquitto via Helm
 - Configure ESPHome, recorder, or other single-step integrations
 - Adopt an integration that was configured manually in the HA UI
-
-## How it works
-
-```
-StartConfigFlow(domain) → SubmitConfigFlow(configuration) → save entryID in status
-```
-
-On subsequent reconciles the operator verifies the entry still exists in HA (idempotent). If `spec.configuration` changes, the operator removes the old entry and re-runs the flow.
-
-**Adopt pattern**: if the integration already exists in HA (configured via UI) but the CR has no `status.entryID`, the operator adopts it without reconfiguring.
-
-Requires a bootstrap API token.
 
 ## MQTT example
 
@@ -68,71 +62,6 @@ spec:
         key: db_url
 ```
 
-## Spec reference
-
-### `spec.domain`
-
-The integration domain as recognised by Home Assistant (e.g. `mqtt`, `esphome`, `recorder`).
-
-### `spec.configuration`
-
-Key-value map of configuration values passed to the Config Flow. Each value is either:
-
-- **Plain text**: `value: "some-string"`
-- **Secret reference**: resolved from a Kubernetes Secret at reconcile time
-
-```yaml
-configuration:
-  broker:
-    value: "mosquitto.default.svc.cluster.local"
-  password:
-    secretKeyRef:
-      name: mqtt-credentials
-      key: password
-```
-
-## Status and conditions
-
-```sh
-kubectl get haint mqtt
-```
-```
-NAME   HOMEASSISTANT   DOMAIN   READY   AGE
-mqtt   home            mqtt     True    5m
-```
-
-```sh
-kubectl describe haint mqtt
-```
-```
-Status:
-  Entry ID:     abc123def456
-  Config Hash:  sha256:...
-  Conditions:
-    IntegrationReady: True (reason: IntegrationConfigured)
-```
-
-### Condition reasons
-
-| Reason | Meaning |
-|--------|---------|
-| `IntegrationConfigured` | Config flow completed successfully |
-| `AlreadyConfigured` | Integration existed in HA; adopted without reconfiguring |
-| `TokenNotAvailable` | Bootstrap token not yet created; requeuing |
-| `HANotReady` | HA instance not ready; requeuing |
-| `ConfigFlowFailed` | Config Flow returned an error |
-| `SecretResolutionFailed` | Referenced Kubernetes Secret not found |
-
-### Events
-
-| Event | Type | Meaning |
-|-------|------|---------|
-| `IntegrationConfigured` | Normal | Config flow succeeded |
-| `IntegrationAdopted` | Normal | Existing entry adopted |
-| `IntegrationReconfigured` | Normal | Spec changed; re-registered |
-| `IntegrationFailed` | Warning | Flow or API error |
-| `IntegrationRemoved` | Normal | Entry deleted (finalizer) |
-
 ## Reconfiguring
 
 To change the integration configuration, update `spec.configuration`. The operator detects the hash change, removes the existing config entry, and runs a new Config Flow.
@@ -155,3 +84,47 @@ kubectl delete haint mqtt
 ```
 
 The finalizer calls `DELETE /api/config/config_entries/entry/{entryID}` before removing the CR. If HA is unavailable, the finalizer completes anyway (best-effort).
+
+## Verify
+
+```sh
+kubectl get haint mqtt
+```
+```
+NAME   HOMEASSISTANT   DOMAIN   READY   AGE
+mqtt   home            mqtt     True    5m
+```
+
+```sh
+kubectl describe haint mqtt
+```
+```
+Status:
+  Entry ID:     abc123def456
+  Config Hash:  sha256:...
+  Conditions:
+    IntegrationReady: True (reason: IntegrationConfigured)
+```
+
+## Supply values, in plain text or from a Secret
+
+Key-value map of configuration values passed to the Config Flow. Each value is either:
+
+- **Plain text**: `value: "some-string"`
+- **Secret reference**: resolved from a Kubernetes Secret at reconcile time
+
+```yaml
+configuration:
+  broker:
+    value: "mosquitto.default.svc.cluster.local"
+  password:
+    secretKeyRef:
+      name: mqtt-credentials
+      key: password
+```
+
+## Every field
+
+This guide shows the fields you need for the task. For the complete list of
+`HomeAssistantIntegration` fields, with types and defaults, see the
+[API reference](../reference/api.md#homeassistantintegrationspec).
