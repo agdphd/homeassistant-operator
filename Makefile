@@ -284,12 +284,16 @@ docs-api: crd-ref-docs ## Regenerate docs/reference/api.md from Go types
 		--config=./docs/crd-ref-docs.yaml \
 		--renderer=markdown \
 		--output-path=./docs/reference/api.md
-	@# Stamp in the type line every published page carries. crd-ref-docs has no
-	@# hook for this, and the file is regenerated on every publish.
+	@# Stamp in the type line every published page carries — crd-ref-docs has no
+	@# hook for this, and the file is regenerated on every publish — then trim the
+	@# trailing blank lines the generator emits. pre-commit's end-of-file-fixer
+	@# strips them on the way in, so without this the freshly generated file never
+	@# matches the committed one and every run reports drift.
 	@{ head -1 ./docs/reference/api.md; echo; \
 	   echo '*Reference — every field of every custom resource, generated from the Go types. Look things up here; it does not teach.*'; \
-	   tail -n +2 ./docs/reference/api.md; } > ./docs/reference/api.md.tmp \
-	   && mv ./docs/reference/api.md.tmp ./docs/reference/api.md
+	   tail -n +2 ./docs/reference/api.md; } > ./docs/reference/api.md.tmp
+	@printf '%s\n' "$$(cat ./docs/reference/api.md.tmp)" > ./docs/reference/api.md
+	@rm -f ./docs/reference/api.md.tmp
 
 ##@ Security
 
