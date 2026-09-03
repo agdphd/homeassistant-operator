@@ -88,7 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **E2E test suite optimization** — CI e2e tests now run faster; see `docs/development/testing.md` (and `.claude/TESTING.md` for AI guidance) for details.
+- **E2E test suite optimization** — CI e2e tests now run faster; see `docs/development/testing.md` for details.
 
 ### Added
 
