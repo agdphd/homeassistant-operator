@@ -265,20 +265,31 @@ docs-setup: ## Create Python venv and install MkDocs dependencies
 .PHONY: docs-serve
 docs-serve: docs-api ## Serve documentation locally (http://127.0.0.1:8000)
 	@$(MAKE) docs-setup
-	$(DOCS_VENV)/bin/mkdocs serve
+	$(DOCS_VENV)/bin/mkdocs serve --strict
 
 .PHONY: docs-build
 docs-build: docs-api ## Build documentation to site/ (regenerates API reference first)
 	@$(MAKE) docs-setup
-	$(DOCS_VENV)/bin/mkdocs build
+	$(DOCS_VENV)/bin/mkdocs build --strict
+
+.PHONY: docs-verify
+docs-verify: docs-build ## Pre-PR gate for docs: strict build (links + anchors), self-contained check, pasteable shell snippets
+	./hack/verify-docs-selfcontained.sh
+	./hack/verify-docs-shell.sh
 
 .PHONY: docs-api
 docs-api: crd-ref-docs ## Regenerate docs/reference/api.md from Go types
 	$(CRD_REF_DOCS) \
-		--source-path=./api/v1 \
+		--source-path=./api \
 		--config=./docs/crd-ref-docs.yaml \
 		--renderer=markdown \
 		--output-path=./docs/reference/api.md
+	@# Stamp in the type line every published page carries. crd-ref-docs has no
+	@# hook for this, and the file is regenerated on every publish.
+	@{ head -1 ./docs/reference/api.md; echo; \
+	   echo '*Reference — every field of every custom resource, generated from the Go types. Look things up here; it does not teach.*'; \
+	   tail -n +2 ./docs/reference/api.md; } > ./docs/reference/api.md.tmp \
+	   && mv ./docs/reference/api.md.tmp ./docs/reference/api.md
 
 ##@ Security
 
