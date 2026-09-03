@@ -104,7 +104,12 @@ watchNamespaces: []
 metricsNetworkPolicy:
   # -- Restrict ingress to the operator pod: its `/metrics` endpoint to namespaces
   # labeled `metrics: enabled`, and — when `webhook.enabled` is also true — its
-  # admission webhook to namespaces labeled `webhook: enabled`. Egress is
+  # admission webhook to namespaces labeled `webhook: enabled`. That label governs
+  # pod-to-pod callers only: on most clusters the API server's AdmissionReview
+  # calls do not originate from the pod network, so the rule neither reaches nor
+  # blocks them. Where they are evaluated by the policy, an unlabelled caller is
+  # denied — with `webhook.failurePolicy: Ignore` (the default) writes are then
+  # admitted unvalidated, and with `Fail` they are rejected outright. Egress is
   # deliberately not restricted, because there is no portable way to address the
   # Kubernetes API server across cluster types and CNIs from a generic chart.
   # Unrelated to `spec.alpha.networkPolicy.enabled` on a HomeAssistant resource,

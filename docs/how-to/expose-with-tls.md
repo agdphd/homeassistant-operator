@@ -10,8 +10,10 @@
   `ClusterIssuer`. The operator only **references** an issuer; it never creates
   application issuers.
 
-If you already hold a certificate, point `spec.ingress.tls.secretName` at the
-Secret holding it and skip cert-manager entirely. The operator's own admission
+If you already hold a certificate, point `spec.ingress.tls.secretName` (or
+`spec.gateway.secretName`) at the Secret holding it and skip cert-manager
+entirely. `secretName` takes precedence over `issuerRef`, so setting both means
+your Secret is used and the issuer is ignored. The operator's own admission
 webhook does not need cert-manager either — it self-signs and rotates its
 serving certificate by default.
 

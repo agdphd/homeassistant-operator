@@ -24,29 +24,38 @@ helm template ha-operator oci://ghcr.io/przemekhys/charts/homeassistant-operator
   --set namespace.create=true | kubectl apply -f -
 ```
 
-!!! note "The release namespace must exist before the chart is applied"
-    Helm stores release state in the target namespace before it applies the chart, so
-    a first install into a namespace that does not exist fails with
-    `namespaces "..." not found`. Pass `--create-namespace` alongside
-    `namespace.create=true`; the two do not collide, and the chart's `Namespace`
-    object applies the enforcing labels on top.
+Nothing has to exist beforehand here: `kubectl apply` creates the labelled
+`Namespace` from the rendered manifests like any other object.
 
-    If you would rather own the namespace yourself, create and label it first and
-    leave `namespace.create` at its default:
+**Direct `helm install`.** Helm stores release state in the target namespace
+*before* it applies the chart, so the namespace has to exist first — otherwise the
+install fails with `namespaces "..." not found`. Pass `--create-namespace`
+alongside `namespace.create=true`; the two do not collide, and the chart's
+`Namespace` object applies the enforcing labels on top:
 
-    ```bash
-    kubectl create namespace homeassistant-operator-system
-    kubectl label namespace homeassistant-operator-system \
-      pod-security.kubernetes.io/enforce=restricted \
-      pod-security.kubernetes.io/enforce-version=latest \
-      pod-security.kubernetes.io/audit=restricted \
-      pod-security.kubernetes.io/audit-version=latest \
-      pod-security.kubernetes.io/warn=restricted \
-      pod-security.kubernetes.io/warn-version=latest
-    helm install ha-operator oci://ghcr.io/przemekhys/charts/homeassistant-operator \
-      --namespace homeassistant-operator-system \
-      --set 'watchNamespaces={homeassistant}'
-    ```
+```bash
+helm install homeassistant-operator oci://ghcr.io/przemekhys/charts/homeassistant-operator \
+  --namespace homeassistant-operator-system --create-namespace \
+  --set namespace.create=true \
+  --set 'watchNamespaces={homeassistant}'
+```
+
+**Namespace you manage yourself.** Leave `namespace.create` at its default and
+label the namespace before installing:
+
+```bash
+kubectl create namespace homeassistant-operator-system
+kubectl label namespace homeassistant-operator-system \
+  pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/enforce-version=latest \
+  pod-security.kubernetes.io/audit=restricted \
+  pod-security.kubernetes.io/audit-version=latest \
+  pod-security.kubernetes.io/warn=restricted \
+  pod-security.kubernetes.io/warn-version=latest
+helm install homeassistant-operator oci://ghcr.io/przemekhys/charts/homeassistant-operator \
+  --namespace homeassistant-operator-system \
+  --set 'watchNamespaces={homeassistant}'
+```
 
 The operator pod stays restricted-compliant in every case; only the namespace-level
 enforcement differs.

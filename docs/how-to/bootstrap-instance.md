@@ -16,11 +16,19 @@ every other guide depends on this one.
 ## Quick setup
 
 ```sh
-# 1. Create the credentials Secret. Use a password of your own — this is the
-#    admin account for the whole instance.
+# 1. Create the credentials Secret. This is the admin account for the whole
+#    instance, so choose the password deliberately — you will log in with it.
+read -rsp 'Admin password: ' HA_PASSWORD; echo
+
 kubectl create secret generic ha-admin \
   --from-literal=username=admin \
-  --from-literal=password="$(head -c 18 /dev/urandom | base64)"
+  --from-literal=password="$HA_PASSWORD"
+```
+
+If you later need to check what was set, read it back from the Secret:
+
+```sh
+kubectl get secret ha-admin -o jsonpath='{.data.password}' | base64 -d; echo
 ```
 
 ```yaml

@@ -112,7 +112,7 @@ spec:
   storage:
     size: 5Gi
   service:
-    type: NodePort
+    type: ClusterIP
   bootstrap:
     enabled: true
     credentials:
@@ -129,10 +129,10 @@ tutorial work without you touching the Home Assistant UI:
 - `createApiToken: true` tells it to generate a long-lived access token and store
   it in a Secret, which is how the operator talks to Home Assistant afterwards.
 
-`service.type: NodePort` keeps the Service reachable without any ingress
-component. You will still reach it through `kubectl port-forward` in step 7,
-because the instance speaks plain HTTP at this stage; the
-[TLS guide](../how-to/expose-with-tls.md) covers exposing it properly.
+`service.type: ClusterIP` keeps the instance inside the cluster. You reach it
+through `kubectl port-forward` in step 7, which is the right default while it
+still speaks plain HTTP; the [TLS guide](../how-to/expose-with-tls.md) covers
+exposing it properly when you are ready.
 
 ## Step 5 — Apply both resources
 
@@ -162,10 +162,17 @@ NAME   READY   VERSION   AGE
 home   True    stable    4m
 ```
 
-`READY: True` means the operator has waited for Home Assistant to start, created
-your admin user, completed onboarding, and generated the API token.
+`READY: True` means Home Assistant itself is running. Bootstrap is tracked
+separately, so check that too before logging in:
 
-If it stays `False` for more than five minutes, check what the operator is
+```sh
+kubectl get ha home -o jsonpath='{.status.conditions[?(@.type=="BootstrapReady")].status}'
+```
+
+`True` means the operator has created your admin user, finished the onboarding
+steps it owns, and stored the API token.
+
+If either stays `False` for more than five minutes, look at what the operator is
 waiting for:
 
 ```sh
@@ -186,7 +193,7 @@ kubectl port-forward svc/home 8123:8123
 Leave that running and open <http://127.0.0.1:8123> in a browser. Log in with
 `admin` and the password you generated in step 2.
 
-!!! note "Why port-forward rather than the NodePort"
+!!! note "Why port-forward"
     The instance speaks plain HTTP, so reaching it across your network would put
     the admin password on the wire in the clear. `kubectl port-forward` tunnels
     over the API server's TLS connection and listens only on localhost, which
@@ -209,7 +216,7 @@ never had to create by hand, on storage that survives a pod restart.
 - If you plan to keep this instance, read
   [who owns the generated resources](../explanation/resource-ownership.md)
   first — it explains why editing the generated ConfigMap by hand does not work.
-- To expose the instance properly instead of over a NodePort, see
+- To expose the instance outside the cluster properly, see
   [expose an instance with TLS](../how-to/expose-with-tls.md).
 
 ## Clean up

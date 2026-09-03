@@ -256,13 +256,16 @@ DOCS_VENV ?= .venv
 
 .PHONY: docs-setup
 docs-setup: ## Create Python venv and install MkDocs dependencies
-	@# The stamp records which manifest the venv was built from, so adding a
-	@# plugin reinstalls instead of failing later with an unknown-plugin error
-	@# in an environment that looks already set up.
+	@# The stamp records which manifest the venv was built from. On a change the
+	@# venv is rebuilt rather than topped up: pip never uninstalls what the
+	@# manifest dropped, so a reused environment would keep diverging from it.
+	@# Without the stamp, adding a plugin failed later with an unknown-plugin
+	@# error in an environment that looked already set up.
 	@want="$$(sha256sum docs/requirements.txt | cut -d' ' -f1)"; \
 	have="$$(cat $(DOCS_VENV)/.installed 2>/dev/null || true)"; \
 	if [ "$$want" != "$$have" ]; then \
-		[ -d $(DOCS_VENV) ] || python3 -m venv $(DOCS_VENV); \
+		rm -rf $(DOCS_VENV); \
+		python3 -m venv $(DOCS_VENV); \
 		$(DOCS_VENV)/bin/pip install -r docs/requirements.txt -q; \
 		echo "$$want" > $(DOCS_VENV)/.installed; \
 	fi

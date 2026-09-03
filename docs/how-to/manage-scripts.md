@@ -108,8 +108,8 @@ actions:
 kubectl get hascp notify-mobile
 ```
 ```
-NAME            HOMEASSISTANT   ALIAS           MODE     READY   AGE
-notify-mobile   home            Notify mobile   queued   True    2m
+NAME            HOMEASSISTANT   ALIAS                   MODE     READY   AGE
+notify-mobile   home            Notify Mobile Devices   queued   True    2m
 ```
 
 ```sh
