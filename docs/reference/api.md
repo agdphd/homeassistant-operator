@@ -1814,7 +1814,7 @@ _Appears in:_
 | `homeAssistantRef` _[HomeAssistantReference](#homeassistantreference)_ | HomeAssistantRef references the HomeAssistant instance to install this repository into |  | Required: \{\} <br /> |
 | `category` _[CommunityRepositoryCategory](#communityrepositorycategory)_ | Category is the HACS repository category. appdaemon and netdaemon are intentionally<br />not accepted here: they require a separate runtime this operator does not deploy. |  | Enum: [integration plugin theme python_script template] <br />Required: \{\} <br /> |
 | `repository` _string_ | Repository is the GitHub "owner/repo" shorthand (not a full URL). |  | Pattern: `^[\w.-]+/[\w.-]+$` <br />Required: \{\} <br /> |
-| `ref` _string_ | Ref is the tag, branch, or commit SHA to install. Pinned and explicit — this<br />operator never tracks a "latest" release automatically. Restricted to<br />characters valid in a git ref (no URL-reserved or path-separator characters<br />that could alter the codeload request path). |  | MinLength: 1 <br />Pattern: `^[\w][\w.\-/]*$` <br />Required: \{\} <br /> |
+| `ref` _string_ | Ref is the tag, branch, or commit SHA to install. Pinned and explicit — this<br />operator never tracks a "latest" release automatically. Restricted to<br />characters valid in a git ref: word characters, dot, dash and slash, so<br />branch names such as release/v1 are accepted. URL-reserved characters that<br />could alter the codeload request path are not. |  | MinLength: 1 <br />Pattern: `^[\w][\w.\-/]*$` <br />Required: \{\} <br /> |
 
 
 #### HomeAssistantCommunityRepositoryStatus
@@ -1832,7 +1832,7 @@ _Appears in:_
 | --- | --- | --- | --- |
 | `phase` _[CommunityRepositoryPhase](#communityrepositoryphase)_ | Phase is the current lifecycle phase. |  | Optional: \{\} <br /> |
 | `installedVersion` _string_ | InstalledVersion is the last ref that was successfully validated and activated.<br />It does NOT change until a newly requested ref is fully confirmed, so a failed<br />update never reports a broken version as installed. |  | Optional: \{\} <br /> |
-| `resolvedTarget` _string_ | ResolvedTarget is the install target computed from the source repository's own<br />manifest (the integration domain, or the theme/script/template/plugin file name).<br />Used together with Category as the conflict-detection key. |  | Optional: \{\} <br /> |
+| `resolvedTarget` _string_ | ResolvedTarget is the install target computed from the source repository's own<br />manifest (the integration domain, or the theme/script/template/plugin file name).<br />Together with the referenced HomeAssistant name and Category it forms the<br />conflict-detection key, so the same target may be installed into two<br />different instances. |  | Optional: \{\} <br /> |
 | `lastError` _string_ | LastError contains a human-readable error message from the last failed operation.<br />Cleared when the operation succeeds. |  | Optional: \{\} <br /> |
 | `installingSince` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | InstallingSince records when the resource most recently entered the<br />Installing phase. Used to bound the activation retry window; cleared when<br />the resource leaves Installing (Installed or Failed). |  | Optional: \{\} <br /> |
 | `observedGeneration` _integer_ | ObservedGeneration reflects the generation of the most recently observed CR |  | Optional: \{\} <br /> |
