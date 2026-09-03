@@ -1618,7 +1618,7 @@ var _ = Describe("HomeAssistant Controller", func() {
 		})
 	})
 
-	FContext("When Spec.AdditionalVolumes is configured", func() {
+	Context("When Spec.AdditionalVolumes is configured", func() {
 		const (
 			resourceName    = "test-hass"
 			pvcName         = "test-pvc"
