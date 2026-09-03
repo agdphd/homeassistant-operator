@@ -732,6 +732,10 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 		},
 	}
 
+	if ha.Spec.AdditionalVolumes != nil && ha.Spec.AdditionalVolumes.VolumeMounts != nil {
+		volumeMounts = append(volumeMounts, ha.Spec.AdditionalVolumes.VolumeMounts...)
+	}
+
 	// Build volumes
 	volumes := []corev1.Volume{
 		{
@@ -742,6 +746,10 @@ func (r *HomeAssistantReconciler) buildStatefulSet(
 				},
 			},
 		},
+	}
+
+	if ha.Spec.AdditionalVolumes != nil && ha.Spec.AdditionalVolumes.Volumes != nil {
+		volumes = append(volumes, ha.Spec.AdditionalVolumes.Volumes...)
 	}
 
 	// Add ConfigMap volume for configuration.yaml
