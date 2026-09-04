@@ -1,14 +1,17 @@
-# Signed Releases
+# Verify signed releases
 
-Starting with **v1.2.0**, every release artifact — the container image, the Helm
-chart OCI artifact, and a `checksums.txt` bundle attached to the GitHub Release —
-is cryptographically signed. Anyone can verify authenticity without contacting the
-maintainer, and Kubernetes cluster operators can enforce it automatically with
-Kyverno.
+*How-to — check that a release artifact really came from this project. Assumes `cosign` is installed.*
 
-!!! info "Releases before v1.2.0 are not signed"
-    Signing starts at v1.2.0. There is no retroactive signing of earlier releases —
-    do not assume coverage for tags published before it.
+Every release from **v1.2.0** onwards is signed: the container image, the Helm
+chart OCI artifact, and a `checksums.txt` bundle on the GitHub Release. Signing
+is keyless, so verification needs no key from the maintainer — only the commands
+below.
+
+
+## Prerequisites
+
+- [`cosign`](https://docs.sigstore.dev/cosign/installation/) installed
+- The version tag you want to verify
 
 ## What is signed
 
@@ -25,38 +28,111 @@ rotates one. Each signature is backed by a short-lived certificate from Sigstore
 Fulcio and a public transparency-log entry in Rekor, which is what the verification
 commands below check against.
 
-## Verify the container image
+## A note on version tags
+
+Two different tags name the same release, and mixing them up is the usual reason
+a verification command fails:
+
+| What | Tag | Example |
+|------|-----|---------|
+| Git tag and GitHub Release | with `v` | `v1.4.0` |
+| Container image and Helm chart in the registry | **without** `v` | `1.4.0` |
+
+The release pipeline strips the `v` when it publishes to the registry, so
+`ghcr.io/przemekhys/homeassistant-operator:v1.4.0` does not exist — only
+`:1.4.0` does.
+
+## Verify everything at once
+
+The quickest route: `checksums.txt` lists the digests of both artifacts and is
+itself signed, so verifying it once gives you trustworthy digests for the rest.
 
 ```bash
-IMAGE=ghcr.io/przemekhys/homeassistant-operator
-DIGEST=$(crane digest "$IMAGE:v1.2.0")   # or read it from checksums.txt
+VERSION=v1.4.0
+IDENTITY='https://github.com/przemekhys/homeassistant-operator/\.github/workflows/release\.yml@refs/tags/.*'
+ISSUER=https://token.actions.githubusercontent.com
 
-cosign verify \
-  --certificate-identity-regexp \
-    'https://github.com/przemekhys/homeassistant-operator/\.github/workflows/release\.yml@refs/tags/.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  "$IMAGE@$DIGEST"
-```
+gh release download "$VERSION" \
+  --repo przemekhys/homeassistant-operator \
+  -p 'checksums.txt*'
 
-To verify the whole `checksums.txt` bundle instead (covers the image and chart
-digests transitively in one check):
-
-```bash
-gh release download v1.2.0 -p 'checksums.txt*'
 cosign verify-blob \
   --bundle checksums.txt.sigstore.json \
-  --certificate-identity-regexp \
-    'https://github.com/przemekhys/homeassistant-operator/\.github/workflows/release\.yml@refs/tags/.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp "$IDENTITY" \
+  --certificate-oidc-issuer "$ISSUER" \
   checksums.txt
 ```
 
-!!! tip "Local reproduction"
+Expected output: `Verified OK`.
+
+`--repo` matters: without it `gh` looks at the git remote of the directory you
+are standing in, so the command only works inside a clone. Verification should
+not require one.
+
+The verified file names both digests:
+
+```bash
+cat checksums.txt
+```
+```
+sha256:2e0b7dd8...  container-image  ghcr.io/przemekhys/homeassistant-operator
+sha256:147bee7a...  helm-chart       oci://ghcr.io/przemekhys/charts/homeassistant-operator
+```
+
+## Verify the container image
+
+Take the digest from the file you just verified — no separate tooling needed:
+
+```bash
+IMAGE=ghcr.io/przemekhys/homeassistant-operator
+DIGEST=$(awk '$2=="container-image" {print $1}' checksums.txt)
+
+cosign verify \
+  --certificate-identity-regexp "$IDENTITY" \
+  --certificate-oidc-issuer "$ISSUER" \
+  "$IMAGE@$DIGEST"
+```
+
+To resolve the digest from the tag yourself instead — which also checks that the
+tag still points where you expect — use [`crane`](https://github.com/google/go-containerregistry):
+
+```bash
+DIGEST=$(crane digest "$IMAGE:${VERSION#v}")   # note: ${VERSION#v}, the registry tag has no "v"
+```
+
+## Verify the Helm chart
+
+```bash
+CHART=ghcr.io/przemekhys/charts/homeassistant-operator
+CHART_DIGEST=$(awk '$2=="helm-chart" {print $1}' checksums.txt)
+
+cosign verify \
+  --certificate-identity-regexp "$IDENTITY" \
+  --certificate-oidc-issuer "$ISSUER" \
+  "$CHART@$CHART_DIGEST"
+```
+
+Note that the reference passed to `cosign` has no `oci://` prefix, even though
+`helm` wants one when installing the same artifact.
+
+This check needs no cluster and no Kyverno — anywhere `cosign` can reach the
+registry will do, which makes it a natural preflight step in a GitOps pipeline
+before `helm install`/`upgrade` ever runs.
+
+!!! tip "All of the above in one command"
     [`hack/verify-signatures.sh`](https://github.com/przemekhys/homeassistant-operator/blob/main/hack/verify-signatures.sh)
-    runs these same checks (image, chart, checksums bundle) in one command:
-    `hack/verify-signatures.sh v1.2.0`.
+    runs the same three checks: `hack/verify-signatures.sh v1.4.0`. It needs
+    `cosign`, `gh` and `crane` on your PATH.
 
 ## Verify with Kyverno
+
+!!! note "Not part of the supported API"
+    [Kyverno](https://kyverno.io/) is a third-party admission controller that
+    this project does not ship or control. The policy below reflects the state at
+    the time of writing and may need adjusting for a different Kyverno version.
+
+    **Tested with**: Kyverno 1.13.
+
 
 Cluster operators can enforce this automatically at admission time with
 [Kyverno](https://kyverno.io/), so an unsigned or tampered image is rejected before
@@ -130,18 +206,3 @@ kubectl run ha-tampered --image=<attacker-controlled-retag> --restart=Never
     moved, both this doc page and the policy file must be updated together in the
     same change — otherwise the policy would silently stop matching new releases
     instead of failing loudly.
-
-## Verify the Helm chart
-
-```bash
-cosign verify \
-  --certificate-identity-regexp \
-    'https://github.com/przemekhys/homeassistant-operator/\.github/workflows/release\.yml@refs/tags/.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/przemekhys/charts/homeassistant-operator@<chart-digest>
-```
-
-
-This check is independent of Kyverno and of any cluster — it works anywhere
-`cosign` can reach the OCI registry, for example as a preflight step in a GitOps
-pipeline before `helm install`/`upgrade` ever runs.

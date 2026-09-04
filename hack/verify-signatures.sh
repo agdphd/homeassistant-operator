@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # verify-signatures.sh — local reproduction of the release pipeline's signature
-# checks (docs/user-guide/signed-releases.md, CI's smoke-oci job).
+# checks (docs/how-to/verify-signed-releases.md).
 #
 # Verifies, for one published version tag: the container image signature, the
 # Helm chart OCI artifact signature, and the signed checksums.txt.sigstore.json
@@ -30,8 +30,12 @@ for t in cosign gh crane; do
   command -v "$t" >/dev/null 2>&1 || { echo "❌ required tool not found: $t" >&2; exit 2; }
 done
 
-echo "==> Verifying container image ${IMAGE}:${VERSION}"
-IMAGE_DIGEST="$(crane digest "${IMAGE}:${VERSION}")"
+# Registry tags carry no leading "v": docker/metadata-action's {{version}}
+# pattern strips it, so git tag v1.2.0 publishes image tag 1.2.0. The GitHub
+# Release, in contrast, is still named v1.2.0.
+IMAGE_TAG="${VERSION#v}"
+echo "==> Verifying container image ${IMAGE}:${IMAGE_TAG}"
+IMAGE_DIGEST="$(crane digest "${IMAGE}:${IMAGE_TAG}")"
 cosign verify \
   --certificate-identity-regexp "$IDENTITY_REGEXP" \
   --certificate-oidc-issuer "$ISSUER" \
