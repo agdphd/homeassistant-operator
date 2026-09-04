@@ -29,6 +29,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -1940,27 +1941,27 @@ func hostPathsEqual(current, desired *corev1.HostPathVolumeSource) bool {
 	return current.Path == desired.Path && currentType == desiredType
 }
 
-// volumeContentDiffers compares volume HostPath and VolumeMount MountPath
-// content index-by-index across all of the pod template's volumes/mounts
-// (e.g. a spec.alpha.devices entry's hostPath or containerPath edited in
-// place, where the volume count itself is unchanged). Callers must already
-// have confirmed the volume and mount counts match. Split out of
-// needsUpdate to keep its cyclomatic complexity in check.
+// volumeContentDiffers compares Volume and VolumeMount content index-by-index
+// across all of the pod template's volumes/mount. Callers must already have
+// confirmed the volume and mount counts match. Split out of needsUpdate to keep
+// its cyclomatic complexity in check.
 func volumeContentDiffers(
-	current, desired *appsv1.StatefulSet, currentContainer, desiredContainer corev1.Container,
+	current, desired *appsv1.StatefulSet,
+	currentContainer, desiredContainer corev1.Container,
 ) bool {
 	log := logf.Log.WithName("needsUpdate")
 	for i, cv := range current.Spec.Template.Spec.Volumes {
 		dv := desired.Spec.Template.Spec.Volumes[i]
-		if !hostPathsEqual(cv.HostPath, dv.HostPath) {
-			log.V(1).Info("Volume HostPath differs", "index", i)
+		if !equality.Semantic.DeepDerivative(cv, dv) {
+			log.V(1).Info("Volume differs", "index", i, "name", dv.Name)
 			return true
 		}
 	}
+
 	for i, cm := range currentContainer.VolumeMounts {
-		if cm.MountPath != desiredContainer.VolumeMounts[i].MountPath {
-			log.V(1).Info("VolumeMount MountPath differs",
-				"index", i, "current", cm.MountPath, "desired", desiredContainer.VolumeMounts[i].MountPath)
+		dm := desiredContainer.VolumeMounts[i]
+		if !equality.Semantic.DeepDerivative(cm, dm) {
+			log.V(1).Info("VolumeMount differs", "index", i)
 			return true
 		}
 	}
