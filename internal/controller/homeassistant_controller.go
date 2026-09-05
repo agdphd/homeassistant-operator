@@ -1921,26 +1921,6 @@ func securityContextsEqual(current, desired *corev1.SecurityContext) bool {
 	return currentPrivileged == desiredPrivileged
 }
 
-// hostPathsEqual compares the fields of a hostPath volume source that
-// buildStatefulSet sets for spec.alpha.devices entries (Path, Type).
-func hostPathsEqual(current, desired *corev1.HostPathVolumeSource) bool {
-	if (current == nil) != (desired == nil) {
-		return false
-	}
-	if current == nil {
-		return true
-	}
-	currentType := corev1.HostPathUnset
-	if current.Type != nil {
-		currentType = *current.Type
-	}
-	desiredType := corev1.HostPathUnset
-	if desired.Type != nil {
-		desiredType = *desired.Type
-	}
-	return current.Path == desired.Path && currentType == desiredType
-}
-
 // volumeContentDiffers compares Volume and VolumeMount content index-by-index
 // across all of the pod template's volumes/mount. Callers must already have
 // confirmed the volume and mount counts match. Split out of needsUpdate to keep
