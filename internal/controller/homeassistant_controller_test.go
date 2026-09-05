@@ -1808,7 +1808,7 @@ var _ = Describe("HomeAssistant Controller", func() {
 			}, ha)).To(Succeed())
 			Expect(ha.Spec.AdditionalVolumes.Volumes).To(ConsistOf(volume))
 
-			volume.VolumeSource.PersistentVolumeClaim.ReadOnly = true
+			volume.PersistentVolumeClaim.ReadOnly = true
 			ha.Spec.AdditionalVolumes.Volumes = []corev1.Volume{volume}
 			Expect(k8sClient.Update(ctx, ha)).To(Succeed())
 
