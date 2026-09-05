@@ -1,7 +1,10 @@
 # API Reference
 
+*Reference — every field of every custom resource, generated from the Go types. Look things up here; it does not teach.*
+
 ## Packages
 - [ha.homeassistant.io/v1](#hahomeassistantiov1)
+- [ha.homeassistant.io/v1alpha1](#hahomeassistantiov1alpha1)
 
 
 ## ha.homeassistant.io/v1
@@ -1709,3 +1712,164 @@ _Appears in:_
 | `accessMode` _[PersistentVolumeAccessMode](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#persistentvolumeaccessmode-v1-core)_ | AccessMode for the PVC | ReadWriteOnce | Optional: \{\} <br /> |
 | `retainPVC` _boolean_ | RetainPVC controls whether the PVC survives deletion of the HomeAssistant CR.<br />When true, no ownerReference is set on the PVC — it will not be garbage-collected<br />when the CR is deleted (e.g. by FluxCD reconciliation), preventing accidental data loss.<br />When false (default), the PVC is owned by the CR and deleted together with it. | false | Optional: \{\} <br /> |
 | `initContainer` _[InitContainerSpec](#initcontainerspec)_ | InitContainer configures the init container that pre-creates required YAML files<br />(automations.yaml, scenes.yaml, scripts.yaml) on the PVC before Home Assistant starts.<br />This prevents HA from entering recovery mode when the !include directives are present<br />but the files do not yet exist. |  | Optional: \{\} <br /> |
+
+
+
+## ha.homeassistant.io/v1alpha1
+
+Package v1alpha1 contains API Schema definitions for the ha v1alpha1 API group.
+Resources in this package are experimental: fields may change shape or be
+removed in a minor release, with no deprecation period. That is the trade-off
+for shipping a capability whose real-world behaviour cannot be settled by
+tests alone; it graduates to a stable group once it has been exercised on
+hardware the maintainers do not have.
+
+### Resource Types
+- [HomeAssistantCommunityRepository](#homeassistantcommunityrepository)
+- [HomeAssistantCommunityRepositoryList](#homeassistantcommunityrepositorylist)
+
+
+
+#### CommunityRepositoryCategory
+
+_Underlying type:_ _string_
+
+CommunityRepositoryCategory is a HACS repository category. Values match HACS's own
+hacs.json "category" field exactly.
+
+_Validation:_
+- Enum: [integration plugin theme python_script template]
+
+_Appears in:_
+- [HomeAssistantCommunityRepositorySpec](#homeassistantcommunityrepositoryspec)
+
+| Field | Description |
+| --- | --- |
+| `integration` |  |
+| `plugin` |  |
+| `theme` |  |
+| `python_script` |  |
+| `template` |  |
+
+
+#### CommunityRepositoryPhase
+
+_Underlying type:_ _string_
+
+CommunityRepositoryPhase is the reconciliation lifecycle phase of a
+HomeAssistantCommunityRepository.
+
+
+
+_Appears in:_
+- [HomeAssistantCommunityRepositoryStatus](#homeassistantcommunityrepositorystatus)
+
+| Field | Description |
+| --- | --- |
+| `Pending` |  |
+| `Validating` |  |
+| `Installing` |  |
+| `Installed` |  |
+| `Failed` |  |
+| `Removing` |  |
+
+
+#### HomeAssistantCommunityRepository
+
+
+
+HomeAssistantCommunityRepository installs a HACS-compatible community extension
+(integration, plugin, theme, python_script, or template) into an existing
+HomeAssistant instance, without requiring HACS or its UI to be present. This is an
+EXPERIMENTAL, alpha-quality resource: it carries no API stability guarantee between
+releases.
+
+
+
+_Appears in:_
+- [HomeAssistantCommunityRepositoryList](#homeassistantcommunityrepositorylist)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `kind` _string_ | `HomeAssistantCommunityRepository` | | |
+| `metadata` _[ObjectMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#objectmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `spec` _[HomeAssistantCommunityRepositorySpec](#homeassistantcommunityrepositoryspec)_ |  |  |  |
+| `status` _[HomeAssistantCommunityRepositoryStatus](#homeassistantcommunityrepositorystatus)_ |  |  |  |
+
+
+#### HomeAssistantCommunityRepositoryList
+
+
+
+HomeAssistantCommunityRepositoryList contains a list of HomeAssistantCommunityRepository
+
+
+
+
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `apiVersion` _string_ | `ha.homeassistant.io/v1alpha1` | | |
+| `kind` _string_ | `HomeAssistantCommunityRepositoryList` | | |
+| `metadata` _[ListMeta](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#listmeta-v1-meta)_ | Refer to Kubernetes API documentation for fields of `metadata`. |  |  |
+| `items` _[HomeAssistantCommunityRepository](#homeassistantcommunityrepository) array_ |  |  |  |
+
+
+#### HomeAssistantCommunityRepositorySpec
+
+
+
+HomeAssistantCommunityRepositorySpec defines the desired state of HomeAssistantCommunityRepository
+
+
+
+_Appears in:_
+- [HomeAssistantCommunityRepository](#homeassistantcommunityrepository)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `homeAssistantRef` _[HomeAssistantReference](#homeassistantreference)_ | HomeAssistantRef references the HomeAssistant instance to install this repository into |  | Required: \{\} <br /> |
+| `category` _[CommunityRepositoryCategory](#communityrepositorycategory)_ | Category is the HACS repository category. appdaemon and netdaemon are intentionally<br />not accepted here: they require a separate runtime this operator does not deploy. |  | Enum: [integration plugin theme python_script template] <br />Required: \{\} <br /> |
+| `repository` _string_ | Repository is the GitHub "owner/repo" shorthand (not a full URL). |  | Pattern: `^[\w.-]+/[\w.-]+$` <br />Required: \{\} <br /> |
+| `ref` _string_ | Ref is the tag, branch, or commit SHA to install. Pinned and explicit — this<br />operator never tracks a "latest" release automatically. Restricted to<br />characters valid in a git ref: word characters, dot, dash and slash, so<br />branch names such as release/v1 are accepted. URL-reserved characters that<br />could alter the codeload request path are not. |  | MinLength: 1 <br />Pattern: `^[\w][\w.\-/]*$` <br />Required: \{\} <br /> |
+
+
+#### HomeAssistantCommunityRepositoryStatus
+
+
+
+HomeAssistantCommunityRepositoryStatus defines the observed state of HomeAssistantCommunityRepository
+
+
+
+_Appears in:_
+- [HomeAssistantCommunityRepository](#homeassistantcommunityrepository)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `phase` _[CommunityRepositoryPhase](#communityrepositoryphase)_ | Phase is the current lifecycle phase. |  | Optional: \{\} <br /> |
+| `installedVersion` _string_ | InstalledVersion is the last ref that was successfully validated and activated.<br />It does NOT change until a newly requested ref is fully confirmed, so a failed<br />update never reports a broken version as installed. |  | Optional: \{\} <br /> |
+| `resolvedTarget` _string_ | ResolvedTarget is the install target computed from the source repository's own<br />manifest (the integration domain, or the theme/script/template/plugin file name).<br />Together with the referenced HomeAssistant name and Category it forms the<br />conflict-detection key, so the same target may be installed into two<br />different instances. |  | Optional: \{\} <br /> |
+| `lastError` _string_ | LastError contains a human-readable error message from the last failed operation.<br />Cleared when the operation succeeds. |  | Optional: \{\} <br /> |
+| `installingSince` _[Time](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#time-v1-meta)_ | InstallingSince records when the resource most recently entered the<br />Installing phase. Used to bound the activation retry window; cleared when<br />the resource leaves Installing (Installed or Failed). |  | Optional: \{\} <br /> |
+| `observedGeneration` _integer_ | ObservedGeneration reflects the generation of the most recently observed CR |  | Optional: \{\} <br /> |
+| `conditions` _[Condition](https://kubernetes.io/docs/reference/generated/kubernetes-api/v/#condition-v1-meta) array_ | Conditions represent the latest available observations of the repository state |  | Optional: \{\} <br /> |
+
+
+#### HomeAssistantReference
+
+
+
+HomeAssistantReference references the HomeAssistant instance a community repository
+targets. Declared locally in v1alpha1 (rather than reusing api/v1's type) so this
+experimental API group-version has no coupling to the stable v1 types.
+
+
+
+_Appears in:_
+- [HomeAssistantCommunityRepositorySpec](#homeassistantcommunityrepositoryspec)
+
+| Field | Description | Default | Validation |
+| --- | --- | --- | --- |
+| `name` _string_ | Name of the HomeAssistant resource |  | MinLength: 1 <br />Required: \{\} <br /> |
